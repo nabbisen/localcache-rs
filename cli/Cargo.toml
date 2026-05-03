@@ -1,0 +1,16 @@
+[package]
+name    = "localcache-cli"
+version = "0.8.0"
+edition = "2024"
+authors = ["nabbisen"]
+license = "Apache-2.0"
+description = "CLI inspection and maintenance tool for localcache databases"
+repository  = "https://github.com/nabbisen/localcache-rs"
+
+[[bin]]
+name = "localcache"
+path = "src/main.rs"
+
+[dependencies]
+localcache = { path = "..", features = ["compression", "json"] }
+clap       = { version = "4", features = ["derive"] }

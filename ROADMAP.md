@@ -19,18 +19,24 @@ JSON codec, `max_entries` eviction, `scan_dir_filtered`, version migration helpe
 AES-256-GCM encryption, true LRU, glob scan, `list_entries`, schema v4.
 
 ## Phase 7 — Operational Features (v0.7.x) ✅
+Builder API, `cache_stats`, `check_status_batch`, key rotation, glob brace expansion.
 
-- [x] `CacheEngineBuilder<T>` — fluent builder API via `CacheEngine::builder()`
-- [x] `CacheEngine::cache_stats()` — aggregate statistics (`CacheStats`)
-- [x] `CacheEngine::check_status_batch()` — one-call status for many paths
-- [x] `CacheEngine::rotate_encryption_key()` — re-encrypt all entries atomically
-- [x] Glob brace expansion — `{a,b,c}` in `ScanOptions::glob_pattern`
+## Phase 8 — Workspace & Tooling (v0.8.x) ✅
+
+- [x] Cargo workspace — `localcache` (library) + `localcache-cli` (binary) as workspace members
+- [x] `localcache-cli` — CLI inspection tool with `list`, `stats`, `check`, `cleanup`,
+      `vacuum`, `purge-version`, `scan` subcommands; powered by `clap 4`
+- [x] `on_evict` callback — `CacheEngineBuilder::on_evict(|path| …)` hook called
+      after each LRU eviction from `max_entries`
+- [x] Multi-group glob brace expansion — `{a,b}_{c,d}.txt` → Cartesian product
+      (recursive `expand_braces`, replacing the single-group implementation)
+- [x] `EvictCallback` type alias — reduces complex type repetition in engine and builder
 
 ## Future / Unscheduled
 
 - File-watching integration (`notify` crate)
 - `async-std` / `smol` feature variants
-- Nested / multi-group glob brace expansion
+- Nested brace groups within alternatives
 - `serde_json` path-based queries on cached payloads
 - Read-only shared-memory DB mode
-- CLI inspection tool
+- CLI: `export` / `import` subcommands (dump/restore)

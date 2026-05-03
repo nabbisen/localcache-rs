@@ -2565,4 +2565,197 @@ mod integration {
             assert_eq!(results[0].as_ref().unwrap(), &CacheStatus::Fresh);
         }
     }
+
+    // ====================================================================
+    // Phase 8 — on_evict callback
+    // ====================================================================
+
+    #[test]
+    fn on_evict_called_when_entry_removed() {
+        use std::sync::{Arc, Mutex};
+        let dir = TempDir::new().unwrap();
+
+        let evicted: Arc<Mutex<Vec<std::path::PathBuf>>> = Arc::new(Mutex::new(Vec::new()));
+        let evicted_clone = Arc::clone(&evicted);
+
+        let engine: CacheEngine<Vec<f32>> = CacheEngine::builder()
+            .database(":memory:")
+            .max_entries(2)
+            .on_evict(move |p| {
+                evicted_clone.lock().unwrap().push(p.to_path_buf());
+            })
+            .build()
+            .unwrap();
+
+        let p1 = write_file(&dir, "ev1.txt", b"a");
+        let p2 = write_file(&dir, "ev2.txt", b"b");
+        let p3 = write_file(&dir, "ev3.txt", b"c");
+
+        engine.set(&p1, &vec![1.0_f32]).unwrap();
+        engine.set(&p2, &vec![2.0_f32]).unwrap();
+        engine.set(&p3, &vec![3.0_f32]).unwrap(); // evicts p1
+
+        let evicted_list = evicted.lock().unwrap().clone();
+        assert_eq!(evicted_list.len(), 1, "one entry should have been evicted");
+    }
+
+    #[test]
+    fn on_evict_not_called_when_under_limit() {
+        use std::sync::{Arc, Mutex};
+        let dir = TempDir::new().unwrap();
+
+        let evicted: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
+        let evicted_clone = Arc::clone(&evicted);
+
+        let engine: CacheEngine<Vec<f32>> = CacheEngine::builder()
+            .database(":memory:")
+            .max_entries(10)
+            .on_evict(move |_| {
+                *evicted_clone.lock().unwrap() += 1;
+            })
+            .build()
+            .unwrap();
+
+        for i in 0..3u32 {
+            let p = write_file(&dir, &format!("nev{i}.txt"), b"x");
+            engine.set(&p, &vec![i as f32]).unwrap();
+        }
+
+        assert_eq!(*evicted.lock().unwrap(), 0);
+    }
+
+    #[test]
+    fn on_evict_callback_via_builder_without_max_entries_never_fires() {
+        use std::sync::{Arc, Mutex};
+        let dir = TempDir::new().unwrap();
+        let fired = Arc::new(Mutex::new(false));
+        let fired_clone = Arc::clone(&fired);
+
+        let engine: CacheEngine<Vec<f32>> = CacheEngine::builder()
+            .database(":memory:")
+            // no max_entries — eviction never happens
+            .on_evict(move |_| {
+                *fired_clone.lock().unwrap() = true;
+            })
+            .build()
+            .unwrap();
+
+        for i in 0..20u32 {
+            let p = write_file(&dir, &format!("nf{i}.txt"), b"x");
+            engine.set(&p, &vec![i as f32]).unwrap();
+        }
+
+        assert!(!*fired.lock().unwrap());
+    }
+
+    // ====================================================================
+    // Phase 8 — Multi-group glob expansion
+    // ====================================================================
+
+    #[test]
+    fn glob_two_brace_groups_cartesian_product() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("multi_brace");
+        fs::create_dir(&root).unwrap();
+
+        let engine: CacheEngine<Vec<f32>> =
+            CacheEngine::builder().database(":memory:").build().unwrap();
+
+        // Create pre_a.txt, pre_b.txt, post_a.txt, post_b.txt, other.txt
+        let pre_a = {
+            let p = root.join("pre_a.txt");
+            fs::write(&p, b"").unwrap();
+            p
+        };
+        let pre_b = {
+            let p = root.join("pre_b.txt");
+            fs::write(&p, b"").unwrap();
+            p
+        };
+        let post_a = {
+            let p = root.join("post_a.txt");
+            fs::write(&p, b"").unwrap();
+            p
+        };
+        let post_b = {
+            let p = root.join("post_b.txt");
+            fs::write(&p, b"").unwrap();
+            p
+        };
+        let other = {
+            let p = root.join("other.txt");
+            fs::write(&p, b"").unwrap();
+            p
+        };
+
+        // "{pre,post}_{a,b}.txt" → 4 combinations
+        let opts = ScanOptions {
+            recursive: false,
+            glob_pattern: Some("{pre,post}_{a,b}.txt".into()),
+            ..ScanOptions::default()
+        };
+        let results = engine.scan_dir_filtered(&root, opts).unwrap();
+        let paths: Vec<_> = results.iter().map(|(p, _)| p.clone()).collect();
+
+        assert_eq!(paths.len(), 4, "should match exactly 4 files");
+        assert!(paths.contains(&pre_a));
+        assert!(paths.contains(&pre_b));
+        assert!(paths.contains(&post_a));
+        assert!(paths.contains(&post_b));
+        assert!(!paths.contains(&other));
+    }
+
+    #[test]
+    fn glob_three_alternatives_multi_group() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("three_groups");
+        fs::create_dir(&root).unwrap();
+
+        let engine: CacheEngine<Vec<f32>> =
+            CacheEngine::builder().database(":memory:").build().unwrap();
+
+        // "data_{a,b,c}.{txt,csv}" → 6 combinations
+        for name in &[
+            "data_a.txt",
+            "data_b.txt",
+            "data_c.txt",
+            "data_a.csv",
+            "data_b.csv",
+            "data_c.csv",
+            "info.txt",
+        ] {
+            fs::write(root.join(name), b"").unwrap();
+        }
+
+        let opts = ScanOptions {
+            recursive: false,
+            glob_pattern: Some("data_{a,b,c}.{txt,csv}".into()),
+            ..ScanOptions::default()
+        };
+        let results = engine.scan_dir_filtered(&root, opts).unwrap();
+        assert_eq!(results.len(), 6, "should match 6 data files");
+    }
+
+    #[test]
+    fn glob_nested_single_still_works() {
+        // Single brace group should still function correctly.
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("single_brace2");
+        fs::create_dir(&root).unwrap();
+
+        let engine: CacheEngine<Vec<f32>> =
+            CacheEngine::builder().database(":memory:").build().unwrap();
+
+        fs::write(root.join("a.txt"), b"").unwrap();
+        fs::write(root.join("a.md"), b"").unwrap();
+        fs::write(root.join("a.rs"), b"").unwrap();
+
+        let opts = ScanOptions {
+            recursive: false,
+            glob_pattern: Some("*.{txt,md}".into()),
+            ..ScanOptions::default()
+        };
+        let results = engine.scan_dir_filtered(&root, opts).unwrap();
+        assert_eq!(results.len(), 2);
+    }
 }

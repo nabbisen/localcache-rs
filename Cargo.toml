@@ -1,6 +1,10 @@
+[workspace]
+members  = [".", "cli"]
+resolver = "2"
+
 [package]
 name = "localcache"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2024"
 authors = ["nabbisen"]
 license = "Apache-2.0"
@@ -10,14 +14,10 @@ keywords = ["cache", "local-file", "sqlite", "embedding", "memoize"]
 categories = ["caching", "filesystem"]
 
 [features]
-## Enables `AsyncCacheEngine` backed by `tokio::task::spawn_blocking`.
-async = ["dep:tokio"]
-## Enables transparent zstd compression of stored payloads.
+async       = ["dep:tokio"]
 compression = ["dep:zstd"]
-## Enables the `Json` codec variant (serde_json serialization).
-json = ["dep:serde_json"]
-## Enables AES-256-GCM encryption of stored payloads.
-encryption = ["dep:aes-gcm"]
+json        = ["dep:serde_json"]
+encryption  = ["dep:aes-gcm"]
 
 [dependencies]
 rusqlite   = { version = "0.32", features = ["bundled"] }

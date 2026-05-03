@@ -1,8 +1,5 @@
 //! Fluent builder for [`CacheEngine`].
 //!
-//! Prefer the builder over constructing [`CacheOptions`] by hand when you want
-//! method chaining and compile-time guidance for which options are available.
-//!
 //! # Example
 //!
 //! ```no_run
@@ -16,17 +13,19 @@
 //!     .ttl(Duration::from_secs(3600))
 //!     .max_entries(1000)
 //!     .payload_version(2)
+//!     .on_evict(|path| eprintln!("evicted: {}", path.display()))
 //!     .build()?;
 //! # Ok::<(), localcache::LocalFileCacheError>(())
 //! ```
 
 use std::marker::PhantomData;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Serialize, de::DeserializeOwned};
 
-use crate::cache::engine::CacheEngine;
+use crate::cache::engine::{CacheEngine, EvictCallback};
 use crate::cache::options::{
     CacheOptions, ChangeDetectionMode, Codec, JournalMode, SynchronousMode,
 };
@@ -37,6 +36,7 @@ use crate::error::LocalFileCacheError;
 /// Obtain one via [`CacheEngine::builder`].
 pub struct CacheEngineBuilder<T> {
     opts: CacheOptions,
+    evict_callback: Option<EvictCallback>,
     _phantom: PhantomData<T>,
 }
 
@@ -47,71 +47,48 @@ where
     pub(crate) fn new() -> Self {
         Self {
             opts: CacheOptions::default(),
+            evict_callback: None,
             _phantom: PhantomData,
         }
     }
 
-    // ------------------------------------------------------------------
-    // Storage
-    // ------------------------------------------------------------------
-
     /// Set the path to the SQLite database file.
-    ///
-    /// Pass `":memory:"` for an ephemeral in-memory database.
-    /// Defaults to `"localcache.sqlite3"`.
     pub fn database<P: Into<PathBuf>>(mut self, path: P) -> Self {
         self.opts.database_path = path.into();
         self
     }
 
-    /// Namespace that logically partitions entries within one database file.
-    /// Defaults to `"default"`.
+    /// Namespace.  Defaults to `"default"`.
     pub fn namespace(mut self, ns: impl Into<String>) -> Self {
         self.opts.namespace = ns.into();
         self
     }
 
-    // ------------------------------------------------------------------
-    // Change detection
-    // ------------------------------------------------------------------
-
-    /// File change-detection algorithm.  Defaults to `MetadataOnly`.
+    /// File change-detection algorithm.
     pub fn change_detection(mut self, mode: ChangeDetectionMode) -> Self {
         self.opts.change_detection_mode = mode;
         self
     }
 
-    // ------------------------------------------------------------------
-    // Codec
-    // ------------------------------------------------------------------
-
-    /// Payload serialization codec.  Defaults to `Codec::Bincode`.
+    /// Payload serialization codec.
     pub fn codec(mut self, codec: Codec) -> Self {
         self.opts.codec = codec;
         self
     }
 
-    // ------------------------------------------------------------------
-    // SQLite tuning
-    // ------------------------------------------------------------------
-
-    /// SQLite journal mode.  Defaults to `JournalMode::Wal`.
+    /// SQLite journal mode.
     pub fn journal_mode(mut self, mode: JournalMode) -> Self {
         self.opts.journal_mode = mode;
         self
     }
 
-    /// SQLite `synchronous` pragma.  Defaults to `SynchronousMode::Normal`.
+    /// SQLite `synchronous` pragma.
     pub fn synchronous(mut self, mode: SynchronousMode) -> Self {
         self.opts.synchronous = mode;
         self
     }
 
-    // ------------------------------------------------------------------
-    // Entry lifecycle
-    // ------------------------------------------------------------------
-
-    /// Time-to-live for cache entries.  `None` (default) means no expiry.
+    /// Time-to-live for cache entries.
     pub fn ttl(mut self, duration: Duration) -> Self {
         self.opts.ttl = Some(duration);
         self
@@ -123,34 +100,47 @@ where
         self
     }
 
-    /// Maximum number of entries in the namespace.  Excess entries are evicted
-    /// in LRU order (least recently accessed) after each `set`.
+    /// Maximum entries in the namespace (LRU eviction).
     pub fn max_entries(mut self, n: usize) -> Self {
         self.opts.max_entries = Some(n);
         self
     }
 
-    /// Payload schema version.  Non-zero enables version checks in freshness
-    /// queries.  Defaults to `0` (disabled).
+    /// Payload schema version.
     pub fn payload_version(mut self, v: u32) -> Self {
         self.opts.payload_version = v;
         self
     }
 
-    // ------------------------------------------------------------------
-    // Access mode
-    // ------------------------------------------------------------------
+    /// Register a callback invoked with the path of each LRU-evicted entry.
+    ///
+    /// The callback is called **after** the entry is deleted from the database.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use localcache::CacheEngine;
+    ///
+    /// let engine = CacheEngine::<Vec<f32>>::builder()
+    ///     .database(":memory:")
+    ///     .max_entries(100)
+    ///     .on_evict(|path| eprintln!("evicted: {}", path.display()))
+    ///     .build()?;
+    /// # Ok::<(), localcache::LocalFileCacheError>(())
+    /// ```
+    pub fn on_evict<F>(mut self, callback: F) -> Self
+    where
+        F: Fn(&Path) + Send + Sync + 'static,
+    {
+        self.evict_callback = Some(Arc::new(callback));
+        self
+    }
 
-    /// Open the database in read-only mode.  Write operations return
-    /// `LocalFileCacheError::ReadOnly`.
+    /// Open the database in read-only mode.
     pub fn read_only(mut self) -> Self {
         self.opts.read_only = true;
         self
     }
-
-    // ------------------------------------------------------------------
-    // Feature-gated options
-    // ------------------------------------------------------------------
 
     /// Enable zstd compression of stored payloads.
     ///
@@ -170,12 +160,10 @@ where
         self
     }
 
-    // ------------------------------------------------------------------
-    // Terminal
-    // ------------------------------------------------------------------
-
     /// Consume the builder and open the [`CacheEngine`].
     pub fn build(self) -> Result<CacheEngine<T>, LocalFileCacheError> {
-        CacheEngine::open(self.opts)
+        let mut engine = CacheEngine::open(self.opts)?;
+        engine.evict_callback = self.evict_callback;
+        Ok(engine)
     }
 }

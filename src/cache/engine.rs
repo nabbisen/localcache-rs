@@ -2,6 +2,7 @@
 
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use rusqlite::{Connection, OpenFlags};
@@ -18,6 +19,9 @@ use crate::detection::strategy::detect_change;
 use crate::error::LocalFileCacheError;
 use crate::path::normalize_path;
 use crate::serialization::{decode_payload, encode_payload};
+
+/// Type alias for the LRU eviction callback stored in [`CacheEngine`].
+pub(crate) type EvictCallback = Arc<dyn Fn(&Path) + Send + Sync>;
 
 // ---------------------------------------------------------------------------
 // Public result types
@@ -66,6 +70,8 @@ pub struct CacheEngine<T> {
     pub(crate) payload_version: u32,
     pub(crate) compress: bool,
     pub(crate) max_entries: Option<usize>,
+    /// Optional callback invoked with the path of each LRU-evicted entry.
+    pub(crate) evict_callback: Option<EvictCallback>,
     #[cfg(feature = "encryption")]
     pub(crate) encryption_key: Option<[u8; 32]>,
     _phantom: PhantomData<T>,
@@ -142,6 +148,7 @@ where
             payload_version: options.payload_version,
             compress,
             max_entries: options.max_entries,
+            evict_callback: None,
             #[cfg(feature = "encryption")]
             encryption_key,
             _phantom: PhantomData,
@@ -669,8 +676,19 @@ where
             return Ok(());
         };
         let count = repository::count_in_namespace(&self.conn, &self.namespace)?;
-        if count > max {
-            repository::delete_lru_n(&self.conn, &self.namespace, count - max)?;
+        if count <= max {
+            return Ok(());
+        }
+        let excess = count - max;
+        // If there's a callback, collect the paths before deleting.
+        if let Some(cb) = &self.evict_callback {
+            let paths = repository::list_lru_n_paths(&self.conn, &self.namespace, excess)?;
+            repository::delete_lru_n(&self.conn, &self.namespace, excess)?;
+            for p in &paths {
+                cb(p);
+            }
+        } else {
+            repository::delete_lru_n(&self.conn, &self.namespace, excess)?;
         }
         Ok(())
     }
@@ -775,11 +793,12 @@ impl GlobPattern {
     }
 }
 
-/// Expand a single `{a,b,c}` brace group in `pattern`.
+/// Expand **all** `{a,b,...}` brace groups in `pattern` recursively,
+/// producing the Cartesian product of all alternatives.
 ///
-/// Returns a `Vec` of concrete patterns with the braces replaced by each
-/// alternative.  If no brace group is found, returns a single-element vec
-/// with the original pattern.
+/// Examples:
+/// * `"*.{txt,md}"` → `["*.txt", "*.md"]`
+/// * `"{pre,post}_*.{txt,md}"` → `["pre_*.txt","pre_*.md","post_*.txt","post_*.md"]`
 fn expand_braces(pattern: &str) -> Vec<String> {
     if let (Some(open), Some(close_rel)) = (
         pattern.find('{'),
@@ -791,7 +810,7 @@ fn expand_braces(pattern: &str) -> Vec<String> {
         let inner = &pattern[open + 1..close];
         return inner
             .split(',')
-            .map(|alt| format!("{prefix}{alt}{suffix}"))
+            .flat_map(|alt| expand_braces(&format!("{prefix}{alt}{suffix}")))
             .collect();
     }
     vec![pattern.to_owned()]

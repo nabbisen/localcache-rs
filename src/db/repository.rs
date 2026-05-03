@@ -406,6 +406,7 @@ pub(crate) fn encoding_breakdown(
 // ---------------------------------------------------------------------------
 
 /// A row from `payloads` needed for re-encryption.
+#[cfg(feature = "encryption")]
 pub(crate) struct EncryptedPayloadRow {
     pub file_id: i64,
     pub content: Vec<u8>,
@@ -414,6 +415,7 @@ pub(crate) struct EncryptedPayloadRow {
 }
 
 /// Load all payload rows in `namespace` whose encoding ends with `-aes256gcm`.
+#[cfg(feature = "encryption")]
 pub(crate) fn load_encrypted_payloads(
     conn: &Connection,
     namespace: &str,
@@ -438,6 +440,7 @@ pub(crate) fn load_encrypted_payloads(
 }
 
 /// Update a payload row with new content (used by key rotation).
+#[cfg(feature = "encryption")]
 pub(crate) fn update_payload_content(
     tx: &Transaction,
     file_id: i64,
@@ -448,4 +451,30 @@ pub(crate) fn update_payload_content(
         params![new_content, file_id],
     )?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// on_evict support
+// ---------------------------------------------------------------------------
+
+/// Return the paths of the `n` least recently accessed entries in `namespace`
+/// **without** deleting them.  Used to call `on_evict` callbacks before
+/// the actual deletion.
+pub(crate) fn list_lru_n_paths(
+    conn: &Connection,
+    namespace: &str,
+    n: usize,
+) -> Result<Vec<std::path::PathBuf>, LocalFileCacheError> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT path FROM files
+         WHERE namespace = ?1
+         ORDER BY last_accessed_at ASC, updated_at ASC
+         LIMIT ?2",
+    )?;
+    let paths: Result<Vec<std::path::PathBuf>, _> = stmt
+        .query_map(params![namespace, n as i64], |r| {
+            Ok(std::path::PathBuf::from(r.get::<_, String>(0)?))
+        })?
+        .collect();
+    Ok(paths?)
 }
