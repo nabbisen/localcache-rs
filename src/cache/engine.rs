@@ -8,7 +8,7 @@ use std::time::Duration;
 use rusqlite::{Connection, OpenFlags};
 use serde::{Serialize, de::DeserializeOwned};
 
-use crate::cache::entry::{CacheEntry, CacheStatus, EntryInfo};
+use crate::cache::entry::{CacheEntry, CacheStatus, EntryInfo, PreloadReport};
 use crate::cache::options::{
     CacheOptions, ChangeDetectionMode, Codec, ScanOptions, is_memory_path,
 };
@@ -62,6 +62,7 @@ pub struct BatchSetReport {
 /// ```
 pub struct CacheEngine<T> {
     pub(crate) conn: Connection,
+    pub(crate) database_path: std::path::PathBuf,
     pub(crate) mode: ChangeDetectionMode,
     pub(crate) codec: Codec,
     pub(crate) namespace: String,
@@ -140,6 +141,7 @@ where
 
         Ok(Self {
             conn,
+            database_path: options.database_path.clone(),
             mode: options.change_detection_mode,
             codec: options.codec,
             namespace: options.namespace,
@@ -888,7 +890,139 @@ where
     }
 
     // ------------------------------------------------------------------
-    // Maintenance
+    // File-watching (watching feature)
+    // ------------------------------------------------------------------
+
+    /// Start a background file-system watcher for all currently cached entries.
+    ///
+    /// The watcher monitors source files using OS-native events (`inotify` on
+    /// Linux, `kqueue` on macOS, `ReadDirectoryChanges` on Windows).  When a
+    /// watched file is modified, renamed, or deleted, the corresponding cache
+    /// entry is automatically removed from the database and a [`WatchEvent`]
+    /// is sent on the event channel.
+    ///
+    /// Requires the `watching` Cargo feature.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use localcache::CacheEngine;
+    ///
+    /// let engine = CacheEngine::<Vec<f32>>::builder()
+    ///     .database("cache.sqlite3")
+    ///     .build()?;
+    ///
+    /// let watcher = engine.watcher()?;
+    /// for event in watcher.events() {
+    ///     println!("invalidated: {}", event.path.display());
+    /// }
+    /// # Ok::<(), localcache::LocalFileCacheError>(())
+    /// ```
+    #[cfg(feature = "watching")]
+    pub fn watcher(&self) -> Result<crate::cache::watcher::CacheWatcher<T>, LocalFileCacheError>
+    where
+        T: Send + 'static,
+    {
+        use std::sync::{Arc, Mutex};
+        // Build a minimal shared state for the watcher: it only needs to open
+        // its own DB connection to delete stale entries.  We pass an
+        // Arc<Mutex<CacheEngine<T>>> that wraps a *new* connection so the
+        // watcher callback (which runs on another thread) does not share
+        // SQLite connection with the caller.
+        let inner = Arc::new(Mutex::new(CacheEngine::open(
+            crate::cache::options::CacheOptions {
+                database_path: self.database_path.clone(),
+                change_detection_mode: self.mode,
+                codec: self.codec,
+                namespace: self.namespace.clone(),
+                ttl: self.ttl,
+                read_only: false,
+                payload_version: self.payload_version,
+                #[cfg(feature = "compression")]
+                compress_payloads: self.compress,
+                #[cfg(feature = "encryption")]
+                encryption_key: self.encryption_key.map(|k| k.to_vec()),
+                ..crate::cache::options::CacheOptions::default()
+            },
+        )?));
+        // Pre-load paths from *this* engine so the watcher knows what to watch.
+        let paths = self.keys(None)?;
+        crate::cache::watcher::CacheWatcher::new_with_paths(inner, paths)
+    }
+
+    // ------------------------------------------------------------------
+    // Bulk preload
+    // ------------------------------------------------------------------
+
+    /// Scan `dir` and cache every file using `factory` to compute the payload.
+    ///
+    /// `factory` receives the file path and must return `Ok(payload)` or an
+    /// error.  Files for which `factory` returns an error are skipped and
+    /// counted in [`PreloadReport::skipped`].
+    ///
+    /// Already-fresh entries are **not** recomputed — only missing or stale
+    /// files are processed.  Pass `force = true` to recompute every file
+    /// regardless.
+    ///
+    /// Returns a [`PreloadReport`] with counts of stored, skipped, and already
+    /// fresh entries.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use localcache::{CacheEngine, ScanOptions};
+    ///
+    /// let engine = CacheEngine::<Vec<f32>>::builder()
+    ///     .database("cache.sqlite3")
+    ///     .build()?;
+    ///
+    /// let report = engine.preload(
+    ///     ".",
+    ///     ScanOptions { recursive: true, ..Default::default() },
+    ///     false,
+    ///     |path| Ok(vec![path.to_string_lossy().len() as f32]),
+    /// )?;
+    ///
+    /// println!("stored={} skipped={} fresh={}",
+    ///     report.stored, report.skipped, report.already_fresh);
+    /// # Ok::<(), localcache::LocalFileCacheError>(())
+    /// ```
+    pub fn preload<P, F>(
+        &self,
+        dir: P,
+        options: crate::cache::options::ScanOptions,
+        force: bool,
+        factory: F,
+    ) -> Result<PreloadReport, LocalFileCacheError>
+    where
+        P: AsRef<Path>,
+        F: Fn(&Path) -> Result<T, Box<dyn std::error::Error + Send + Sync>>,
+    {
+        self.guard_write()?;
+        let scan = self.scan_dir_filtered(dir, options)?;
+        let mut report = PreloadReport::default();
+
+        for (path, status) in &scan {
+            if !force && *status == crate::cache::entry::CacheStatus::Fresh {
+                report.already_fresh += 1;
+                continue;
+            }
+            match factory(path) {
+                Ok(payload) => {
+                    self.set(path, &payload)?;
+                    report.stored += 1;
+                }
+                Err(e) => {
+                    report.skipped += 1;
+                    report.errors.push((path.clone(), e.to_string()));
+                }
+            }
+        }
+        Ok(report)
+    }
+
+    // ------------------------------------------------------------------
+    // Builder entrypoint
     // ------------------------------------------------------------------
 
     pub fn cleanup_missing_files(&self) -> Result<usize, LocalFileCacheError> {

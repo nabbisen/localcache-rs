@@ -11,6 +11,53 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.14.0] — 2026-05-03
+
+### Added
+
+- **`watching` Cargo feature** — background file-system watcher using
+  [`notify 8`](https://crates.io/crates/notify) (OS-native: `inotify` on
+  Linux, `kqueue` on macOS, `ReadDirectoryChanges` on Windows).  Zero
+  additional cost when the feature is disabled.
+- **`CacheWatcher<T>`** — a background watcher tied to a `CacheEngine`.
+  - Created via `CacheEngine::watcher()`.
+  - Automatically registers all cached paths at construction time using a
+    dedicated SQLite connection for the callback thread.
+  - When a watched file is modified, renamed, or deleted, the corresponding
+    cache entry is removed from the database and a `WatchEvent` is sent on
+    an internal `mpsc::sync_channel`.
+  - `watch(path)` / `unwatch(path)` — add/remove paths at runtime.
+  - `events()` — borrow the `mpsc::Receiver<WatchEvent>` (watcher must stay
+    alive while reading).
+  - `watched_count()` — number of entries in the watcher's engine snapshot.
+  - **Lifetime note**: dropping `CacheWatcher` stops the OS watcher and
+    closes the channel.  Use `events()` (which borrows) rather than
+    `into_receiver()` to keep the watcher alive.
+- **`WatchEvent { path, reason }`** — new public type.
+- **`InvalidationReason`** enum — `FileModified` | `FileRemoved` |
+  `FileRenamed`.
+- **`CacheEngine::preload(dir, opts, force, factory)`** — bulk-cache all
+  files in a directory using a user-supplied `factory` closure:
+  * `force = false` — skips entries that are already fresh (cheap check
+    before calling `factory`).
+  * `force = true` — recomputes every file unconditionally.
+  * Returns a `PreloadReport`.
+- **`PreloadReport { stored, already_fresh, skipped, errors }`** — new
+  public type summarising the preload outcome; per-file error strings for
+  skipped files.
+- **CLI `watch` subcommand** — prints live invalidation events in the format
+  `[YYYY-MM-DD HH:MM:SS] MODIFIED /path/to/file`.  Press Ctrl-C to stop.
+  Gracefully exits with an error message when the `watching` feature is not
+  compiled in.
+- **`watching` feature in `localcache-cli`** — opt-in:
+  `cargo build -p localcache-cli --features watching`.
+
+### Dependencies
+
+- `notify = "8"` added as optional dependency (`watching` feature).
+
+---
+
 ## [0.13.2] — 2026-05-03
 
 ### Changed
@@ -139,7 +186,8 @@ Namespaces, batch ops, TTL, PRAGMAs, schema migration.
 ## [0.1.0] — 2025-05-02
 Initial release.
 
-[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/v0.13.2...HEAD
+[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/nabbisen/localcache-rs/compare/v0.13.2...v0.14.0
 [0.13.2]: https://github.com/nabbisen/localcache-rs/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/nabbisen/localcache-rs/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/nabbisen/localcache-rs/compare/v0.12.0...v0.13.0

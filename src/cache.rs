@@ -7,3 +7,5 @@ pub(crate) mod engine;
 pub(crate) mod entry;
 pub(crate) mod options;
 pub(crate) mod query;
+#[cfg(feature = "watching")]
+pub(crate) mod watcher;

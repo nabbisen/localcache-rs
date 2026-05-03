@@ -111,6 +111,15 @@ enum Commands {
     /// Reports staleness reason, metadata differences, hash comparison, TTL
     /// remaining time, and payload version status.
     Inspect(InspectArgs),
+
+    /// Watch cached files for changes and print invalidation events.
+    ///
+    /// Monitors all source files that currently have a cache entry using
+    /// OS-native file-system events.  Prints a line for each invalidated
+    /// entry.  Press Ctrl-C to exit.
+    ///
+    /// Requires the `watching` Cargo feature in the library.
+    Watch,
 }
 
 #[derive(Args)]
@@ -251,6 +260,7 @@ fn run(cli: Cli) -> Result<(), LocalFileCacheError> {
         Commands::Migrate(args) => cmd_migrate(opts, args),
         Commands::Query(args) => cmd_query(opts, args),
         Commands::Inspect(args) => cmd_inspect(opts, args),
+        Commands::Watch => cmd_watch(opts),
     }
 }
 
@@ -680,9 +690,66 @@ fn cmd_inspect(opts: CacheOptions, args: InspectArgs) -> Result<(), LocalFileCac
     Ok(())
 }
 
+fn cmd_watch(opts: CacheOptions) -> Result<(), LocalFileCacheError> {
+    #[cfg(feature = "watching")]
+    {
+        use localcache::CacheWatcher;
+
+        let engine = localcache::CacheEngine::<Vec<u8>>::open(opts)?;
+        let count = engine.entry_count()?;
+
+        if count == 0 {
+            eprintln!("No cached entries to watch.");
+            return Ok(());
+        }
+
+        println!(
+            "Watching {} cached entr{} for changes. Press Ctrl-C to stop.",
+            count,
+            if count == 1 { "y" } else { "ies" }
+        );
+        println!("{}", "-".repeat(60));
+
+        let watcher: CacheWatcher<Vec<u8>> = engine.watcher()?;
+        let rx = watcher.events();
+
+        for event in rx.iter() {
+            let reason = match event.reason {
+                localcache::InvalidationReason::FileModified => "MODIFIED",
+                localcache::InvalidationReason::FileRemoved => "REMOVED ",
+                localcache::InvalidationReason::FileRenamed => "RENAMED ",
+            };
+            println!(
+                "[{}] {} {}",
+                fmt_ts(now_secs()),
+                reason,
+                event.path.display()
+            );
+        }
+        Ok(())
+    }
+    #[cfg(not(feature = "watching"))]
+    {
+        let _ = opts;
+        eprintln!("error: the `watch` command requires the `watching` feature.");
+        eprintln!("       Rebuild localcache-cli with: --features watching");
+        std::process::exit(1);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+#[cfg(feature = "watching")]
+/// Current Unix timestamp in seconds.
+fn now_secs() -> i64 {
+    use std::time::UNIX_EPOCH;
+    UNIX_EPOCH
+        .elapsed()
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
 
 /// Format a Unix timestamp as `YYYY-MM-DD HH:MM:SS`.
 fn fmt_ts(ts: i64) -> String {

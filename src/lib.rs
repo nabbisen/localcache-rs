@@ -37,7 +37,7 @@ pub use cache::builder::CacheEngineBuilder;
 pub use cache::engine::{BatchSetReport, CacheEngine};
 pub use cache::entry::{
     CacheEntry, CacheStats, CacheStatus, Diagnosis, EntryInfo, ExportRecord, FileMetadata,
-    MetadataDiff, PayloadVersionInfo,
+    MetadataDiff, PayloadVersionInfo, PreloadReport,
 };
 pub use cache::options::{
     CacheOptions, ChangeDetectionMode, Codec, JournalMode, ScanOptions, SynchronousMode,
@@ -45,3 +45,8 @@ pub use cache::options::{
 pub use cache::query::{QueryBuilder, SortOrder};
 pub use error::LocalFileCacheError;
 pub use pool::{CacheOptionsExt, ConnectionPool, SharedEngine, shared_engine};
+
+#[cfg(feature = "watching")]
+pub use cache::entry::{InvalidationReason, WatchEvent};
+#[cfg(feature = "watching")]
+pub use cache::watcher::CacheWatcher;

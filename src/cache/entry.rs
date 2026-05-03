@@ -162,3 +162,47 @@ pub struct PayloadVersionInfo {
     pub expected: u32,
     pub matches: bool,
 }
+
+// ---------------------------------------------------------------------------
+// File-watching types (watching feature)
+// ---------------------------------------------------------------------------
+
+/// The reason a cache entry was invalidated by the file-system watcher.
+#[cfg(feature = "watching")]
+#[derive(Debug, Clone)]
+pub enum InvalidationReason {
+    /// The source file was modified.
+    FileModified,
+    /// The source file was deleted or moved away.
+    FileRemoved,
+    /// The watcher detected a rename event affecting this path.
+    FileRenamed,
+}
+
+/// An event emitted by [`crate::CacheWatcher`] when a watched entry becomes
+/// stale.
+#[cfg(feature = "watching")]
+#[derive(Debug, Clone)]
+pub struct WatchEvent {
+    /// Canonical path of the invalidated source file.
+    pub path: std::path::PathBuf,
+    /// Reason for invalidation.
+    pub reason: InvalidationReason,
+}
+
+// ---------------------------------------------------------------------------
+// Preload report
+// ---------------------------------------------------------------------------
+
+/// Summary returned by [`crate::CacheEngine::preload`].
+#[derive(Debug, Default, Clone)]
+pub struct PreloadReport {
+    /// Number of entries successfully computed and stored.
+    pub stored: usize,
+    /// Number of entries that were already fresh (not recomputed).
+    pub already_fresh: usize,
+    /// Number of files skipped because `factory` returned an error.
+    pub skipped: usize,
+    /// Per-file error messages for skipped entries: `(path, error_string)`.
+    pub errors: Vec<(std::path::PathBuf, String)>,
+}

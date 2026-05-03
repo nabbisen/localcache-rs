@@ -7,7 +7,7 @@ resolver = "2"
 # `field.workspace = true`
 # --------------------------------------------------------------------------
 [workspace.package]
-version      = "0.13.2"
+version      = "0.14.0"
 edition      = "2024"
 rust-version = "1.85"
 authors      = ["nabbisen"]
@@ -32,6 +32,7 @@ zstd       = "0.13"
 serde_json = "1"
 aes-gcm    = "0.10"
 tracing    = "0.1"
+notify     = "8"
 # cli
 clap       = { version = "4",    features = ["derive"] }
 # dev / bench
@@ -72,6 +73,9 @@ encryption  = ["dep:aes-gcm"]
 ## Enables `tracing` instrumentation on key cache operations (zero-cost when
 ## disabled — all spans are compiled out).
 tracing     = ["dep:tracing"]
+## Enables background file-system watching via the `notify` crate.
+## Provides `CacheWatcher<T>` and `CacheEngine::watcher()`.
+watching    = ["dep:notify"]
 
 [dependencies]
 rusqlite   = { workspace = true }
@@ -85,6 +89,7 @@ zstd       = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 aes-gcm    = { workspace = true, optional = true }
 tracing    = { workspace = true, optional = true }
+notify     = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile   = { workspace = true }
