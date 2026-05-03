@@ -1,22 +1,19 @@
 //! Change-detection strategies.
 //!
-//! Each [`ChangeDetectionMode`] variant maps to a distinct algorithm for
-//! deciding whether the on-disk file still matches the cached metadata.
+//! Each [`ChangeDetectionMode`] variant maps to a distinct algorithm.
 
 use std::path::Path;
 
 use crate::cache::entry::CacheStatus;
 use crate::cache::options::ChangeDetectionMode;
-use crate::detection::hash::compute_full_hash;
+use crate::detection::hash::{compute_full_hash, compute_partial_hash, is_partial_hash};
 use crate::detection::metadata::{FileMetadata, collect_metadata};
 use crate::error::LocalFileCacheError;
 
-/// Determine whether a file is [`CacheStatus::Fresh`] or [`CacheStatus::Stale`]
-/// by comparing the `stored` metadata (from the database) with the current
-/// state of the file on disk.
+/// Compare the on-disk file against `stored` metadata using `mode`.
 ///
-/// The caller must have already confirmed that both the DB record and the
-/// on-disk file exist before calling this function.
+/// The caller must have already verified that both the DB record and the
+/// on-disk file exist.
 pub(crate) fn detect_change(
     path: &Path,
     stored: &FileMetadata,
@@ -25,9 +22,7 @@ pub(crate) fn detect_change(
     match mode {
         ChangeDetectionMode::MetadataOnly => detect_metadata_only(path, stored),
         ChangeDetectionMode::MetadataThenPartialHash => {
-            // Initial implementation falls back to full hash; partial-hash
-            // tuning is deferred to a future release.
-            detect_metadata_then_full_hash(path, stored)
+            detect_metadata_then_partial_hash(path, stored)
         }
         ChangeDetectionMode::MetadataThenFullHash => detect_metadata_then_full_hash(path, stored),
         ChangeDetectionMode::StrictFullHash => detect_strict_full_hash(path, stored),
@@ -35,7 +30,7 @@ pub(crate) fn detect_change(
 }
 
 // ---------------------------------------------------------------------------
-// Internal helpers
+// Per-mode implementations
 // ---------------------------------------------------------------------------
 
 fn detect_metadata_only(
@@ -43,10 +38,37 @@ fn detect_metadata_only(
     stored: &FileMetadata,
 ) -> Result<CacheStatus, LocalFileCacheError> {
     let current = collect_metadata(path)?;
-    if stored.mtime == current.mtime && stored.file_size == current.file_size {
+    if metadata_matches(stored, &current) {
         Ok(CacheStatus::Fresh)
     } else {
         Ok(CacheStatus::Stale)
+    }
+}
+
+fn detect_metadata_then_partial_hash(
+    path: &Path,
+    stored: &FileMetadata,
+) -> Result<CacheStatus, LocalFileCacheError> {
+    let current = collect_metadata(path)?;
+    if metadata_matches(stored, &current) {
+        return Ok(CacheStatus::Fresh);
+    }
+
+    // Metadata changed — confirm with a hash.
+    match &stored.hash {
+        None => Ok(CacheStatus::Stale),
+        Some(stored_hash) => {
+            if is_partial_hash(stored_hash) {
+                // Stored hash is partial: compute a new partial hash.
+                let new_hash = compute_partial_hash(path)?;
+                freshen_if_equal(&new_hash, stored_hash)
+            } else {
+                // Stored hash is a full hash (entry written with a different
+                // mode).  Fall back to full comparison to stay correct.
+                let new_hash = compute_full_hash(path)?;
+                freshen_if_equal(&new_hash, stored_hash)
+            }
+        }
     }
 }
 
@@ -55,35 +77,55 @@ fn detect_metadata_then_full_hash(
     stored: &FileMetadata,
 ) -> Result<CacheStatus, LocalFileCacheError> {
     let current = collect_metadata(path)?;
-    // Fast path: if metadata matches, trust it as fresh.
-    if stored.mtime == current.mtime && stored.file_size == current.file_size {
+    if metadata_matches(stored, &current) {
         return Ok(CacheStatus::Fresh);
     }
-    // Metadata differs; confirm with a full hash before declaring stale.
-    compare_hash(path, stored)
+    compare_full_hash(path, stored)
 }
 
 fn detect_strict_full_hash(
     path: &Path,
     stored: &FileMetadata,
 ) -> Result<CacheStatus, LocalFileCacheError> {
-    compare_hash(path, stored)
+    compare_full_hash(path, stored)
 }
 
-/// Compare the stored hash with a freshly computed hash of `path`.
+// ---------------------------------------------------------------------------
+// Private helpers
+// ---------------------------------------------------------------------------
+
+#[inline]
+fn metadata_matches(stored: &FileMetadata, current: &FileMetadata) -> bool {
+    stored.mtime == current.mtime && stored.file_size == current.file_size
+}
+
+/// Compare the stored full hash with a freshly computed full hash.
 ///
-/// If no hash was stored (i.e., the entry was originally saved with a
-/// metadata-only mode), the file is conservatively treated as stale.
-fn compare_hash(path: &Path, stored: &FileMetadata) -> Result<CacheStatus, LocalFileCacheError> {
+/// If no hash was stored (entry saved with `MetadataOnly`) the entry is
+/// conservatively treated as stale.
+fn compare_full_hash(
+    path: &Path,
+    stored: &FileMetadata,
+) -> Result<CacheStatus, LocalFileCacheError> {
     match &stored.hash {
         None => Ok(CacheStatus::Stale),
         Some(stored_hash) => {
-            let current_hash = compute_full_hash(path)?;
-            if *stored_hash == current_hash {
-                Ok(CacheStatus::Fresh)
-            } else {
-                Ok(CacheStatus::Stale)
+            // Partial hash stored but caller wants full comparison: be
+            // conservative and treat as stale so the caller re-caches.
+            if is_partial_hash(stored_hash) {
+                return Ok(CacheStatus::Stale);
             }
+            let new_hash = compute_full_hash(path)?;
+            freshen_if_equal(&new_hash, stored_hash)
         }
+    }
+}
+
+#[inline]
+fn freshen_if_equal(a: &str, b: &str) -> Result<CacheStatus, LocalFileCacheError> {
+    if a == b {
+        Ok(CacheStatus::Fresh)
+    } else {
+        Ok(CacheStatus::Stale)
     }
 }

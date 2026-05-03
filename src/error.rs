@@ -28,4 +28,8 @@ pub enum LocalFileCacheError {
     /// The provided path cannot be resolved to a valid, canonical path.
     #[error("invalid path: {path}")]
     InvalidPath { path: PathBuf },
+
+    /// A write operation was attempted on a read-only [`crate::CacheEngine`].
+    #[error("operation not permitted: cache is open in read-only mode")]
+    ReadOnly,
 }

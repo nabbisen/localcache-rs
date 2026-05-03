@@ -8,28 +8,33 @@ use std::time::Duration;
 pub enum ChangeDetectionMode {
     /// Compare only `mtime` and `file_size`.
     MetadataOnly,
-    /// Metadata first; on mismatch verify with a partial hash.
-    /// *v0.1–v0.2: falls back to a full BLAKE3 hash.*
+
+    /// Metadata first; on mismatch verify with a **partial** BLAKE3 hash.
+    ///
+    /// Reads the first 64 KiB and last 64 KiB of the file (128 KiB total I/O
+    /// maximum per check).  For files smaller than 128 KiB the entire file is
+    /// hashed, which is equivalent to a full hash.
+    ///
+    /// Partial hashes are stored with a `"partial:"` prefix so they can be
+    /// distinguished from full hashes written by other modes.
     MetadataThenPartialHash,
+
     /// Metadata first; on mismatch verify with a full BLAKE3 hash.
     MetadataThenFullHash,
+
     /// Always compute a full BLAKE3 hash regardless of metadata.
     StrictFullHash,
 }
 
 /// SQLite journal mode.
-///
-/// See the [SQLite documentation](https://www.sqlite.org/pragma.html#pragma_journal_mode)
-/// for a detailed description of each mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum JournalMode {
-    /// Write-Ahead Logging — the default and recommended mode for most workloads.
-    /// Allows concurrent reads while a write is in progress.
+    /// Write-Ahead Logging — recommended for most workloads.
     #[default]
     Wal,
     /// The classic rollback journal.
     Delete,
-    /// In-memory journal (data is lost on crash — use only for ephemeral caches).
+    /// In-memory journal (data is lost on crash).
     Memory,
 }
 
@@ -44,17 +49,14 @@ impl JournalMode {
 }
 
 /// SQLite `synchronous` pragma.
-///
-/// Controls how aggressively SQLite flushes data to storage.  Lower values are
-/// faster but offer fewer durability guarantees.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SynchronousMode {
-    /// No `fsync` calls — fastest but data may be lost on OS crash.
+    /// No `fsync` calls — fastest but fewest durability guarantees.
     Off,
     /// `fsync` at critical moments — a good balance of speed and safety.
     #[default]
     Normal,
-    /// `fsync` at every checkpoint — safest but slowest.
+    /// `fsync` at every checkpoint.
     Full,
     /// Like `Full` plus extra syncs on directory entries.
     Extra,
@@ -74,33 +76,47 @@ impl SynchronousMode {
 /// Configuration for opening a [`crate::CacheEngine`].
 #[derive(Debug, Clone)]
 pub struct CacheOptions {
-    /// Path to the SQLite database file.  Created if it does not exist yet.
+    /// Path to the SQLite database file, or `":memory:"` for an in-memory
+    /// database (useful in tests).
+    ///
+    /// An in-memory database exists only for the lifetime of the
+    /// [`crate::CacheEngine`] instance and is not shared between instances.
     pub database_path: PathBuf,
 
     /// Algorithm used to decide whether a cached entry is still valid.
     pub change_detection_mode: ChangeDetectionMode,
 
     /// SQLite journal mode.  Defaults to [`JournalMode::Wal`].
+    ///
+    /// Ignored for in-memory databases.
     pub journal_mode: JournalMode,
 
     /// SQLite `synchronous` setting.  Defaults to [`SynchronousMode::Normal`].
+    ///
+    /// Ignored for in-memory databases.
     pub synchronous: SynchronousMode,
 
     /// Optional time-to-live for cache entries.
     ///
     /// When set, [`crate::CacheEngine::get_if_fresh`] and
-    /// [`crate::CacheEngine::batch_get_fresh`] return `None` for entries whose
-    /// `updated_at` timestamp is older than `ttl`.
-    ///
-    /// `None` (the default) means entries never expire by age.
+    /// [`crate::CacheEngine::batch_get_fresh`] return `None` for entries older
+    /// than `ttl`.  `None` (default) means entries never expire by age.
     pub ttl: Option<Duration>,
 
-    /// Logical namespace for cache entries.
-    ///
-    /// Multiple `CacheEngine` instances can share the same SQLite file while
-    /// keeping their entries isolated by using distinct namespaces.  Defaults
-    /// to `"default"`.
+    /// Logical namespace for cache entries.  Defaults to `"default"`.
     pub namespace: String,
+
+    /// Open the database in read-only mode.
+    ///
+    /// In read-only mode all write operations (`set`, `batch_set`, `remove`,
+    /// `cleanup_*`, `shrink_database`) return
+    /// [`crate::LocalFileCacheError::ReadOnly`].
+    ///
+    /// Incompatible with `database_path = ":memory:"` (read-only in-memory
+    /// databases are empty and cannot be written to, making them useless).
+    ///
+    /// Defaults to `false`.
+    pub read_only: bool,
 }
 
 impl Default for CacheOptions {
@@ -112,6 +128,16 @@ impl Default for CacheOptions {
             synchronous: SynchronousMode::Normal,
             ttl: None,
             namespace: "default".to_owned(),
+            read_only: false,
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers used by the engine
+// ---------------------------------------------------------------------------
+
+/// Returns `true` when `database_path` refers to an in-memory database.
+pub(crate) fn is_memory_path(path: &std::path::Path) -> bool {
+    path == std::path::Path::new(":memory:")
 }

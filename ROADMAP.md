@@ -7,7 +7,7 @@
 - [x] `check_status` — `Fresh` / `Stale` / `Missing`
 - [x] `cleanup_missing_files` / `shrink_database`
 - [x] `MetadataOnly` / `MetadataThenFullHash` / `StrictFullHash` change detection
-- [x] `MetadataThenPartialHash` (falls back to full hash in this phase)
+- [x] `MetadataThenPartialHash` (fell back to full hash in this phase)
 - [x] bincode serialisation for arbitrary `T: Serialize + DeserializeOwned`
 - [x] Atomic `set` via SQLite transactions
 - [x] `ON DELETE CASCADE` for payload cleanup
@@ -17,18 +17,19 @@
 
 - [x] `batch_set` / `batch_get` / `batch_get_fresh` API
 - [x] `remove` accepts paths that no longer exist on disk
-- [x] Configurable `journal_mode` / `synchronous` pragma (`JournalMode`, `SynchronousMode`)
+- [x] Configurable `journal_mode` / `synchronous` pragma
 - [x] Optional `ttl` (time-to-live) for cache entries
 - [x] `cache_namespace` — multiple independent caches in a single DB
 - [x] Automatic schema migration v1 → v2
 - [x] `cleanup_expired` maintenance helper
 
-## Phase 3 — Performance (v0.3.x)
+## Phase 3 — Performance (v0.3.x) ✅
 
-- [ ] True `MetadataThenPartialHash` (head + tail sampling)
-- [ ] Streaming bincode for large payloads
-- [ ] `read_only` open mode
-- [ ] In-memory backend for testing (`memory://`)
+- [x] True `MetadataThenPartialHash` — head + tail sampling (64 KiB each)
+- [x] Streaming bincode — pre-allocated `Vec` via `serialized_size`, zero-copy
+      `deserialize_from` with `Cursor`
+- [x] `read_only` open mode — all write operations return `ReadOnly` error
+- [x] In-memory backend — `database_path: ":memory:"` for ephemeral / test use
 
 ## Phase 4 — Async & Ecosystem (v0.4.x)
 

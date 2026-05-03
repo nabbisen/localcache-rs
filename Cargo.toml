@@ -1,11 +1,11 @@
 [package]
 name = "localcache"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 authors = ["nabbisen"]
 license = "Apache-2.0"
 description = "A Rust library for caching expensive computation results associated with local files"
-repository = "https://github.com/nabbisen/localcache"
+repository = "https://github.com/nabbisen/localcach-rs"
 keywords = ["cache", "local-file", "sqlite", "embedding", "memoize"]
 categories = ["caching", "filesystem"]
 

@@ -4,13 +4,13 @@ use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OpenFlags};
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::cache::entry::{CacheEntry, CacheStatus};
-use crate::cache::options::{CacheOptions, ChangeDetectionMode};
+use crate::cache::options::{CacheOptions, ChangeDetectionMode, is_memory_path};
 use crate::db::{repository, schema};
-use crate::detection::hash::compute_full_hash;
+use crate::detection::hash::{compute_full_hash, compute_partial_hash};
 use crate::detection::metadata::collect_metadata;
 use crate::detection::strategy::detect_change;
 use crate::error::LocalFileCacheError;
@@ -26,7 +26,7 @@ use crate::serialization::{deserialize_payload, serialize_payload};
 pub struct BatchSetReport {
     /// Number of entries that were stored successfully.
     pub succeeded: usize,
-    /// Per-item errors: `(canonical_path_or_raw_input, error)`.
+    /// Per-item errors: `(path, error)`.
     pub failed: Vec<(PathBuf, LocalFileCacheError)>,
 }
 
@@ -43,6 +43,19 @@ pub struct BatchSetReport {
 ///
 /// `T` must implement [`serde::Serialize`] and [`serde::de::DeserializeOwned`]
 /// because payloads are stored as bincode bytes.
+///
+/// ## In-memory databases
+///
+/// Pass `database_path: ":memory:".into()` to use an in-memory SQLite
+/// database.  The cache only persists for the lifetime of the engine instance
+/// and is not shared with other instances.  This mode is particularly useful
+/// in unit tests.
+///
+/// ## Read-only mode
+///
+/// Set `read_only: true` in [`CacheOptions`] to open an existing database
+/// without write access.  All mutation methods return
+/// [`LocalFileCacheError::ReadOnly`].
 ///
 /// # Example
 ///
@@ -67,6 +80,7 @@ pub struct CacheEngine<T> {
     mode: ChangeDetectionMode,
     namespace: String,
     ttl: Option<Duration>,
+    read_only: bool,
     _phantom: PhantomData<T>,
 }
 
@@ -80,25 +94,46 @@ where
 
     /// Open (or create) a [`CacheEngine`] using `options`.
     ///
-    /// The SQLite database file is created if it does not exist.  The schema
-    /// is applied (and migrated if necessary) on every open.
+    /// * For a regular file path the SQLite database is created if it does not
+    ///   exist yet, and the schema is applied (and migrated if necessary).
+    /// * For `":memory:"` an in-memory database is created fresh.
+    /// * For `read_only: true` the database is opened with
+    ///   `SQLITE_OPEN_READ_ONLY`; the schema is **not** modified.
     pub fn open(options: CacheOptions) -> Result<Self, LocalFileCacheError> {
-        let conn = Connection::open(&options.database_path)?;
+        let is_memory = is_memory_path(&options.database_path);
 
-        // Apply configurable PRAGMAs before any DML.
-        conn.execute_batch(&format!(
-            "PRAGMA journal_mode = {}; PRAGMA synchronous = {};",
-            options.journal_mode.as_str(),
-            options.synchronous.as_str(),
-        ))?;
+        let conn = if is_memory {
+            Connection::open_in_memory()?
+        } else if options.read_only {
+            Connection::open_with_flags(
+                &options.database_path,
+                OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            )?
+        } else {
+            Connection::open(&options.database_path)?
+        };
 
-        schema::initialize(&conn)?;
+        if is_memory || !options.read_only {
+            // Apply configurable PRAGMAs for writable connections.
+            if !is_memory {
+                conn.execute_batch(&format!(
+                    "PRAGMA journal_mode = {}; PRAGMA synchronous = {};",
+                    options.journal_mode.as_str(),
+                    options.synchronous.as_str(),
+                ))?;
+            }
+            schema::initialize(&conn)?;
+        } else {
+            // Read-only: enable FK enforcement but skip DDL.
+            schema::enable_foreign_keys(&conn)?;
+        }
 
         Ok(Self {
             conn,
             mode: options.change_detection_mode,
             namespace: options.namespace,
             ttl: options.ttl,
+            read_only: options.read_only,
             _phantom: PhantomData,
         })
     }
@@ -109,9 +144,8 @@ where
 
     /// Return the cached entry for `path`, if one exists.
     ///
-    /// This is a pure database read; it does **not** check whether the
-    /// on-disk file has changed.  Use [`get_if_fresh`](Self::get_if_fresh)
-    /// when you need change detection.
+    /// No change-detection is performed.  Use
+    /// [`get_if_fresh`](Self::get_if_fresh) for that.
     pub fn get<P>(&self, path: P) -> Result<Option<CacheEntry<T>>, LocalFileCacheError>
     where
         P: AsRef<Path>,
@@ -122,11 +156,9 @@ where
         let Some(row) = repository::find_file(&self.conn, &self.namespace, path_str)? else {
             return Ok(None);
         };
-
         let Some(bytes) = repository::load_payload(&self.conn, row.id)? else {
             return Ok(None);
         };
-
         let payload: T = deserialize_payload(&bytes)?;
         Ok(Some(CacheEntry {
             path: PathBuf::from(&row.path),
@@ -137,11 +169,8 @@ where
 
     /// Return the cached entry for `path` only if it is still fresh.
     ///
-    /// Returns `Ok(None)` when:
-    /// * the file does not exist on disk,
-    /// * no cache entry exists,
-    /// * the change-detection check reports [`CacheStatus::Stale`],
-    /// * or the entry is older than the configured TTL.
+    /// Returns `Ok(None)` when the file is missing, the entry is missing,
+    /// the entry is stale, or the entry has exceeded the configured TTL.
     pub fn get_if_fresh<P>(&self, path: P) -> Result<Option<CacheEntry<T>>, LocalFileCacheError>
     where
         P: AsRef<Path>,
@@ -156,20 +185,16 @@ where
         let Some(row) = repository::find_file(&self.conn, &self.namespace, path_str)? else {
             return Ok(None);
         };
-
         if is_expired(row.updated_at, self.ttl) {
             return Ok(None);
         }
-
         match detect_change(&canonical, &row.metadata, self.mode)? {
             CacheStatus::Stale | CacheStatus::Missing => return Ok(None),
             CacheStatus::Fresh => {}
         }
-
         let Some(bytes) = repository::load_payload(&self.conn, row.id)? else {
             return Ok(None);
         };
-
         let payload: T = deserialize_payload(&bytes)?;
         Ok(Some(CacheEntry {
             path: PathBuf::from(&row.path),
@@ -182,12 +207,7 @@ where
     // Batch reads
     // ------------------------------------------------------------------
 
-    /// Retrieve multiple cache entries in a single pass.
-    ///
-    /// Returns one `Result<Option<CacheEntry<T>>, LocalFileCacheError>` per
-    /// input path, in the same order.  Individual errors do not abort the
-    /// remaining lookups.  No change-detection is performed; use
-    /// [`batch_get_fresh`](Self::batch_get_fresh) for that.
+    /// Retrieve multiple entries in a single pass (no change-detection).
     pub fn batch_get<P>(
         &self,
         paths: &[P],
@@ -198,10 +218,7 @@ where
         paths.iter().map(|p| self.get(p.as_ref())).collect()
     }
 
-    /// Retrieve multiple cache entries, returning only those that are still fresh.
-    ///
-    /// Like [`batch_get`](Self::batch_get) but applies change-detection and TTL
-    /// checks to each entry.
+    /// Retrieve multiple entries, returning only those that are still fresh.
     pub fn batch_get_fresh<P>(
         &self,
         paths: &[P],
@@ -220,49 +237,33 @@ where
     // ------------------------------------------------------------------
 
     /// Store `payload` for `path`.
-    ///
-    /// Current file metadata is captured automatically.  If an entry already
-    /// exists it is replaced atomically within a single transaction.
     pub fn set<P>(&self, path: P, payload: &T) -> Result<(), LocalFileCacheError>
     where
         P: AsRef<Path>,
     {
+        self.guard_write()?;
         let canonical = normalize_path(path.as_ref())?;
         let path_str = path_to_str(&canonical)?;
 
         let mut metadata = collect_metadata(&canonical)?;
-        if needs_hash(self.mode) {
-            metadata.hash = Some(compute_full_hash(&canonical)?);
-        }
+        metadata.hash = compute_hash_for_mode(&canonical, self.mode)?;
 
         let bytes = serialize_payload(payload)?;
         repository::upsert(&self.conn, &self.namespace, path_str, &metadata, &bytes)?;
         Ok(())
     }
 
-    /// Store multiple `(path, payload)` pairs inside a **single transaction**.
-    ///
-    /// This is significantly faster than calling [`set`](Self::set) in a loop
-    /// because the SQLite commit overhead is paid only once.
-    ///
-    /// Failures for individual items are collected in
-    /// [`BatchSetReport::failed`] rather than aborting the whole batch.
-    /// However, if the transaction itself cannot be opened or committed the
-    /// method returns an `Err`.
-    ///
-    /// # Atomicity
-    ///
-    /// All items that did not produce per-item errors are committed together.
-    /// If the final commit fails, no items are stored.
+    /// Store multiple `(path, payload)` pairs in a single transaction.
     pub fn batch_set<P>(&self, items: &[(P, T)]) -> Result<BatchSetReport, LocalFileCacheError>
     where
         P: AsRef<Path>,
     {
+        self.guard_write()?;
+
         let mut report = BatchSetReport::default();
         let mut prepared: Vec<(String, crate::detection::metadata::FileMetadata, Vec<u8>)> =
             Vec::with_capacity(items.len());
 
-        // Phase 1: normalise, collect metadata, serialise — all outside the TX.
         for (path, payload) in items {
             let canonical = match normalize_path(path.as_ref()) {
                 Ok(p) => p,
@@ -271,7 +272,6 @@ where
                     continue;
                 }
             };
-
             let path_str = match path_to_str(&canonical) {
                 Ok(s) => s.to_owned(),
                 Err(e) => {
@@ -279,7 +279,6 @@ where
                     continue;
                 }
             };
-
             let mut metadata = match collect_metadata(&canonical) {
                 Ok(m) => m,
                 Err(e) => {
@@ -287,17 +286,13 @@ where
                     continue;
                 }
             };
-
-            if needs_hash(self.mode) {
-                match compute_full_hash(&canonical) {
-                    Ok(h) => metadata.hash = Some(h),
-                    Err(e) => {
-                        report.failed.push((canonical.clone(), e));
-                        continue;
-                    }
+            match compute_hash_for_mode(&canonical, self.mode) {
+                Ok(h) => metadata.hash = h,
+                Err(e) => {
+                    report.failed.push((canonical.clone(), e));
+                    continue;
                 }
             }
-
             let bytes = match serialize_payload(payload) {
                 Ok(b) => b,
                 Err(e) => {
@@ -305,11 +300,9 @@ where
                     continue;
                 }
             };
-
             prepared.push((path_str, metadata, bytes));
         }
 
-        // Phase 2: write all prepared items in a single transaction.
         let tx = self.conn.unchecked_transaction()?;
         for (path_str, metadata, bytes) in &prepared {
             repository::upsert_in_tx(&tx, &self.namespace, path_str, metadata, bytes)?;
@@ -326,17 +319,13 @@ where
 
     /// Remove the cache entry for `path`.
     ///
-    /// Returns `true` if an entry existed and was deleted, `false` otherwise.
-    ///
-    /// Works correctly even when `path` no longer exists on disk: the method
-    /// first attempts canonical resolution, and if the file is missing it
-    /// falls back to searching the database for a stored path matching the
-    /// string representation of the input.
+    /// Returns `true` if an entry was deleted.  Works even when the source
+    /// file no longer exists on disk.
     pub fn remove<P>(&self, path: P) -> Result<bool, LocalFileCacheError>
     where
         P: AsRef<Path>,
     {
-        // Try canonical first (file exists on disk).
+        self.guard_write()?;
         match normalize_path(path.as_ref()) {
             Ok(canonical) => {
                 let path_str = path_to_str(&canonical)?;
@@ -346,28 +335,22 @@ where
             Err(e) => return Err(e),
         }
 
-        // File is gone — look up by the string representation of the path as
-        // stored in the DB. We try the absolute path first, then the raw input.
+        // File is gone — search the DB by stored path string.
         let raw = path.as_ref().to_string_lossy();
-
-        // Check if any stored path ends with / matches the provided string
-        // (handles the common case where an absolute path was stored).
         let stored_paths = repository::all_paths_in_namespace(&self.conn, &self.namespace)?;
         for stored in &stored_paths {
             if stored.as_str() == raw.as_ref()
-                || std::path::Path::new(stored)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    == std::path::Path::new(raw.as_ref())
+                || (stored.ends_with(raw.as_ref())
+                    && std::path::Path::new(stored)
                         .file_name()
                         .and_then(|n| n.to_str())
-                    && stored.ends_with(raw.as_ref())
+                        == std::path::Path::new(raw.as_ref())
+                            .file_name()
+                            .and_then(|n| n.to_str()))
             {
                 return repository::delete_by_path(&self.conn, &self.namespace, stored);
             }
         }
-
-        // Direct match on raw string (last resort).
         repository::delete_by_path(&self.conn, &self.namespace, raw.as_ref())
     }
 
@@ -375,10 +358,7 @@ where
     // Status
     // ------------------------------------------------------------------
 
-    /// Check whether the cache entry for `path` is [`CacheStatus::Fresh`],
-    /// [`CacheStatus::Stale`], or [`CacheStatus::Missing`].
-    ///
-    /// This reads metadata from disk but does **not** load the payload.
+    /// Check the freshness of the cache entry for `path`.
     pub fn check_status<P>(&self, path: P) -> Result<CacheStatus, LocalFileCacheError>
     where
         P: AsRef<Path>,
@@ -393,11 +373,9 @@ where
         let Some(row) = repository::find_file(&self.conn, &self.namespace, path_str)? else {
             return Ok(CacheStatus::Missing);
         };
-
         if is_expired(row.updated_at, self.ttl) {
             return Ok(CacheStatus::Stale);
         }
-
         detect_change(&canonical, &row.metadata, self.mode)
     }
 
@@ -405,11 +383,9 @@ where
     // Maintenance
     // ------------------------------------------------------------------
 
-    /// Delete cache entries (in the current namespace) whose source files no
-    /// longer exist on disk.
-    ///
-    /// Returns the number of entries removed.
+    /// Delete entries in the current namespace whose source files are missing.
     pub fn cleanup_missing_files(&self) -> Result<usize, LocalFileCacheError> {
+        self.guard_write()?;
         let paths = repository::all_paths_in_namespace(&self.conn, &self.namespace)?;
         let mut removed = 0;
         for p in &paths {
@@ -421,12 +397,11 @@ where
         Ok(removed)
     }
 
-    /// Delete cache entries (in the current namespace) that have exceeded the
-    /// configured TTL.
+    /// Delete entries in the current namespace that have exceeded the TTL.
     ///
-    /// Returns the number of entries removed.  If no TTL is configured the
-    /// method is a no-op and returns `0`.
+    /// Returns `0` if no TTL is configured.
     pub fn cleanup_expired(&self) -> Result<usize, LocalFileCacheError> {
+        self.guard_write()?;
         let Some(ttl) = self.ttl else {
             return Ok(0);
         };
@@ -441,11 +416,9 @@ where
         Ok(removed)
     }
 
-    /// Reclaim disk space by running SQLite's `VACUUM` command.
-    ///
-    /// This is an explicit, potentially slow operation and is never called
-    /// automatically by the library.
+    /// Reclaim disk space via SQLite `VACUUM`.
     pub fn shrink_database(&self) -> Result<(), LocalFileCacheError> {
+        self.guard_write()?;
         self.conn.execute_batch("VACUUM;")?;
         Ok(())
     }
@@ -462,21 +435,39 @@ fn path_to_str(path: &Path) -> Result<&str, LocalFileCacheError> {
         })
 }
 
-fn needs_hash(mode: ChangeDetectionMode) -> bool {
-    matches!(
-        mode,
-        ChangeDetectionMode::MetadataThenPartialHash
-            | ChangeDetectionMode::MetadataThenFullHash
-            | ChangeDetectionMode::StrictFullHash
-    )
+/// Compute the appropriate hash (or `None`) for the given detection mode.
+fn compute_hash_for_mode(
+    path: &Path,
+    mode: ChangeDetectionMode,
+) -> Result<Option<String>, LocalFileCacheError> {
+    match mode {
+        ChangeDetectionMode::MetadataOnly => Ok(None),
+        ChangeDetectionMode::MetadataThenPartialHash => Ok(Some(compute_partial_hash(path)?)),
+        ChangeDetectionMode::MetadataThenFullHash | ChangeDetectionMode::StrictFullHash => {
+            Ok(Some(compute_full_hash(path)?))
+        }
+    }
 }
 
-/// Return `true` if `updated_at` is older than `ttl` from now.
 fn is_expired(updated_at: i64, ttl: Option<Duration>) -> bool {
     let Some(ttl) = ttl else {
         return false;
     };
     let now = repository::now_secs();
-    let age = now.saturating_sub(updated_at);
-    age as u64 >= ttl.as_secs()
+    now.saturating_sub(updated_at) as u64 >= ttl.as_secs()
+}
+
+impl<T> CacheEngine<T>
+where
+    T: Serialize + DeserializeOwned,
+{
+    /// Return `Err(ReadOnly)` if the engine is in read-only mode.
+    #[inline]
+    fn guard_write(&self) -> Result<(), LocalFileCacheError> {
+        if self.read_only {
+            Err(LocalFileCacheError::ReadOnly)
+        } else {
+            Ok(())
+        }
+    }
 }
