@@ -156,6 +156,21 @@ where
 // Codec helpers
 // ---------------------------------------------------------------------------
 
+/// The bincode configuration that matches the bincode 1.x wire format.
+///
+/// Using `config::legacy()` ensures that payloads written by any 0.x release
+/// of `localcache` (which used bincode 1.3) can still be decoded after
+/// upgrading to bincode 2.x.  New writes also use this format so that
+/// rollbacks remain safe.
+#[inline]
+fn bincode_cfg() -> bincode::config::Configuration<
+    bincode::config::LittleEndian,
+    bincode::config::Fixint,
+    bincode::config::NoLimit,
+> {
+    bincode::config::legacy()
+}
+
 fn serialize_with_codec<T: Serialize>(
     payload: &T,
     codec: Codec,
@@ -168,16 +183,16 @@ fn serialize_with_codec<T: Serialize>(
 }
 
 pub(crate) fn serialize_bincode<T: Serialize>(payload: &T) -> Result<Vec<u8>, LocalFileCacheError> {
-    let capacity = bincode::serialized_size(payload).unwrap_or(256) as usize;
-    let mut buf = Vec::with_capacity(capacity);
-    bincode::serialize_into(&mut buf, payload).map_err(LocalFileCacheError::Serialization)?;
-    Ok(buf)
+    bincode::serde::encode_to_vec(payload, bincode_cfg())
+        .map_err(|e| LocalFileCacheError::Serialization(e.to_string()))
 }
 
 pub(crate) fn deserialize_bincode<T: DeserializeOwned>(
     bytes: &[u8],
 ) -> Result<T, LocalFileCacheError> {
-    bincode::deserialize_from(Cursor::new(bytes)).map_err(LocalFileCacheError::Serialization)
+    bincode::serde::decode_from_slice(bytes, bincode_cfg())
+        .map(|(val, _)| val)
+        .map_err(|e| LocalFileCacheError::Serialization(e.to_string()))
 }
 
 #[cfg(feature = "json")]

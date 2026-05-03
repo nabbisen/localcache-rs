@@ -13,9 +13,9 @@ pub enum LocalFileCacheError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 
-    /// A serialization or deserialization error via bincode.
+    /// A serialization or deserialization error (bincode encode/decode failure).
     #[error("serialization error: {0}")]
-    Serialization(#[from] Box<bincode::ErrorKind>),
+    Serialization(String),
 
     /// The specified file does not exist on disk.
     #[error("file does not exist: {path}")]

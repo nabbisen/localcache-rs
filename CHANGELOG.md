@@ -11,6 +11,25 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.13.2] — 2026-05-03
+
+### Changed
+
+- **`bincode` upgraded from 1.3.3 to 2.0.1** with `features = ["serde"]`.
+  - `bincode 3.0.0` on crates.io is an intentional stub (see [xkcd #2347](https://xkcd.com/2347/))
+    and not a real release; `2.0.1` is the actual latest stable version.
+  - All encode/decode calls migrated to `bincode::serde::encode_to_vec` /
+    `bincode::serde::decode_from_slice` with `bincode::config::legacy()`.
+  - **Wire format is backward-compatible**: `config::legacy()` produces
+    byte-for-byte identical output to bincode 1.x, so existing SQLite caches
+    require no migration.
+  - `LocalFileCacheError::Serialization` inner type changed from
+    `Box<bincode::ErrorKind>` to `String` (the bincode 2.x error types are
+    not the same as 1.x; `String` avoids exposing an upstream implementation
+    detail in the public API).
+
+---
+
 ## [0.13.1] — 2026-05-03
 
 ### Changed
@@ -120,7 +139,8 @@ Namespaces, batch ops, TTL, PRAGMAs, schema migration.
 ## [0.1.0] — 2025-05-02
 Initial release.
 
-[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/v0.13.1...HEAD
+[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/v0.13.2...HEAD
+[0.13.2]: https://github.com/nabbisen/localcache-rs/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/nabbisen/localcache-rs/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/nabbisen/localcache-rs/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/nabbisen/localcache-rs/compare/v0.11.0...v0.12.0
