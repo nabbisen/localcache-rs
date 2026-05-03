@@ -343,3 +343,109 @@ pub(crate) fn now_secs() -> i64 {
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
 }
+
+// ---------------------------------------------------------------------------
+// Cache statistics
+// ---------------------------------------------------------------------------
+
+/// Aggregate statistics for `namespace`.
+pub(crate) struct RawStats {
+    pub total_entries: usize,
+    pub total_payload_bytes: u64,
+    pub oldest_updated_at: Option<i64>,
+    pub newest_updated_at: Option<i64>,
+}
+
+pub(crate) fn aggregate_stats(
+    conn: &Connection,
+    namespace: &str,
+) -> Result<RawStats, LocalFileCacheError> {
+    let row = conn.query_row(
+        "SELECT COUNT(*),
+                COALESCE(SUM(LENGTH(p.content)), 0),
+                MIN(f.updated_at),
+                MAX(f.updated_at)
+         FROM files f
+         JOIN payloads p ON p.file_id = f.id
+         WHERE f.namespace = ?1",
+        params![namespace],
+        |r| {
+            Ok(RawStats {
+                total_entries: r.get::<_, i64>(0)? as usize,
+                total_payload_bytes: r.get::<_, i64>(1)? as u64,
+                oldest_updated_at: r.get::<_, Option<i64>>(2)?,
+                newest_updated_at: r.get::<_, Option<i64>>(3)?,
+            })
+        },
+    )?;
+    Ok(row)
+}
+
+pub(crate) fn encoding_breakdown(
+    conn: &Connection,
+    namespace: &str,
+) -> Result<Vec<(String, usize)>, LocalFileCacheError> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT p.encoding, COUNT(*)
+         FROM files f
+         JOIN payloads p ON p.file_id = f.id
+         WHERE f.namespace = ?1
+         GROUP BY p.encoding
+         ORDER BY p.encoding ASC",
+    )?;
+    let rows: Result<Vec<_>, _> = stmt
+        .query_map(params![namespace], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as usize))
+        })?
+        .collect();
+    Ok(rows?)
+}
+
+// ---------------------------------------------------------------------------
+// Key rotation support
+// ---------------------------------------------------------------------------
+
+/// A row from `payloads` needed for re-encryption.
+pub(crate) struct EncryptedPayloadRow {
+    pub file_id: i64,
+    pub content: Vec<u8>,
+    #[allow(dead_code)]
+    pub encoding: String,
+}
+
+/// Load all payload rows in `namespace` whose encoding ends with `-aes256gcm`.
+pub(crate) fn load_encrypted_payloads(
+    conn: &Connection,
+    namespace: &str,
+) -> Result<Vec<EncryptedPayloadRow>, LocalFileCacheError> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT p.file_id, p.content, p.encoding
+         FROM payloads p
+         JOIN files f ON f.id = p.file_id
+         WHERE f.namespace = ?1
+           AND p.encoding LIKE '%-aes256gcm'",
+    )?;
+    let rows: Result<Vec<_>, _> = stmt
+        .query_map(params![namespace], |r| {
+            Ok(EncryptedPayloadRow {
+                file_id: r.get(0)?,
+                content: r.get(1)?,
+                encoding: r.get(2)?,
+            })
+        })?
+        .collect();
+    Ok(rows?)
+}
+
+/// Update a payload row with new content (used by key rotation).
+pub(crate) fn update_payload_content(
+    tx: &Transaction,
+    file_id: i64,
+    new_content: &[u8],
+) -> Result<(), LocalFileCacheError> {
+    tx.execute(
+        "UPDATE payloads SET content = ?1 WHERE file_id = ?2",
+        params![new_content, file_id],
+    )?;
+    Ok(())
+}

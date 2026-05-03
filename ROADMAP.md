@@ -1,37 +1,36 @@
 # Roadmap
 
 ## Phase 1 — Foundation (v0.1.x) ✅
-Core sync API, SQLite schema, bincode payloads, BLAKE3 hashing, 14 tests.
+Core sync API, SQLite schema, bincode payloads, BLAKE3 hashing.
 
 ## Phase 2 — Ergonomics & Reliability (v0.2.x) ✅
-Namespaces, batch ops, TTL, configurable PRAGMAs, schema migration, 26 tests.
+Namespaces, batch ops, TTL, configurable PRAGMAs, schema migration.
 
 ## Phase 3 — Performance (v0.3.x) ✅
-True partial hash, streaming bincode, read-only mode, in-memory backend, 39 tests.
+True partial hash, streaming bincode, read-only mode, in-memory backend.
 
 ## Phase 4 — Async & Ecosystem (v0.4.x) ✅
-`AsyncCacheEngine`, zstd compression, `scan_dir`, payload schema versioning, 56 tests.
+`AsyncCacheEngine`, zstd compression, `scan_dir`, payload schema versioning.
 
 ## Phase 5 — Polish & Observability (v0.5.x) ✅
-JSON codec, `max_entries` eviction, `scan_dir_filtered`, `purge_stale_versions`,
-`entry_count*`, 72 tests.
+JSON codec, `max_entries` eviction, `scan_dir_filtered`, version migration helpers.
 
 ## Phase 6 — Security & Advanced Queries (v0.6.x) ✅
+AES-256-GCM encryption, true LRU, glob scan, `list_entries`, schema v4.
 
-- [x] `encryption` feature — AES-256-GCM payload encryption; nonce prepended to
-      ciphertext; encoding tags `"*-aes256gcm"` orthogonal to codec/compression
-- [x] True LRU eviction — `files.last_accessed_at` (schema v4); updated on every
-      `get` / `get_if_fresh`; `max_entries` now evicts least-recently-accessed entries
-- [x] `scan_dir` glob patterns — `ScanOptions::glob_pattern: Option<String>` with
-      inline `*` / `?` wildcard matching against file names
-- [x] `list_entries()` — return `Vec<EntryInfo>` with path, metadata, encoding,
-      `payload_version`, `updated_at`, `last_accessed_at` (no payload loaded)
-- [x] Schema v4 migration (`files.last_accessed_at` + LRU composite index)
+## Phase 7 — Operational Features (v0.7.x) ✅
+
+- [x] `CacheEngineBuilder<T>` — fluent builder API via `CacheEngine::builder()`
+- [x] `CacheEngine::cache_stats()` — aggregate statistics (`CacheStats`)
+- [x] `CacheEngine::check_status_batch()` — one-call status for many paths
+- [x] `CacheEngine::rotate_encryption_key()` — re-encrypt all entries atomically
+- [x] Glob brace expansion — `{a,b,c}` in `ScanOptions::glob_pattern`
 
 ## Future / Unscheduled
 
 - File-watching integration (`notify` crate)
 - `async-std` / `smol` feature variants
-- Glob brace expansion (`{a,b}` patterns)
-- Key rotation helper for encrypted caches
-- LRU eviction policy choices (LRU vs LFU vs TTL-based)
+- Nested / multi-group glob brace expansion
+- `serde_json` path-based queries on cached payloads
+- Read-only shared-memory DB mode
+- CLI inspection tool

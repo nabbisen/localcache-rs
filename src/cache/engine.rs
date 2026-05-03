@@ -473,6 +473,140 @@ where
         repository::count_by_version(&self.conn, &self.namespace)
     }
 
+    /// Return aggregate statistics for the current namespace.
+    ///
+    /// Statistics include total entry count, total stored payload bytes
+    /// (compressed/encrypted as applicable), oldest and newest `updated_at`
+    /// timestamps, and per-encoding / per-version breakdowns.
+    pub fn cache_stats(&self) -> Result<crate::cache::entry::CacheStats, LocalFileCacheError> {
+        use crate::cache::entry::CacheStats;
+
+        let raw = repository::aggregate_stats(&self.conn, &self.namespace)?;
+        let entries_by_encoding = repository::encoding_breakdown(&self.conn, &self.namespace)?;
+        let entries_by_payload_version = repository::count_by_version(&self.conn, &self.namespace)?;
+
+        Ok(CacheStats {
+            namespace: self.namespace.clone(),
+            total_entries: raw.total_entries,
+            total_payload_bytes: raw.total_payload_bytes,
+            oldest_updated_at: raw.oldest_updated_at,
+            newest_updated_at: raw.newest_updated_at,
+            entries_by_encoding,
+            entries_by_payload_version,
+        })
+    }
+
+    // ------------------------------------------------------------------
+    // Batch status
+    // ------------------------------------------------------------------
+
+    /// Check the freshness of multiple paths in a single call.
+    ///
+    /// Returns one `Result<CacheStatus, _>` per input path, in the same order.
+    /// Individual errors (e.g. I/O errors reading metadata for one file) do
+    /// not abort the remaining checks.
+    pub fn check_status_batch<P>(
+        &self,
+        paths: &[P],
+    ) -> Vec<Result<CacheStatus, LocalFileCacheError>>
+    where
+        P: AsRef<Path>,
+    {
+        paths
+            .iter()
+            .map(|p| self.check_status(p.as_ref()))
+            .collect()
+    }
+
+    // ------------------------------------------------------------------
+    // Key rotation
+    // ------------------------------------------------------------------
+
+    /// Re-encrypt all entries in the current namespace with `new_key`.
+    ///
+    /// Every payload whose encoding ends in `"-aes256gcm"` is decrypted with
+    /// the current key and re-encrypted with `new_key`.  The operation is
+    /// performed inside a single SQLite transaction so that a failure leaves
+    /// the database consistent (still encrypted with the old key).
+    ///
+    /// Returns the number of entries that were re-encrypted.
+    ///
+    /// # Errors
+    ///
+    /// * [`LocalFileCacheError::ReadOnly`] — engine is in read-only mode.
+    /// * [`LocalFileCacheError::UnsupportedFeature`] — no encryption key is
+    ///   currently set on this engine (nothing to rotate).
+    /// * [`LocalFileCacheError::EncryptionError`] — decryption or re-encryption
+    ///   failed.
+    #[cfg(feature = "encryption")]
+    pub fn rotate_encryption_key(&self, new_key: &[u8]) -> Result<usize, LocalFileCacheError> {
+        self.guard_write()?;
+
+        let old_key = self.encryption_key.ok_or_else(|| {
+            LocalFileCacheError::UnsupportedFeature(
+                "rotate_encryption_key requires an existing encryption key on this engine".into(),
+            )
+        })?;
+
+        let new_key_arr: [u8; 32] = new_key.try_into().map_err(|_| {
+            LocalFileCacheError::UnsupportedFeature(format!(
+                "new encryption key must be exactly 32 bytes, got {}",
+                new_key.len()
+            ))
+        })?;
+
+        // Load all encrypted payload rows for this namespace.
+        let rows = repository::load_encrypted_payloads(&self.conn, &self.namespace)?;
+        if rows.is_empty() {
+            return Ok(0);
+        }
+
+        // Re-encrypt each row; collect updates before opening the transaction
+        // to keep the borrow of `self.conn` clean.
+        let mut updates: Vec<(i64, Vec<u8>)> = Vec::with_capacity(rows.len());
+        for row in &rows {
+            // Decrypt with old key.
+            let plaintext = crate::serialization::decrypt_for_rotation(&row.content, &old_key)?;
+            // Re-encrypt with new key.
+            let ciphertext = crate::serialization::encrypt_for_rotation(&plaintext, &new_key_arr)?;
+            updates.push((row.file_id, ciphertext));
+        }
+
+        // Write all updates atomically.
+        let tx = self.conn.unchecked_transaction()?;
+        for (file_id, new_content) in &updates {
+            repository::update_payload_content(&tx, *file_id, new_content)?;
+        }
+        tx.commit()?;
+
+        Ok(updates.len())
+    }
+
+    // ------------------------------------------------------------------
+    // Builder entrypoint
+    // ------------------------------------------------------------------
+
+    /// Return a fluent builder for constructing a [`CacheEngine`].
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use std::time::Duration;
+    /// use localcache::{CacheEngine, ChangeDetectionMode};
+    ///
+    /// let engine = CacheEngine::<Vec<f32>>::builder()
+    ///     .database("cache.sqlite3")
+    ///     .namespace("embeddings")
+    ///     .change_detection(ChangeDetectionMode::MetadataThenFullHash)
+    ///     .ttl(Duration::from_secs(3600))
+    ///     .max_entries(500)
+    ///     .build()?;
+    /// # Ok::<(), localcache::LocalFileCacheError>(())
+    /// ```
+    pub fn builder() -> crate::cache::builder::CacheEngineBuilder<T> {
+        crate::cache::builder::CacheEngineBuilder::new()
+    }
+
     // ------------------------------------------------------------------
     // Maintenance
     // ------------------------------------------------------------------
@@ -594,35 +728,73 @@ pub(crate) fn is_expired(updated_at: i64, ttl: Option<Duration>) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Glob matching
+// Glob matching (with brace expansion)
 // ---------------------------------------------------------------------------
 
-/// A compiled glob pattern (only `*` and `?` wildcards).
+/// A compiled glob pattern that may represent multiple alternatives after
+/// brace expansion (`{a,b,c}` → three sub-patterns).
 struct GlobPattern {
-    /// The original pattern, stored for error messages.
+    /// One or more `*`/`?` patterns to match against.  A file name matches if
+    /// it matches **any** of these patterns.
+    alternatives: Vec<SingleGlob>,
+}
+
+/// A single compiled glob pattern (no brace expansion).
+struct SingleGlob {
     _raw: String,
-    /// Segments produced by splitting on `*`.
     parts: Vec<String>,
-    /// True if the pattern ends with `*`.
     trailing_star: bool,
 }
 
-/// Compile a simple glob pattern into a [`GlobPattern`].
+/// Compile `pattern` into a [`GlobPattern`], expanding `{a,b,c}` brace groups.
+///
+/// Only the first brace group is expanded (non-recursive); nesting and
+/// multiple groups in one pattern are not yet supported.
 fn glob_to_regex(pattern: &str) -> Result<GlobPattern, LocalFileCacheError> {
-    let parts: Vec<String> = pattern.split('*').map(|s| s.to_owned()).collect();
-    let trailing_star = pattern.ends_with('*');
-    Ok(GlobPattern {
-        _raw: pattern.to_owned(),
-        parts,
-        trailing_star,
-    })
+    let expanded = expand_braces(pattern);
+    let alternatives = expanded
+        .into_iter()
+        .map(|p| {
+            let parts: Vec<String> = p.split('*').map(|s| s.to_owned()).collect();
+            let trailing_star = p.ends_with('*');
+            SingleGlob {
+                _raw: p,
+                parts,
+                trailing_star,
+            }
+        })
+        .collect();
+    Ok(GlobPattern { alternatives })
 }
 
 impl GlobPattern {
-    /// Return `true` if `text` matches this pattern.
     fn matches(&self, text: &str) -> bool {
-        glob_match(&self.parts, self.trailing_star, text)
+        self.alternatives
+            .iter()
+            .any(|g| glob_match(&g.parts, g.trailing_star, text))
     }
+}
+
+/// Expand a single `{a,b,c}` brace group in `pattern`.
+///
+/// Returns a `Vec` of concrete patterns with the braces replaced by each
+/// alternative.  If no brace group is found, returns a single-element vec
+/// with the original pattern.
+fn expand_braces(pattern: &str) -> Vec<String> {
+    if let (Some(open), Some(close_rel)) = (
+        pattern.find('{'),
+        pattern.find('{').and_then(|o| pattern[o..].find('}')),
+    ) {
+        let close = open + close_rel;
+        let prefix = &pattern[..open];
+        let suffix = &pattern[close + 1..];
+        let inner = &pattern[open + 1..close];
+        return inner
+            .split(',')
+            .map(|alt| format!("{prefix}{alt}{suffix}"))
+            .collect();
+    }
+    vec![pattern.to_owned()]
 }
 
 /// Recursive glob matcher.

@@ -174,6 +174,36 @@ where
         let inner = Arc::clone(&self.inner);
         spawn(move || inner.lock().unwrap().entry_count_by_version()).await
     }
+
+    /// Async version of [`CacheEngine::cache_stats`].
+    pub async fn cache_stats(
+        &self,
+    ) -> Result<crate::cache::entry::CacheStats, LocalFileCacheError> {
+        let inner = Arc::clone(&self.inner);
+        spawn(move || inner.lock().unwrap().cache_stats()).await
+    }
+
+    /// Async version of [`CacheEngine::check_status_batch`].
+    pub async fn check_status_batch(
+        &self,
+        paths: Vec<PathBuf>,
+    ) -> Vec<Result<CacheStatus, LocalFileCacheError>> {
+        let inner = Arc::clone(&self.inner);
+        match spawn(move || Ok(inner.lock().unwrap().check_status_batch(&paths))).await {
+            Ok(r) => r,
+            Err(e) => vec![Err(e)],
+        }
+    }
+
+    /// Async version of [`CacheEngine::rotate_encryption_key`].
+    #[cfg(feature = "encryption")]
+    pub async fn rotate_encryption_key(
+        &self,
+        new_key: Vec<u8>,
+    ) -> Result<usize, LocalFileCacheError> {
+        let inner = Arc::clone(&self.inner);
+        spawn(move || inner.lock().unwrap().rotate_encryption_key(&new_key)).await
+    }
 }
 
 async fn spawn<F, R>(f: F) -> Result<R, LocalFileCacheError>

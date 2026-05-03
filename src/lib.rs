@@ -4,13 +4,13 @@
 //! from local files.
 //!
 //! ```no_run
-//! use localcache::{CacheEngine, CacheOptions, ChangeDetectionMode};
+//! use localcache::{CacheEngine, ChangeDetectionMode};
 //!
-//! let engine = CacheEngine::<Vec<f32>>::open(CacheOptions {
-//!     database_path: "cache.sqlite3".into(),
-//!     change_detection_mode: ChangeDetectionMode::MetadataThenFullHash,
-//!     ..CacheOptions::default()
-//! })?;
+//! let engine = CacheEngine::<Vec<f32>>::builder()
+//!     .database("cache.sqlite3")
+//!     .change_detection(ChangeDetectionMode::MetadataThenFullHash)
+//!     .max_entries(1000)
+//!     .build()?;
 //!
 //! engine.set("sample.txt", &vec![0.1_f32, 0.2, 0.3])?;
 //!
@@ -32,8 +32,9 @@ mod tests;
 
 #[cfg(feature = "async")]
 pub use cache::async_engine::AsyncCacheEngine;
+pub use cache::builder::CacheEngineBuilder;
 pub use cache::engine::{BatchSetReport, CacheEngine};
-pub use cache::entry::{CacheEntry, CacheStatus, EntryInfo, FileMetadata};
+pub use cache::entry::{CacheEntry, CacheStats, CacheStatus, EntryInfo, FileMetadata};
 pub use cache::options::{
     CacheOptions, ChangeDetectionMode, Codec, JournalMode, ScanOptions, SynchronousMode,
 };

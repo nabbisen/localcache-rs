@@ -1,4 +1,4 @@
-//! Cache entry and status types.
+//! Cache entry, status, and observability types.
 
 use std::path::PathBuf;
 
@@ -46,8 +46,29 @@ pub struct EntryInfo {
     pub encoding: String,
     /// Unix timestamp (seconds) when this entry was last written via `set`.
     pub updated_at: i64,
-    /// Unix timestamp (seconds) when this entry was last read via `get` or
-    /// `get_if_fresh`.  `0` means the entry has never been read after being
-    /// written.
+    /// Unix timestamp (seconds) when this entry was last read.
+    /// `0` means the entry has never been read after being written.
     pub last_accessed_at: i64,
+}
+
+/// Aggregate statistics about the entries in a single cache namespace.
+///
+/// Returned by [`crate::CacheEngine::cache_stats`].
+#[derive(Debug, Clone)]
+pub struct CacheStats {
+    /// Namespace these statistics apply to.
+    pub namespace: String,
+    /// Total number of entries.
+    pub total_entries: usize,
+    /// Combined size of all stored payloads in bytes (compressed and/or
+    /// encrypted if those features are active).
+    pub total_payload_bytes: u64,
+    /// `updated_at` of the oldest entry, or `None` if the cache is empty.
+    pub oldest_updated_at: Option<i64>,
+    /// `updated_at` of the newest entry, or `None` if the cache is empty.
+    pub newest_updated_at: Option<i64>,
+    /// Entry count grouped by encoding tag, sorted alphabetically.
+    pub entries_by_encoding: Vec<(String, usize)>,
+    /// Entry count grouped by `payload_version`, sorted by version ascending.
+    pub entries_by_payload_version: Vec<(u32, usize)>,
 }

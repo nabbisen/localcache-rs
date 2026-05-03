@@ -254,3 +254,28 @@ fn decrypt_bytes(data: &[u8], key: &[u8; 32]) -> Result<Vec<u8>, LocalFileCacheE
         )
     })
 }
+
+// ---------------------------------------------------------------------------
+// Key-rotation helpers (pub(crate), feature-gated)
+// ---------------------------------------------------------------------------
+
+/// Decrypt `data` that was previously encrypted with `key`.
+///
+/// This is the same as the internal `decrypt_bytes` but exposed at
+/// `pub(crate)` so `CacheEngine::rotate_encryption_key` can use it.
+#[cfg(feature = "encryption")]
+pub(crate) fn decrypt_for_rotation(
+    data: &[u8],
+    key: &[u8; 32],
+) -> Result<Vec<u8>, crate::error::LocalFileCacheError> {
+    decrypt_bytes(data, key)
+}
+
+/// Encrypt `plaintext` with `key` for use in key rotation.
+#[cfg(feature = "encryption")]
+pub(crate) fn encrypt_for_rotation(
+    plaintext: &[u8],
+    key: &[u8; 32],
+) -> Result<Vec<u8>, crate::error::LocalFileCacheError> {
+    encrypt_bytes(plaintext, key)
+}
