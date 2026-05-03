@@ -99,6 +99,12 @@ enum Commands {
     ///
     /// Useful for moving data between database files or bumping schema versions.
     Migrate(MigrateArgs),
+
+    /// Query cached entries by path prefix or suffix.
+    ///
+    /// Prints matching stored paths and their cache status.
+    /// For payload content queries use the library API directly.
+    Query(QueryArgs),
 }
 
 #[derive(Args)]
@@ -190,6 +196,15 @@ struct MigrateArgs {
     dst_ns: Option<String>,
 }
 
+#[derive(Args)]
+struct QueryArgs {
+    /// SQL LIKE pattern matched against stored paths.
+    /// Use `%` for any sequence, `_` for one character.
+    /// Example: `%/docs/%`
+    #[arg(short, long)]
+    path_like: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
@@ -222,6 +237,7 @@ fn run(cli: Cli) -> Result<(), LocalFileCacheError> {
         Commands::Import(args) => cmd_import(opts, args),
         Commands::Copy(args) => cmd_copy(opts, args),
         Commands::Migrate(args) => cmd_migrate(opts, args),
+        Commands::Query(args) => cmd_query(opts, args),
     }
 }
 
@@ -544,6 +560,54 @@ fn cmd_migrate(opts: CacheOptions, args: MigrateArgs) -> Result<(), LocalFileCac
         args.src_ns,
         dst_db.display(),
         dst_ns,
+    );
+    Ok(())
+}
+
+fn cmd_query(opts: CacheOptions, args: QueryArgs) -> Result<(), LocalFileCacheError> {
+    let engine = CacheEngine::<Vec<u8>>::open(opts)?;
+
+    let keys = engine.keys(args.path_like.as_deref())?;
+    if keys.is_empty() {
+        println!("(no matching entries)");
+        return Ok(());
+    }
+
+    println!("{:<8}  {}", "STATUS", "PATH");
+    println!("{}", "-".repeat(80));
+
+    let statuses = engine.check_status_batch(&keys);
+    let mut counts = (0usize, 0usize, 0usize);
+    for (path, result) in keys.iter().zip(statuses.iter()) {
+        let status = result.as_ref().unwrap_or(&CacheStatus::Missing);
+        let (label, c) = match status {
+            CacheStatus::Fresh => {
+                counts.0 += 1;
+                ("FRESH", "\x1b[32m")
+            }
+            CacheStatus::Stale => {
+                counts.1 += 1;
+                ("STALE", "\x1b[33m")
+            }
+            CacheStatus::Missing => {
+                counts.2 += 1;
+                ("MISSING", "\x1b[31m")
+            }
+        };
+        let use_color = std::env::var("NO_COLOR").is_err() && atty_check();
+        if use_color {
+            println!("{c}{:<8}\x1b[0m  {}", label, path.display());
+        } else {
+            println!("{:<8}  {}", label, path.display());
+        }
+    }
+
+    println!(
+        "\n{} entries  ({} fresh, {} stale, {} missing)",
+        keys.len(),
+        counts.0,
+        counts.1,
+        counts.2
     );
     Ok(())
 }

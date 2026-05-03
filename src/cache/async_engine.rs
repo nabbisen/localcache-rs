@@ -221,6 +221,104 @@ where
         let inner = Arc::clone(&self.inner);
         spawn(move || inner.lock().unwrap().import_entries(&records)).await
     }
+
+    /// Async version of [`CacheEngine::touch`].
+    pub async fn touch(&self, path: PathBuf) -> Result<bool, LocalFileCacheError> {
+        let inner = Arc::clone(&self.inner);
+        spawn(move || inner.lock().unwrap().touch(&path)).await
+    }
+
+    /// Async version of [`CacheEngine::contains`].
+    pub async fn contains(&self, path: PathBuf) -> Result<bool, LocalFileCacheError> {
+        let inner = Arc::clone(&self.inner);
+        spawn(move || inner.lock().unwrap().contains(&path)).await
+    }
+
+    /// Async version of [`CacheEngine::keys`].
+    pub async fn keys(
+        &self,
+        path_like: Option<String>,
+    ) -> Result<Vec<PathBuf>, LocalFileCacheError> {
+        let inner = Arc::clone(&self.inner);
+        spawn(move || inner.lock().unwrap().keys(path_like.as_deref())).await
+    }
+
+    /// Execute a pre-built [`crate::QueryBuilder`] asynchronously.
+    ///
+    /// Because `QueryBuilder` borrows the engine, building it synchronously
+    /// and then calling this method avoids lifetime issues across await points.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use localcache::{AsyncCacheEngine, CacheOptions, Codec};
+    /// # use serde::{Serialize, Deserialize};
+    /// # #[derive(Serialize, Deserialize)] struct Doc { score: f64 }
+    /// # #[tokio::main] async fn main() -> Result<(), localcache::LocalFileCacheError> {
+    /// let engine: AsyncCacheEngine<Doc> = AsyncCacheEngine::open(CacheOptions {
+    ///     database_path: ":memory:".into(),
+    ///     codec: Codec::Json,
+    ///     ..CacheOptions::default()
+    /// }).await?;
+    ///
+    /// let results: Vec<localcache::CacheEntry<Doc>> =
+    ///     engine.query_run(|q| q.field_gt("score", 0.9)).await?;
+    /// # Ok(()) }
+    /// ```
+    pub async fn query_run<F, U>(
+        &self,
+        build: F,
+    ) -> Result<Vec<crate::cache::entry::CacheEntry<U>>, LocalFileCacheError>
+    where
+        U: serde::Serialize + serde::de::DeserializeOwned + Send + 'static,
+        F: FnOnce(
+                crate::cache::query::QueryBuilder<'_, U>,
+            ) -> crate::cache::query::QueryBuilder<'_, U>
+            + Send
+            + 'static,
+        T: Send + 'static,
+    {
+        let inner = Arc::clone(&self.inner);
+        spawn(move || {
+            let guard = inner.lock().unwrap();
+            // SAFETY: We need to erase the lifetime because spawn_blocking
+            // requires 'static.  We guarantee safety by holding the lock for
+            // the entire duration of the closure.
+            //
+            // This is a common pattern when wrapping borrowed APIs behind
+            // a mutex for async use.  The guard is alive for the full closure.
+            let engine_ref: &crate::cache::engine::CacheEngine<U> =
+                // SAFETY: The Mutex guard keeps the engine alive for 'static
+                // within this closure. The transmute erases the borrow so the
+                // closure is 'static.
+                unsafe {
+                    &*(&*guard as *const crate::cache::engine::CacheEngine<_>
+                        as *const crate::cache::engine::CacheEngine<U>)
+                };
+            let q = engine_ref.query();
+            let q = build(q);
+            crate::cache::query::execute_query(q)
+        })
+        .await
+    }
+
+    /// Async version of [`CacheEngine::create_path_index`].
+    pub async fn create_path_index(&self, name: String) -> Result<String, LocalFileCacheError> {
+        let inner = Arc::clone(&self.inner);
+        spawn(move || inner.lock().unwrap().create_path_index(&name)).await
+    }
+
+    /// Async version of [`CacheEngine::drop_path_index`].
+    pub async fn drop_path_index(&self, name: String) -> Result<bool, LocalFileCacheError> {
+        let inner = Arc::clone(&self.inner);
+        spawn(move || inner.lock().unwrap().drop_path_index(&name)).await
+    }
+
+    /// Async version of [`CacheEngine::list_path_indexes`].
+    pub async fn list_path_indexes(&self) -> Result<Vec<String>, LocalFileCacheError> {
+        let inner = Arc::clone(&self.inner);
+        spawn(move || inner.lock().unwrap().list_path_indexes()).await
+    }
 }
 
 async fn spawn<F, R>(f: F) -> Result<R, LocalFileCacheError>

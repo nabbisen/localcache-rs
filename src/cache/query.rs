@@ -1,10 +1,10 @@
 //! Payload query support.
 //!
 //! [`QueryBuilder`] provides a fluent interface for filtering cached entries
-//! by inspecting their decoded JSON payloads.  It is available when **both**
-//! the `json` feature is enabled and the payload type `T` implements
-//! [`serde::Serialize`] (so it can be round-tripped through `serde_json::Value`
-//! for field access).
+//! by inspecting their decoded JSON payloads.
+//!
+//! Predicates are evaluated against `serde_json::Value` representations of
+//! the decoded payload, so they work with any codec.
 //!
 //! # Example
 //!
@@ -22,9 +22,10 @@
 //!
 //! // …populate the engine…
 //!
-//! // Find entries whose JSON payload contains "score" > 0.9
 //! let results = engine.query()
 //!     .field_gt("score", 0.9)
+//!     .order_by_field("score", false)   // descending
+//!     .limit(10)
 //!     .run()?;
 //!
 //! for entry in results {
@@ -42,25 +43,56 @@ use crate::detection::metadata::FileMetadata;
 use crate::error::LocalFileCacheError;
 
 // ---------------------------------------------------------------------------
+// Order direction
+// ---------------------------------------------------------------------------
+
+/// Sort direction for [`QueryBuilder::order_by_field`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortOrder {
+    /// Ascending (smallest first).
+    Asc,
+    /// Descending (largest first).
+    Desc,
+}
+
+// ---------------------------------------------------------------------------
+// OrderBy specification
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub(crate) enum OrderBy {
+    /// Sort by a dot-separated payload field (requires JSON-serialisable value).
+    Field { path: String, order: SortOrder },
+    /// Sort by `updated_at` metadata timestamp.
+    UpdatedAt(SortOrder),
+    /// Sort by stored `path` string.
+    Path(SortOrder),
+}
+
+// ---------------------------------------------------------------------------
 // Predicate type
 // ---------------------------------------------------------------------------
 
-/// A predicate applied to a `serde_json::Value` payload.
 pub(crate) enum Predicate {
-    /// The JSON field at `path` (dot-separated, e.g. `"meta.score"`) must
-    /// equal `value`.
     FieldEq {
         path: String,
         value: serde_json::Value,
     },
-    /// The field value must be a number greater than `threshold`.
-    FieldGt { path: String, threshold: f64 },
-    /// The field value must be a number less than `threshold`.
-    FieldLt { path: String, threshold: f64 },
-    /// The field (as a string) must contain `substring`.
-    FieldContains { path: String, substring: String },
-    /// The JSON payload (serialised to a string) must contain `needle`.
-    PayloadContains { needle: String },
+    FieldGt {
+        path: String,
+        threshold: f64,
+    },
+    FieldLt {
+        path: String,
+        threshold: f64,
+    },
+    FieldContains {
+        path: String,
+        substring: String,
+    },
+    PayloadContains {
+        needle: String,
+    },
 }
 
 impl Predicate {
@@ -89,9 +121,6 @@ impl Predicate {
     }
 }
 
-/// Traverse a dot-separated field path in a JSON value.
-///
-/// `"meta.score"` looks up `value["meta"]["score"]`.
 fn get_field<'a>(value: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
     let mut current = value;
     for key in path.split('.') {
@@ -104,14 +133,16 @@ fn get_field<'a>(value: &'a serde_json::Value, path: &str) -> Option<&'a serde_j
 // QueryBuilder
 // ---------------------------------------------------------------------------
 
-/// Fluent query builder for filtering cache entries by payload content.
+/// Fluent query builder for filtering and sorting cache entries.
 ///
 /// Obtain one via [`crate::CacheEngine::query`].
 pub struct QueryBuilder<'e, T> {
     pub(crate) engine: &'e crate::cache::engine::CacheEngine<T>,
     pub(crate) predicates: Vec<Predicate>,
     pub(crate) limit: Option<usize>,
+    pub(crate) offset: usize,
     pub(crate) path_like: Option<String>,
+    pub(crate) order_by: Option<OrderBy>,
 }
 
 impl<'e, T> QueryBuilder<'e, T>
@@ -123,9 +154,7 @@ where
     // ------------------------------------------------------------------
 
     /// Restrict the search to entries whose stored path matches a SQLite
-    /// `LIKE` pattern (`%` = any sequence, `_` = one character).
-    ///
-    /// Example: `.path_like("%/2024/%")` to match paths containing `/2024/`.
+    /// `LIKE` pattern.
     pub fn path_like(mut self, pattern: impl Into<String>) -> Self {
         self.path_like = Some(pattern.into());
         self
@@ -136,8 +165,6 @@ where
     // ------------------------------------------------------------------
 
     /// Match entries where the JSON field at `field_path` equals `value`.
-    ///
-    /// `field_path` is dot-separated (e.g. `"meta.author"`).
     pub fn field_eq(
         mut self,
         field_path: impl Into<String>,
@@ -150,8 +177,7 @@ where
         self
     }
 
-    /// Match entries where the numeric JSON field at `field_path` is greater
-    /// than `threshold`.
+    /// Match entries where the numeric JSON field is greater than `threshold`.
     pub fn field_gt(mut self, field_path: impl Into<String>, threshold: f64) -> Self {
         self.predicates.push(Predicate::FieldGt {
             path: field_path.into(),
@@ -160,8 +186,7 @@ where
         self
     }
 
-    /// Match entries where the numeric JSON field at `field_path` is less
-    /// than `threshold`.
+    /// Match entries where the numeric JSON field is less than `threshold`.
     pub fn field_lt(mut self, field_path: impl Into<String>, threshold: f64) -> Self {
         self.predicates.push(Predicate::FieldLt {
             path: field_path.into(),
@@ -170,8 +195,7 @@ where
         self
     }
 
-    /// Match entries where the string JSON field at `field_path` contains
-    /// `substring`.
+    /// Match entries where the string JSON field contains `substring`.
     pub fn field_contains(
         mut self,
         field_path: impl Into<String>,
@@ -184,10 +208,7 @@ where
         self
     }
 
-    /// Match entries where the entire payload (serialised to JSON string)
-    /// contains `needle`.
-    ///
-    /// This is a coarse but convenient full-payload text search.
+    /// Match entries where the entire payload (as JSON string) contains `needle`.
     pub fn payload_contains(mut self, needle: impl Into<String>) -> Self {
         self.predicates.push(Predicate::PayloadContains {
             needle: needle.into(),
@@ -196,12 +217,66 @@ where
     }
 
     // ------------------------------------------------------------------
-    // Limit
+    // Sorting
     // ------------------------------------------------------------------
 
-    /// Return at most `n` matching entries.
+    /// Sort results by a dot-separated payload field.
+    ///
+    /// `ascending = true` → smallest value first.
+    ///
+    /// Non-sortable entries (field absent or wrong type) are placed at the
+    /// end of the result list.
+    pub fn order_by_field(mut self, field_path: impl Into<String>, ascending: bool) -> Self {
+        self.order_by = Some(OrderBy::Field {
+            path: field_path.into(),
+            order: if ascending {
+                SortOrder::Asc
+            } else {
+                SortOrder::Desc
+            },
+        });
+        self
+    }
+
+    /// Sort results by `updated_at` timestamp.
+    ///
+    /// `ascending = true` → oldest written first.
+    pub fn order_by_updated_at(mut self, ascending: bool) -> Self {
+        self.order_by = Some(OrderBy::UpdatedAt(if ascending {
+            SortOrder::Asc
+        } else {
+            SortOrder::Desc
+        }));
+        self
+    }
+
+    /// Sort results by the stored path string lexicographically.
+    ///
+    /// `ascending = true` → alphabetical order.
+    pub fn order_by_path(mut self, ascending: bool) -> Self {
+        self.order_by = Some(OrderBy::Path(if ascending {
+            SortOrder::Asc
+        } else {
+            SortOrder::Desc
+        }));
+        self
+    }
+
+    // ------------------------------------------------------------------
+    // Pagination
+    // ------------------------------------------------------------------
+
+    /// Return at most `n` matching entries after applying `offset`.
     pub fn limit(mut self, n: usize) -> Self {
         self.limit = Some(n);
+        self
+    }
+
+    /// Skip the first `n` matching entries before applying `limit`.
+    ///
+    /// Useful for paginating through large result sets.
+    pub fn offset(mut self, n: usize) -> Self {
+        self.offset = n;
         self
     }
 
@@ -209,63 +284,68 @@ where
     // Terminal
     // ------------------------------------------------------------------
 
-    /// Execute the query and return all matching [`CacheEntry`] values.
+    /// Execute the query and return matching [`CacheEntry`] values.
     ///
-    /// Every entry in the namespace (subject to `path_like`) is loaded and
-    /// its payload deserialised.  Entries whose decoding fails are silently
-    /// skipped.  Payload predicates are evaluated against a
-    /// `serde_json::Value` representation of the decoded payload.
-    ///
-    /// This is a linear scan — suitable for small-to-medium caches.
+    /// All matching entries (after predicates, offset, and limit) are
+    /// returned.  The `order_by` clause — if set — sorts the *full* matching
+    /// set before slicing with `offset` and `limit`.
     pub fn run(self) -> Result<Vec<CacheEntry<T>>, LocalFileCacheError> {
-        use crate::db::repository;
+        execute_query(self)
+    }
+}
 
-        let paths = repository::keys(
-            &self.engine.conn,
-            &self.engine.namespace,
-            self.path_like.as_deref(),
-        )?;
+// ---------------------------------------------------------------------------
+// Shared execution (used by both sync run() and async wrapper)
+// ---------------------------------------------------------------------------
 
-        let mut results = Vec::new();
+pub(crate) fn execute_query<T>(
+    q: QueryBuilder<'_, T>,
+) -> Result<Vec<CacheEntry<T>>, LocalFileCacheError>
+where
+    T: Serialize + DeserializeOwned,
+{
+    use crate::db::repository;
 
-        for path in &paths {
-            let path_str = match path.to_str() {
-                Some(s) => s,
-                None => continue,
-            };
+    let paths = repository::keys(&q.engine.conn, &q.engine.namespace, q.path_like.as_deref())?;
 
-            let row =
-                match repository::find_file(&self.engine.conn, &self.engine.namespace, path_str)? {
-                    Some(r) => r,
-                    None => continue,
-                };
+    let mut matched: Vec<(CacheEntry<T>, serde_json::Value)> = Vec::new();
 
-            let payload_row = match repository::load_payload(&self.engine.conn, row.id)? {
-                Some(p) => p,
-                None => continue,
-            };
+    for path in &paths {
+        let path_str = match path.to_str() {
+            Some(s) => s,
+            None => continue,
+        };
 
-            // Decode payload; skip entries that fail decoding.
-            let payload: T = match self
-                .engine
-                .decode_pub(&payload_row.content, &payload_row.encoding)
-            {
-                Ok(p) => p,
+        let row = match repository::find_file(&q.engine.conn, &q.engine.namespace, path_str)? {
+            Some(r) => r,
+            None => continue,
+        };
+
+        let payload_row = match repository::load_payload(&q.engine.conn, row.id)? {
+            Some(p) => p,
+            None => continue,
+        };
+
+        let payload: T = match q
+            .engine
+            .decode_pub(&payload_row.content, &payload_row.encoding)
+        {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+
+        // Evaluate predicates.
+        let json_val = if !q.predicates.is_empty() || q.order_by.is_some() {
+            match serde_json::to_value(&payload) {
+                Ok(v) => v,
                 Err(_) => continue,
-            };
-
-            // Apply predicates via serde_json::Value.
-            if !self.predicates.is_empty() {
-                let json_val = match serde_json::to_value(&payload) {
-                    Ok(v) => v,
-                    Err(_) => continue,
-                };
-                if !self.predicates.iter().all(|p| p.matches(&json_val)) {
-                    continue;
-                }
             }
+        } else {
+            serde_json::Value::Null
+        };
 
-            results.push(CacheEntry {
+        if q.predicates.iter().all(|p| p.matches(&json_val)) {
+            let entry = CacheEntry {
                 path: PathBuf::from(&row.path),
                 metadata: FileMetadata {
                     mtime: row.metadata.mtime,
@@ -273,13 +353,69 @@ where
                     hash: row.metadata.hash.clone(),
                 },
                 payload,
-            });
+            };
+            matched.push((entry, json_val));
+        }
+    }
 
-            if self.limit.is_some_and(|limit| results.len() >= limit) {
-                break;
+    // Apply ordering.
+    if let Some(order) = &q.order_by {
+        apply_order(&mut matched, order);
+    }
+
+    // Apply offset + limit.
+    let start = q.offset.min(matched.len());
+    let end = q
+        .limit
+        .map(|l| (start + l).min(matched.len()))
+        .unwrap_or(matched.len());
+
+    Ok(matched
+        .into_iter()
+        .skip(start)
+        .take(end - start)
+        .map(|(e, _)| e)
+        .collect())
+}
+
+fn apply_order<T>(matched: &mut [(CacheEntry<T>, serde_json::Value)], order: &OrderBy) {
+    matched.sort_by(|(ea, va), (eb, vb)| match order {
+        OrderBy::Field { path, order } => {
+            let a = get_field(va, path).and_then(json_sort_key);
+            let b = get_field(vb, path).and_then(json_sort_key);
+            let c = a.partial_cmp(&b).unwrap_or(std::cmp::Ordering::Equal);
+            if *order == SortOrder::Desc {
+                c.reverse()
+            } else {
+                c
             }
         }
+        OrderBy::UpdatedAt(ord) => {
+            let time_cmp = ea.metadata.mtime.cmp(&eb.metadata.mtime);
+            let c = if time_cmp == std::cmp::Ordering::Equal {
+                ea.path.cmp(&eb.path)
+            } else {
+                time_cmp
+            };
+            if *ord == SortOrder::Desc {
+                c.reverse()
+            } else {
+                c
+            }
+        }
+        OrderBy::Path(ord) => {
+            let c = ea.path.cmp(&eb.path);
+            if *ord == SortOrder::Desc {
+                c.reverse()
+            } else {
+                c
+            }
+        }
+    });
+}
 
-        Ok(results)
-    }
+/// Convert a JSON value to an `f64`-based sort key so numeric and string
+/// values can be ordered together (strings mapped to `f64::MAX`).
+fn json_sort_key(v: &serde_json::Value) -> Option<f64> {
+    v.as_f64()
 }

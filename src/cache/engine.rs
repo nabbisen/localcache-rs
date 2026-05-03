@@ -808,8 +808,77 @@ where
             engine: self,
             predicates: Vec::new(),
             limit: None,
+            offset: 0,
             path_like: None,
+            order_by: None,
         }
+    }
+
+    // ------------------------------------------------------------------
+    // LRU touch
+    // ------------------------------------------------------------------
+
+    /// Update `last_accessed_at` for `path` to the current time.
+    ///
+    /// Useful for warming entries that should not be evicted by the LRU
+    /// policy.  Returns `true` if the entry existed and was updated.
+    pub fn touch<P: AsRef<Path>>(&self, path: P) -> Result<bool, LocalFileCacheError> {
+        let canonical = match normalize_path(path.as_ref()) {
+            Ok(p) => p,
+            Err(LocalFileCacheError::FileNotFound { .. }) => return Ok(false),
+            Err(e) => return Err(e),
+        };
+        let path_str = path_to_str(&canonical)?;
+        let Some(row) = repository::find_file(&self.conn, &self.namespace, path_str)? else {
+            return Ok(false);
+        };
+        repository::touch_last_accessed(&self.conn, row.id)?;
+        Ok(true)
+    }
+
+    // ------------------------------------------------------------------
+    // Persistent index management
+    // ------------------------------------------------------------------
+
+    /// Create an additional SQLite index on `files(namespace, path)`.
+    ///
+    /// The full index name is prefixed with `"lc_user_"`.  If an index with
+    /// the same name already exists this is a no-op.  Returns the full name.
+    pub fn create_path_index(&self, name: &str) -> Result<String, LocalFileCacheError> {
+        self.guard_write()?;
+        let full = format!("lc_user_{name}");
+        self.conn.execute_batch(&format!(
+            "CREATE INDEX IF NOT EXISTS {full} ON files(namespace, path);"
+        ))?;
+        Ok(full)
+    }
+
+    /// Drop a user-created index.  Returns `true` if it existed and was dropped.
+    pub fn drop_path_index(&self, name: &str) -> Result<bool, LocalFileCacheError> {
+        self.guard_write()?;
+        let full = format!("lc_user_{name}");
+        let exists: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?1",
+            rusqlite::params![full],
+            |r| r.get(0),
+        )?;
+        if exists == 0 {
+            return Ok(false);
+        }
+        self.conn
+            .execute_batch(&format!("DROP INDEX IF EXISTS {full};"))?;
+        Ok(true)
+    }
+
+    /// List all user-created indexes (`lc_user_*` prefix) in alphabetical order.
+    pub fn list_path_indexes(&self) -> Result<Vec<String>, LocalFileCacheError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT name FROM sqlite_master
+             WHERE type='index' AND name LIKE 'lc_user_%'
+             ORDER BY name",
+        )?;
+        let names: Result<Vec<String>, _> = stmt.query_map([], |r| r.get(0))?.collect();
+        Ok(names?)
     }
 
     // ------------------------------------------------------------------
