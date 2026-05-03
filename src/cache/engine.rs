@@ -481,10 +481,6 @@ where
     }
 
     /// Return aggregate statistics for the current namespace.
-    ///
-    /// Statistics include total entry count, total stored payload bytes
-    /// (compressed/encrypted as applicable), oldest and newest `updated_at`
-    /// timestamps, and per-encoding / per-version breakdowns.
     pub fn cache_stats(&self) -> Result<crate::cache::entry::CacheStats, LocalFileCacheError> {
         use crate::cache::entry::CacheStats;
 
@@ -501,6 +497,97 @@ where
             entries_by_encoding,
             entries_by_payload_version,
         })
+    }
+
+    // ------------------------------------------------------------------
+    // Export / import
+    // ------------------------------------------------------------------
+
+    /// Export every entry in the current namespace as a `Vec<ExportRecord>`.
+    ///
+    /// Each record contains the raw (possibly compressed/encrypted) payload
+    /// bytes encoded as Base64, together with all metadata needed to re-import
+    /// the entry.  Decryption is **not** performed during export; the bytes
+    /// are transferred verbatim.
+    pub fn export_entries(
+        &self,
+    ) -> Result<Vec<crate::cache::entry::ExportRecord>, LocalFileCacheError> {
+        use crate::cache::entry::ExportRecord;
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+
+        let rows = repository::load_all_full(&self.conn, &self.namespace)?;
+        Ok(rows
+            .into_iter()
+            .map(|r| ExportRecord {
+                path: r.path,
+                payload_b64: STANDARD.encode(&r.content),
+                encoding: r.encoding,
+                mtime: r.mtime,
+                file_size: r.file_size,
+                hash: r.hash,
+                payload_version: r.payload_version,
+                updated_at: r.updated_at,
+                last_accessed_at: r.last_accessed_at,
+            })
+            .collect())
+    }
+
+    /// Import a slice of [`ExportRecord`]s into the current namespace.
+    ///
+    /// Existing entries for the same path are replaced atomically inside a
+    /// single transaction.  Returns the number of entries imported.
+    ///
+    /// The payload bytes are stored verbatim (still compressed/encrypted as
+    /// they were when exported); no re-encoding is performed.
+    pub fn import_entries(
+        &self,
+        records: &[crate::cache::entry::ExportRecord],
+    ) -> Result<usize, LocalFileCacheError> {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+
+        self.guard_write()?;
+
+        let rows: Result<Vec<repository::FullRow>, LocalFileCacheError> = records
+            .iter()
+            .map(|r| {
+                let content = STANDARD.decode(&r.payload_b64).map_err(|e| {
+                    LocalFileCacheError::UnsupportedFeature(format!(
+                        "base64 decode error for '{}': {e}",
+                        r.path
+                    ))
+                })?;
+                Ok(repository::FullRow {
+                    path: r.path.clone(),
+                    content,
+                    encoding: r.encoding.clone(),
+                    mtime: r.mtime,
+                    file_size: r.file_size,
+                    hash: r.hash.clone(),
+                    payload_version: r.payload_version,
+                    updated_at: r.updated_at,
+                    last_accessed_at: r.last_accessed_at,
+                })
+            })
+            .collect();
+
+        repository::import_rows(&self.conn, &self.namespace, &rows?)
+    }
+
+    /// Copy all entries from `source` into the current namespace.
+    ///
+    /// This is equivalent to `self.import_entries(&source.export_entries()?)`,
+    /// but avoids the Base64 round-trip by operating directly on raw bytes.
+    /// Returns the number of entries copied.
+    ///
+    /// The two engines may point to different databases or different namespaces
+    /// within the same database.
+    pub fn import_from<U>(&self, source: &CacheEngine<U>) -> Result<usize, LocalFileCacheError>
+    where
+        U: serde::Serialize + serde::de::DeserializeOwned,
+    {
+        self.guard_write()?;
+        let rows = repository::load_all_full(&source.conn, &source.namespace)?;
+        repository::import_rows(&self.conn, &self.namespace, &rows)
     }
 
     // ------------------------------------------------------------------
@@ -796,24 +883,61 @@ impl GlobPattern {
 /// Expand **all** `{a,b,...}` brace groups in `pattern` recursively,
 /// producing the Cartesian product of all alternatives.
 ///
-/// Examples:
-/// * `"*.{txt,md}"` → `["*.txt", "*.md"]`
-/// * `"{pre,post}_*.{txt,md}"` → `["pre_*.txt","pre_*.md","post_*.txt","post_*.md"]`
+/// Nested brace groups within alternatives are supported:
+/// * `"{a,{b,c}}.txt"` → `["a.txt", "b.txt", "c.txt"]`
+/// * `"{pre,post}_{x,y}.txt"` → 4 combinations
 fn expand_braces(pattern: &str) -> Vec<String> {
-    if let (Some(open), Some(close_rel)) = (
-        pattern.find('{'),
-        pattern.find('{').and_then(|o| pattern[o..].find('}')),
-    ) {
-        let close = open + close_rel;
-        let prefix = &pattern[..open];
-        let suffix = &pattern[close + 1..];
-        let inner = &pattern[open + 1..close];
-        return inner
-            .split(',')
-            .flat_map(|alt| expand_braces(&format!("{prefix}{alt}{suffix}")))
-            .collect();
+    // Find the first `{` and its *matching* `}` (tracking nesting depth).
+    let bytes = pattern.as_bytes();
+    if let Some(open) = bytes.iter().position(|&b| b == b'{') {
+        let mut depth = 0usize;
+        let mut close = None;
+        for (i, &b) in bytes.iter().enumerate().skip(open) {
+            match b {
+                b'{' => depth += 1,
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        close = Some(i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let Some(close) = close {
+            let prefix = &pattern[..open];
+            let suffix = &pattern[close + 1..];
+            let inner = &pattern[open + 1..close];
+            // Split on top-level commas (not inside nested braces).
+            let alternatives = split_top_level(inner);
+            return alternatives
+                .into_iter()
+                .flat_map(|alt| expand_braces(&format!("{prefix}{alt}{suffix}")))
+                .collect();
+        }
     }
     vec![pattern.to_owned()]
+}
+
+/// Split `s` on commas that are not inside any `{...}` group.
+fn split_top_level(s: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0;
+    for (i, b) in s.bytes().enumerate() {
+        match b {
+            b'{' => depth += 1,
+            b'}' => depth -= 1,
+            b',' if depth == 0 => {
+                parts.push(s[start..i].to_owned());
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(s[start..].to_owned());
+    parts
 }
 
 /// Recursive glob matcher.

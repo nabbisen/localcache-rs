@@ -22,21 +22,26 @@ AES-256-GCM encryption, true LRU, glob scan, `list_entries`, schema v4.
 Builder API, `cache_stats`, `check_status_batch`, key rotation, glob brace expansion.
 
 ## Phase 8 — Workspace & Tooling (v0.8.x) ✅
+Cargo workspace, `localcache-cli`, `on_evict` callback, multi-group brace expansion.
 
-- [x] Cargo workspace — `localcache` (library) + `localcache-cli` (binary) as workspace members
-- [x] `localcache-cli` — CLI inspection tool with `list`, `stats`, `check`, `cleanup`,
-      `vacuum`, `purge-version`, `scan` subcommands; powered by `clap 4`
-- [x] `on_evict` callback — `CacheEngineBuilder::on_evict(|path| …)` hook called
-      after each LRU eviction from `max_entries`
-- [x] Multi-group glob brace expansion — `{a,b}_{c,d}.txt` → Cartesian product
-      (recursive `expand_braces`, replacing the single-group implementation)
-- [x] `EvictCallback` type alias — reduces complex type repetition in engine and builder
+## Phase 9 — Durability & Data Portability (v0.9.x) ✅
+
+- [x] `CacheEngine::export_entries()` — export namespace as `Vec<ExportRecord>` (Base64 payloads)
+- [x] `CacheEngine::import_entries()` — bulk-import from `Vec<ExportRecord>` (single transaction)
+- [x] `CacheEngine::import_from()` — direct engine-to-engine copy (no Base64 round-trip)
+- [x] `ExportRecord` — serialisable struct (`serde::Serialize + Deserialize`)
+- [x] `AsyncCacheEngine::export_entries()` / `import_entries()` — async variants
+- [x] CLI `export [--output PATH]` — dump namespace to JSON Lines (`-` = stdout)
+- [x] CLI `import [--input PATH]` — restore from JSON Lines (`-` = stdin)
+- [x] Nested brace expansion — `{a,{b,c}}` now correctly expands to 3 alternatives;
+      `{pre,{mid,post}}_{x,y}.txt` produces 6 combinations using proper
+      matching-brace tracking + top-level comma splitting
 
 ## Future / Unscheduled
 
 - File-watching integration (`notify` crate)
 - `async-std` / `smol` feature variants
-- Nested brace groups within alternatives
 - `serde_json` path-based queries on cached payloads
 - Read-only shared-memory DB mode
-- CLI: `export` / `import` subcommands (dump/restore)
+- CLI: `copy` subcommand (namespace-to-namespace within one DB)
+- CLI: `migrate` subcommand (export + re-import across DB versions)

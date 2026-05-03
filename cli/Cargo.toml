@@ -1,6 +1,6 @@
 [package]
 name    = "localcache-cli"
-version = "0.8.0"
+version = "0.9.0"
 edition = "2024"
 authors = ["nabbisen"]
 license = "Apache-2.0"
@@ -14,3 +14,4 @@ path = "src/main.rs"
 [dependencies]
 localcache = { path = "..", features = ["compression", "json"] }
 clap       = { version = "4", features = ["derive"] }
+serde_json = "1"

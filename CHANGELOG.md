@@ -11,41 +11,49 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [0.8.0] — 2025-05-03
+## [0.9.0] — 2025-05-03
 
 ### Added
 
-- **Cargo workspace** — the repository is now a workspace with two members:
-  * `localcache` (the library crate, unchanged public API)
-  * `localcache-cli` (new binary crate)
-- **`localcache-cli`** — a standalone CLI tool for inspecting and maintaining
-  localcache SQLite databases.  Build with `cargo build -p localcache-cli`.
-  Global options: `-d / --database <PATH>` and `-n / --namespace <NS>`.
-  Subcommands:
-  * `list [--limit N]` — tabular listing of all entries (path, version,
-    encoding, updated_at, last_access).
-  * `stats` — aggregate statistics matching `CacheEngine::cache_stats()`.
-  * `check <PATH>` — freshness status (`FRESH` / `STALE` / `MISSING`) for one file.
-  * `cleanup` — remove entries whose source files are missing.
-  * `vacuum` — run SQLite `VACUUM`.
-  * `purge-version <VERSION>` — delete entries with a different payload version.
-  * `scan <DIR> [--recursive] [--extensions txt,md] [--glob PATTERN]` — directory
-    scan with coloured status output.
-- **`CacheEngineBuilder::on_evict`** — register an `Fn(&Path) + Send + Sync`
-  callback that is invoked **after** each LRU eviction triggered by
-  `max_entries`.  The callback receives the canonical path that was stored.
-- **Multi-group glob brace expansion** — `{a,b}_{c,d}.txt` now expands to the
-  full Cartesian product `["a_c.txt","a_d.txt","b_c.txt","b_d.txt"]` rather
-  than expanding only the first group.  The recursive implementation handles
-  any number of groups.
-- **`EvictCallback` type alias** — `pub(crate) type EvictCallback = Arc<dyn
-  Fn(&Path) + Send + Sync>` reduces boilerplate in the engine and builder.
+- **`CacheEngine::export_entries()`** — export every entry in the current
+  namespace as a `Vec<ExportRecord>`.  Payload bytes are stored verbatim
+  (compressed/encrypted as-is) and Base64-encoded so the record can be
+  serialised to JSON.
+- **`CacheEngine::import_entries(records)`** — import a slice of
+  `ExportRecord`s into the current namespace inside a single SQLite
+  transaction.  Existing entries for the same path are replaced.  Returns the
+  count of entries imported.
+- **`CacheEngine::import_from(source)`** — copy all entries from a `source`
+  `CacheEngine` (which may be in a different database or namespace) without a
+  Base64 round-trip.  Returns the number of entries copied.
+- **`ExportRecord`** — new public struct (`serde::Serialize + Deserialize`),
+  carrying `path`, `payload_b64`, `encoding`, `mtime`, `file_size`, `hash`,
+  `payload_version`, `updated_at`, `last_accessed_at`.
+- **`AsyncCacheEngine::export_entries()`** and
+  **`AsyncCacheEngine::import_entries(records)`** — async equivalents of the
+  sync API.
+- **CLI `export [--output/-o PATH]`** — dump the namespace to JSON Lines
+  format (one `ExportRecord` per line).  `--output -` writes to stdout.
+- **CLI `import [--input/-i PATH]`** — restore entries from a JSON Lines file.
+  `--input -` reads from stdin.  Existing entries are replaced.
+- **Nested brace expansion** — `ScanOptions::glob_pattern` now correctly
+  handles nested brace groups such as `{a,{b,c}}` → `["a","b","c"]`.  The
+  implementation uses matching-brace depth tracking and a separate
+  `split_top_level` helper that splits only on commas outside any `{...}`
+  group.
+
+### Dependencies
+
+- `base64 = "0.22"` added to the library crate for payload encoding.
+- `serde_json = "1"` added to `localcache-cli` for JSON Lines serialisation.
 
 ---
 
+## [0.8.0] — 2025-05-03
+Cargo workspace, `localcache-cli`, `on_evict` callback, multi-group brace expansion.
+
 ## [0.7.0] — 2025-05-02
-Builder API, `cache_stats`, `check_status_batch`, key rotation, single-group
-glob brace expansion.
+Builder API, `cache_stats`, `check_status_batch`, key rotation, single-group brace expansion.
 
 ## [0.6.0] — 2025-05-02
 AES-256-GCM encryption, true LRU, glob scan, `list_entries`, schema v4.
@@ -65,7 +73,8 @@ Namespaces, batch ops, TTL, configurable PRAGMAs, schema migration.
 ## [0.1.0] — 2025-05-02
 Initial release.
 
-[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/nabbisen/localcache-rs/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/nabbisen/localcache-rs/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/nabbisen/localcache-rs/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/nabbisen/localcache-rs/compare/v0.5.0...v0.6.0

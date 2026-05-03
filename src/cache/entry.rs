@@ -72,3 +72,36 @@ pub struct CacheStats {
     /// Entry count grouped by `payload_version`, sorted by version ascending.
     pub entries_by_payload_version: Vec<(u32, usize)>,
 }
+
+/// A serialisable snapshot of a single cache entry.
+///
+/// Used by [`crate::CacheEngine::export_entries`] and
+/// [`crate::CacheEngine::import_entries`] to move entries between databases,
+/// namespaces, or processes.  All binary payload data is Base64-encoded so the
+/// record can be round-tripped through JSON.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ExportRecord {
+    /// Canonical path stored in the database (may differ from the current
+    /// on-disk path if the file was moved).
+    pub path: String,
+
+    /// Serialised payload in Base64 encoding.
+    pub payload_b64: String,
+
+    /// Encoding tag (e.g. `"raw"`, `"zstd"`, `"json"`, `"raw-aes256gcm"`).
+    pub encoding: String,
+
+    /// File metadata at the time the entry was last written.
+    pub mtime: i64,
+    pub file_size: u64,
+    pub hash: Option<String>,
+
+    /// Payload schema version.
+    pub payload_version: u32,
+
+    /// Unix timestamp (seconds) of the last write.
+    pub updated_at: i64,
+
+    /// Unix timestamp (seconds) of the last read (`0` = never read).
+    pub last_accessed_at: i64,
+}

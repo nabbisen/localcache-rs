@@ -34,7 +34,9 @@ mod tests;
 pub use cache::async_engine::AsyncCacheEngine;
 pub use cache::builder::CacheEngineBuilder;
 pub use cache::engine::{BatchSetReport, CacheEngine};
-pub use cache::entry::{CacheEntry, CacheStats, CacheStatus, EntryInfo, FileMetadata};
+pub use cache::entry::{
+    CacheEntry, CacheStats, CacheStatus, EntryInfo, ExportRecord, FileMetadata,
+};
 pub use cache::options::{
     CacheOptions, ChangeDetectionMode, Codec, JournalMode, ScanOptions, SynchronousMode,
 };

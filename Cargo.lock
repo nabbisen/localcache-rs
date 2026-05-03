@@ -118,6 +118,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
 
 [[package]]
+name = "base64"
+version = "0.22.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
+
+[[package]]
 name = "bincode"
 version = "1.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -485,9 +491,10 @@ checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 
 [[package]]
 name = "localcache"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "aes-gcm",
+ "base64",
  "bincode",
  "blake3",
  "rusqlite",
@@ -501,10 +508,11 @@ dependencies = [
 
 [[package]]
 name = "localcache-cli"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "clap",
  "localcache",
+ "serde_json",
 ]
 
 [[package]]

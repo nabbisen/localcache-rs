@@ -204,6 +204,23 @@ where
         let inner = Arc::clone(&self.inner);
         spawn(move || inner.lock().unwrap().rotate_encryption_key(&new_key)).await
     }
+
+    /// Async version of [`CacheEngine::export_entries`].
+    pub async fn export_entries(
+        &self,
+    ) -> Result<Vec<crate::cache::entry::ExportRecord>, LocalFileCacheError> {
+        let inner = Arc::clone(&self.inner);
+        spawn(move || inner.lock().unwrap().export_entries()).await
+    }
+
+    /// Async version of [`CacheEngine::import_entries`].
+    pub async fn import_entries(
+        &self,
+        records: Vec<crate::cache::entry::ExportRecord>,
+    ) -> Result<usize, LocalFileCacheError> {
+        let inner = Arc::clone(&self.inner);
+        spawn(move || inner.lock().unwrap().import_entries(&records)).await
+    }
 }
 
 async fn spawn<F, R>(f: F) -> Result<R, LocalFileCacheError>

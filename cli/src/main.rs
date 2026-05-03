@@ -18,6 +18,7 @@
 //!   purge-version   Delete all entries whose payload_version != <VERSION>
 //! ```
 
+use std::io::BufRead;
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
@@ -75,6 +76,18 @@ enum Commands {
 
     /// Scan a directory and show the cache status of each file.
     Scan(ScanArgs),
+
+    /// Export all entries to a JSON Lines file (one record per line).
+    ///
+    /// Payload bytes are Base64-encoded so the file is fully text-portable.
+    /// Encrypted entries are exported verbatim (still encrypted).
+    Export(ExportArgs),
+
+    /// Import entries from a JSON Lines file produced by `export`.
+    ///
+    /// Existing entries for the same path are replaced.  The target namespace
+    /// can be overridden with `-n`.
+    Import(ImportArgs),
 }
 
 #[derive(Args)]
@@ -115,6 +128,24 @@ struct ScanArgs {
     glob: Option<String>,
 }
 
+#[derive(Args)]
+struct ExportArgs {
+    /// Output file path.  Use `-` to write to stdout.
+    #[arg(short, long, default_value = "-")]
+    output: String,
+}
+
+#[derive(Args)]
+struct ImportArgs {
+    /// Input file path.  Use `-` to read from stdin.
+    #[arg(short, long, default_value = "-")]
+    input: String,
+
+    /// Overwrite existing entries with the same path.
+    #[arg(long, default_value_t = true)]
+    overwrite: bool,
+}
+
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
@@ -143,6 +174,8 @@ fn run(cli: Cli) -> Result<(), LocalFileCacheError> {
         Commands::Vacuum => cmd_vacuum(opts),
         Commands::PurgeVersion(args) => cmd_purge_version(opts, args),
         Commands::Scan(args) => cmd_scan(opts, args),
+        Commands::Export(args) => cmd_export(opts, args),
+        Commands::Import(args) => cmd_import(opts, args),
     }
 }
 
@@ -337,6 +370,81 @@ fn cmd_scan(opts: CacheOptions, args: ScanArgs) -> Result<(), LocalFileCacheErro
         counts.0,
         counts.1,
         counts.2
+    );
+    Ok(())
+}
+
+fn cmd_export(opts: CacheOptions, args: ExportArgs) -> Result<(), LocalFileCacheError> {
+    let engine = CacheEngine::<Vec<u8>>::open(opts)?;
+    let records = engine.export_entries()?;
+
+    let use_stdout = args.output == "-";
+    let mut output: Box<dyn std::io::Write> = if use_stdout {
+        Box::new(std::io::stdout())
+    } else {
+        Box::new(
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&args.output)
+                .map_err(LocalFileCacheError::Io)?,
+        )
+    };
+
+    for record in &records {
+        let line = serde_json::to_string(record).map_err(|e| {
+            LocalFileCacheError::UnsupportedFeature(format!("json serialisation: {e}"))
+        })?;
+        output
+            .write_all(line.as_bytes())
+            .map_err(LocalFileCacheError::Io)?;
+        output.write_all(b"\n").map_err(LocalFileCacheError::Io)?;
+    }
+
+    if !use_stdout {
+        eprintln!(
+            "Exported {} entr{} → {}",
+            records.len(),
+            if records.len() == 1 { "y" } else { "ies" },
+            args.output
+        );
+    }
+    Ok(())
+}
+
+fn cmd_import(opts: CacheOptions, args: ImportArgs) -> Result<(), LocalFileCacheError> {
+    let engine = CacheEngine::<Vec<u8>>::open(opts)?;
+
+    let input: Box<dyn std::io::BufRead> = if args.input == "-" {
+        Box::new(std::io::BufReader::new(std::io::stdin()))
+    } else {
+        Box::new(std::io::BufReader::new(
+            std::fs::File::open(&args.input).map_err(LocalFileCacheError::Io)?,
+        ))
+    };
+
+    let mut records = Vec::new();
+    for (lineno, line) in input.lines().enumerate() {
+        let line = line.map_err(LocalFileCacheError::Io)?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let record: localcache::ExportRecord = serde_json::from_str(trimmed).map_err(|e| {
+            LocalFileCacheError::UnsupportedFeature(format!(
+                "json parse error at line {}: {e}",
+                lineno + 1
+            ))
+        })?;
+        records.push(record);
+    }
+
+    let imported = engine.import_entries(&records)?;
+    eprintln!(
+        "Imported {} entr{}",
+        imported,
+        if imported == 1 { "y" } else { "ies" }
     );
     Ok(())
 }

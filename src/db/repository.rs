@@ -478,3 +478,109 @@ pub(crate) fn list_lru_n_paths(
         .collect();
     Ok(paths?)
 }
+
+// ---------------------------------------------------------------------------
+// Export / import support
+// ---------------------------------------------------------------------------
+
+/// A raw database row used for export — includes payload content.
+pub(crate) struct FullRow {
+    pub path: String,
+    pub content: Vec<u8>,
+    pub encoding: String,
+    pub mtime: i64,
+    pub file_size: u64,
+    pub hash: Option<String>,
+    pub payload_version: u32,
+    pub updated_at: i64,
+    pub last_accessed_at: i64,
+}
+
+/// Load every entry in `namespace` including its payload bytes.
+pub(crate) fn load_all_full(
+    conn: &Connection,
+    namespace: &str,
+) -> Result<Vec<FullRow>, LocalFileCacheError> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT f.path, p.content, p.encoding,
+                f.mtime, f.file_size, f.hash,
+                f.payload_version, f.updated_at, f.last_accessed_at
+         FROM files f
+         JOIN payloads p ON p.file_id = f.id
+         WHERE f.namespace = ?1
+         ORDER BY f.updated_at DESC",
+    )?;
+    let rows: Result<Vec<_>, _> = stmt
+        .query_map(params![namespace], |r| {
+            Ok(FullRow {
+                path: r.get(0)?,
+                content: r.get(1)?,
+                encoding: r.get(2)?,
+                mtime: r.get(3)?,
+                file_size: r.get::<_, i64>(4)? as u64,
+                hash: r.get(5)?,
+                payload_version: r.get::<_, i64>(6)? as u32,
+                updated_at: r.get(7)?,
+                last_accessed_at: r.get(8)?,
+            })
+        })?
+        .collect();
+    Ok(rows?)
+}
+
+/// Import a batch of rows into `namespace` inside a single transaction.
+///
+/// Existing entries (matched on `namespace + path`) are replaced.
+pub(crate) fn import_rows(
+    conn: &Connection,
+    namespace: &str,
+    rows: &[FullRow],
+) -> Result<usize, LocalFileCacheError> {
+    if rows.is_empty() {
+        return Ok(0);
+    }
+    let tx = conn.unchecked_transaction()?;
+    for row in rows {
+        tx.execute(
+            "INSERT INTO files
+                 (namespace, path, mtime, file_size, hash, updated_at,
+                  payload_version, last_accessed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(namespace, path) DO UPDATE SET
+                 mtime            = excluded.mtime,
+                 file_size        = excluded.file_size,
+                 hash             = excluded.hash,
+                 updated_at       = excluded.updated_at,
+                 payload_version  = excluded.payload_version,
+                 last_accessed_at = excluded.last_accessed_at",
+            params![
+                namespace,
+                row.path,
+                row.mtime,
+                row.file_size as i64,
+                row.hash,
+                row.updated_at,
+                row.payload_version as i64,
+                row.last_accessed_at,
+            ],
+        )?;
+
+        let file_id: i64 = tx.query_row(
+            "SELECT id FROM files WHERE namespace = ?1 AND path = ?2",
+            params![namespace, row.path],
+            |r| r.get(0),
+        )?;
+
+        tx.execute(
+            "INSERT INTO payloads (file_id, content, encoding)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(file_id) DO UPDATE SET
+                 content  = excluded.content,
+                 encoding = excluded.encoding",
+            params![file_id, row.content, row.encoding],
+        )?;
+    }
+    let n = rows.len();
+    tx.commit()?;
+    Ok(n)
+}
