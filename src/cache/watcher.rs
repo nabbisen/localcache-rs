@@ -218,3 +218,110 @@ fn classify_event(kind: &EventKind) -> Option<InvalidationReason> {
         _ => None,
     }
 }
+
+// ---------------------------------------------------------------------------
+// CacheDebouncedWatcher
+// ---------------------------------------------------------------------------
+
+/// A debounced background file-system watcher.
+///
+/// Created via [`CacheEngine::debounced_watcher()`].  File-system events
+/// within `window` of each other are merged into a single [`WatchEvent`],
+/// preventing floods of invalidation messages during rapid writes.
+///
+/// Like [`CacheWatcher`], this type must remain alive for events to be
+/// delivered.
+pub struct CacheDebouncedWatcher<T> {
+    /// Dedicated engine for the callback thread.
+    _inner: std::sync::Arc<std::sync::Mutex<CacheEngine<T>>>,
+    /// The OS-level debounced watcher (kept alive).
+    _debouncer: notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>,
+    /// Receiver for deduplicated invalidation events.
+    rx: std::sync::mpsc::Receiver<WatchEvent>,
+}
+
+impl<T> CacheDebouncedWatcher<T>
+where
+    T: Serialize + DeserializeOwned + Send + 'static,
+{
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_with_paths(
+        database_path: std::path::PathBuf,
+        mode: crate::cache::options::ChangeDetectionMode,
+        codec: crate::cache::options::Codec,
+        namespace: String,
+        ttl: Option<std::time::Duration>,
+        payload_version: u32,
+        paths: Vec<PathBuf>,
+        window: std::time::Duration,
+    ) -> Result<Self, LocalFileCacheError> {
+        use std::sync::{Arc, Mutex, mpsc};
+
+        let watcher_engine = CacheEngine::<T>::open(crate::cache::options::CacheOptions {
+            database_path,
+            change_detection_mode: mode,
+            codec,
+            namespace,
+            ttl,
+            read_only: false,
+            payload_version,
+            ..crate::cache::options::CacheOptions::default()
+        })?;
+
+        let inner = Arc::new(Mutex::new(watcher_engine));
+        let (tx, rx) = mpsc::sync_channel::<WatchEvent>(256);
+        let inner_cb = Arc::clone(&inner);
+
+        let debouncer = notify_debouncer_mini::new_debouncer(
+            window,
+            move |res: notify_debouncer_mini::DebounceEventResult| {
+                let events = match res {
+                    Ok(evs) => evs,
+                    Err(_) => return,
+                };
+                // Deduplicate paths within the debounce window.
+                let mut seen = std::collections::HashSet::new();
+                for ev in events {
+                    // DebouncedEvent has a single `path` field (not `paths`).
+                    let path = ev.path;
+                    if seen.insert(path.clone()) {
+                        // DebouncedEventKind has only Any / AnyContinuous —
+                        // no remove variant; treat all as FileModified.
+                        let reason = InvalidationReason::FileModified;
+                        if let Ok(eng) = inner_cb.lock() {
+                            let _ = eng.remove(&path);
+                        }
+                        let _ = tx.try_send(WatchEvent { path, reason });
+                    }
+                }
+            },
+        )
+        .map_err(|e| {
+            LocalFileCacheError::UnsupportedFeature(format!(
+                "failed to create debounced watcher: {e}"
+            ))
+        })?;
+
+        // Register all pre-existing cached paths.
+        {
+            let mut deb = debouncer;
+            for path in &paths {
+                if path.exists() {
+                    let _ = deb.watcher().watch(path, RecursiveMode::NonRecursive);
+                }
+            }
+            Ok(Self {
+                _inner: inner,
+                _debouncer: deb,
+                rx,
+            })
+        }
+    }
+
+    /// Borrow the deduplicated event receiver.
+    ///
+    /// The watcher must stay alive while reading.
+    pub fn events(&self) -> &std::sync::mpsc::Receiver<WatchEvent> {
+        &self.rx
+    }
+}

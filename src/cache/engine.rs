@@ -173,15 +173,28 @@ where
         let _span =
             tracing::debug_span!("localcache::get", path = %path.as_ref().display()).entered();
 
+        #[cfg(feature = "metrics")]
+        metrics::counter!("localcache.get.total",
+            "namespace" => self.namespace.clone())
+        .increment(1);
+
         let canonical = normalize_path(path.as_ref())?;
         let path_str = path_to_str(&canonical)?;
 
         let Some(row) = repository::find_file(&self.conn, &self.namespace, path_str)? else {
             #[cfg(feature = "tracing")]
             tracing::debug!("cache miss");
+            #[cfg(feature = "metrics")]
+            metrics::counter!("localcache.get.miss",
+                "namespace" => self.namespace.clone())
+            .increment(1);
             return Ok(None);
         };
         let Some(payload_row) = repository::load_payload(&self.conn, row.id)? else {
+            #[cfg(feature = "metrics")]
+            metrics::counter!("localcache.get.miss",
+                "namespace" => self.namespace.clone())
+            .increment(1);
             return Ok(None);
         };
         let payload: T = self.decode(&payload_row.content, &payload_row.encoding)?;
@@ -190,6 +203,10 @@ where
         }
         #[cfg(feature = "tracing")]
         tracing::debug!("cache hit");
+        #[cfg(feature = "metrics")]
+        metrics::counter!("localcache.get.hit",
+            "namespace" => self.namespace.clone())
+        .increment(1);
         Ok(Some(CacheEntry {
             path: PathBuf::from(&row.path),
             metadata: row.metadata,
@@ -295,6 +312,15 @@ where
         self.enforce_max_entries()?;
         #[cfg(feature = "tracing")]
         tracing::debug!(bytes = bytes.len(), encoding, "stored");
+        #[cfg(feature = "metrics")]
+        {
+            metrics::counter!("localcache.set.total",
+                "namespace" => self.namespace.clone())
+            .increment(1);
+            metrics::histogram!("localcache.set.bytes",
+                "namespace" => self.namespace.clone())
+            .record(bytes.len() as f64);
+        }
         Ok(())
     }
 
@@ -1019,6 +1045,99 @@ where
             }
         }
         Ok(report)
+    }
+
+    // ------------------------------------------------------------------
+    // Namespace management
+    // ------------------------------------------------------------------
+
+    /// List all distinct namespace names present in the current database.
+    ///
+    /// Returns names sorted alphabetically.  Useful for inspecting which
+    /// namespaces exist before running maintenance or migration tasks.
+    pub fn namespace_list(&self) -> Result<Vec<String>, LocalFileCacheError> {
+        repository::list_namespaces(&self.conn)
+    }
+
+    /// Copy all entries from `source_namespace` into `dest_namespace`.
+    ///
+    /// The source and destination may be in the **same** database file (this
+    /// engine's database) or in different files — pass `source` as any
+    /// `CacheEngine` opened on the source database.
+    ///
+    /// Already-existing entries in `dest_namespace` for the same path are
+    /// replaced.  Returns the number of entries copied.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use localcache::CacheEngine;
+    /// # let src = CacheEngine::<Vec<f32>>::builder().database(":memory:").build()?;
+    /// let dst = CacheEngine::<Vec<f32>>::builder()
+    ///     .database("dst.sqlite3")
+    ///     .namespace("v2")
+    ///     .build()?;
+    /// let n = dst.namespace_copy(&src)?;
+    /// println!("copied {n} entries");
+    /// # Ok::<(), localcache::LocalFileCacheError>(())
+    /// ```
+    pub fn namespace_copy<U>(&self, source: &CacheEngine<U>) -> Result<usize, LocalFileCacheError>
+    where
+        U: serde::Serialize + serde::de::DeserializeOwned,
+    {
+        self.guard_write()?;
+        let rows = repository::load_all_full(&source.conn, &source.namespace)?;
+        repository::import_rows(&self.conn, &self.namespace, &rows)
+    }
+
+    // ------------------------------------------------------------------
+    // Debounced watching (watching feature)
+    // ------------------------------------------------------------------
+
+    /// Start a **debounced** background watcher for all currently cached entries.
+    ///
+    /// Like [`watcher()`](Self::watcher) but file events within `window` of
+    /// each other are merged into a single [`WatchEvent`].  This prevents
+    /// rapid back-to-back writes (e.g. editors that save incrementally) from
+    /// generating a flood of invalidation events.
+    ///
+    /// Requires the `watching` Cargo feature.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use std::time::Duration;
+    /// use localcache::CacheEngine;
+    ///
+    /// let engine = CacheEngine::<Vec<f32>>::builder()
+    ///     .database("cache.sqlite3")
+    ///     .build()?;
+    ///
+    /// let watcher = engine.debounced_watcher(Duration::from_millis(300))?;
+    /// for event in watcher.events() {
+    ///     println!("debounced: {}", event.path.display());
+    /// }
+    /// # Ok::<(), localcache::LocalFileCacheError>(())
+    /// ```
+    #[cfg(feature = "watching")]
+    pub fn debounced_watcher(
+        &self,
+        window: std::time::Duration,
+    ) -> Result<crate::cache::watcher::CacheDebouncedWatcher<T>, LocalFileCacheError>
+    where
+        T: Send + 'static,
+    {
+        let paths = self.keys(None)?;
+        crate::cache::watcher::CacheDebouncedWatcher::new_with_paths(
+            self.database_path.clone(),
+            self.mode,
+            self.codec,
+            self.namespace.clone(),
+            self.ttl,
+            self.payload_version,
+            paths,
+            window,
+        )
     }
 
     // ------------------------------------------------------------------

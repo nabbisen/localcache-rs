@@ -640,3 +640,15 @@ pub(crate) fn keys(
     };
     Ok(paths?)
 }
+
+// ---------------------------------------------------------------------------
+// Namespace management
+// ---------------------------------------------------------------------------
+
+/// Return all distinct namespace names in the database, sorted.
+pub(crate) fn list_namespaces(conn: &Connection) -> Result<Vec<String>, LocalFileCacheError> {
+    let mut stmt =
+        conn.prepare_cached("SELECT DISTINCT namespace FROM files ORDER BY namespace")?;
+    let ns: Result<Vec<String>, _> = stmt.query_map([], |r| r.get(0))?.collect();
+    Ok(ns?)
+}

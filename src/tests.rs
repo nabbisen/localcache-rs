@@ -4462,4 +4462,261 @@ mod integration {
             let _watcher = engine.watcher().unwrap();
         }
     }
+
+    // ====================================================================
+    // Phase 15 — namespace_list() and namespace_copy()
+    // ====================================================================
+
+    #[test]
+    fn namespace_list_returns_all_namespaces() {
+        let dir = TempDir::new().unwrap();
+        let db = dir.path().join("ns_list.sqlite3");
+
+        let names = ["alpha", "beta", "gamma"];
+        for ns in &names {
+            let e: CacheEngine<Vec<f32>> = CacheEngine::builder()
+                .database(db.clone())
+                .namespace(*ns)
+                .build()
+                .unwrap();
+            let p = write_file(&dir, &format!("{ns}.txt"), b"x");
+            e.set(&p, &vec![1.0_f32]).unwrap();
+        }
+
+        let e: CacheEngine<Vec<f32>> = CacheEngine::builder()
+            .database(db)
+            .namespace("alpha")
+            .build()
+            .unwrap();
+
+        let listed = e.namespace_list().unwrap();
+        assert_eq!(listed.len(), 3);
+        for ns in &names {
+            assert!(listed.contains(&ns.to_string()));
+        }
+        // Should be alphabetically sorted.
+        assert!(listed.windows(2).all(|w| w[0] <= w[1]));
+    }
+
+    #[test]
+    fn namespace_list_empty_database() {
+        let dir = TempDir::new().unwrap();
+        let e: CacheEngine<Vec<f32>> = CacheEngine::builder()
+            .database(dir.path().join("empty_ns.sqlite3"))
+            .build()
+            .unwrap();
+        // No entries yet — namespace_list should return empty.
+        assert!(e.namespace_list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn namespace_copy_copies_all_entries() {
+        let dir = TempDir::new().unwrap();
+        let db_src = dir.path().join("ns_src.sqlite3");
+        let db_dst = dir.path().join("ns_dst.sqlite3");
+
+        let src: CacheEngine<Vec<f32>> = CacheEngine::builder()
+            .database(db_src)
+            .namespace("source")
+            .build()
+            .unwrap();
+
+        for i in 0..5u32 {
+            let p = write_file(&dir, &format!("cp{i}.txt"), b"x");
+            src.set(&p, &vec![i as f32]).unwrap();
+        }
+
+        let dst: CacheEngine<Vec<f32>> = CacheEngine::builder()
+            .database(db_dst)
+            .namespace("dest")
+            .build()
+            .unwrap();
+
+        let copied = dst.namespace_copy(&src).unwrap();
+        assert_eq!(copied, 5);
+        assert_eq!(dst.entry_count().unwrap(), 5);
+    }
+
+    #[test]
+    fn namespace_copy_overwrites_existing_entries() {
+        let dir = TempDir::new().unwrap();
+        let db = dir.path().join("ns_overwrite.sqlite3");
+
+        let src: CacheEngine<Vec<f32>> = CacheEngine::builder()
+            .database(db.clone())
+            .namespace("src")
+            .build()
+            .unwrap();
+        let dst: CacheEngine<Vec<f32>> = CacheEngine::builder()
+            .database(db)
+            .namespace("dst")
+            .build()
+            .unwrap();
+
+        let p = write_file(&dir, "over.txt", b"data");
+        src.set(&p, &vec![1.0_f32]).unwrap();
+        dst.set(&p, &vec![99.0_f32]).unwrap();
+
+        // Copy from src → dst; dst's entry should be overwritten.
+        let copied = dst.namespace_copy(&src).unwrap();
+        assert_eq!(copied, 1);
+        assert_eq!(dst.entry_count().unwrap(), 1);
+
+        // Entry should now reflect src's payload.
+        let entry = dst.get(&p).unwrap().unwrap();
+        assert_eq!(entry.payload[0], 1.0_f32);
+    }
+
+    #[test]
+    fn namespace_copy_is_equivalent_to_import_from() {
+        let dir = TempDir::new().unwrap();
+        let db1 = dir.path().join("equiv1.sqlite3");
+        let db2 = dir.path().join("equiv2.sqlite3");
+
+        let src: CacheEngine<Vec<f32>> = CacheEngine::builder()
+            .database(db1.clone())
+            .namespace("ns")
+            .build()
+            .unwrap();
+
+        for i in 0..3u32 {
+            let p = write_file(&dir, &format!("eq{i}.txt"), b"x");
+            src.set(&p, &vec![i as f32]).unwrap();
+        }
+
+        let dst1: CacheEngine<Vec<f32>> = CacheEngine::builder()
+            .database(db1.clone())
+            .namespace("copy_dst")
+            .build()
+            .unwrap();
+        let dst2: CacheEngine<Vec<f32>> = CacheEngine::builder()
+            .database(db2)
+            .namespace("ns")
+            .build()
+            .unwrap();
+
+        let n1 = dst1.namespace_copy(&src).unwrap();
+        let n2 = dst2.import_from(&src).unwrap();
+        assert_eq!(
+            n1, n2,
+            "namespace_copy and import_from should copy the same count"
+        );
+    }
+
+    // ====================================================================
+    // Phase 15 — metrics feature (smoke test: no panic)
+    // ====================================================================
+
+    #[cfg(feature = "metrics")]
+    #[test]
+    fn metrics_instrumentation_no_panic() {
+        let dir = TempDir::new().unwrap();
+        let engine: CacheEngine<Vec<f32>> =
+            CacheEngine::builder().database(":memory:").build().unwrap();
+
+        let path = write_file(&dir, "metrics.txt", b"data");
+
+        // These should fire metrics without panicking.
+        engine.set(&path, &vec![1.0_f32]).unwrap();
+        let _ = engine.get(&path).unwrap(); // hit
+        let _ = engine.get_if_fresh(&path).unwrap(); // fresh hit
+
+        // Miss case.
+        let missing = write_file(&dir, "missing.txt", b"x");
+        let _ = engine.get(&missing).unwrap(); // miss
+    }
+
+    // ====================================================================
+    // Phase 15 — CacheDebouncedWatcher (watching feature)
+    // ====================================================================
+
+    #[cfg(feature = "watching")]
+    mod debounce_tests {
+        use super::*;
+        #[allow(unused_imports)]
+        use std::io::Write as _;
+        use std::time::Duration;
+
+        fn make_db_engine(dir: &TempDir) -> CacheEngine<Vec<f32>> {
+            CacheEngine::builder()
+                .database(dir.path().join("debounce.sqlite3"))
+                .build()
+                .unwrap()
+        }
+
+        fn modify(path: &std::path::Path, content: &[u8]) {
+            let mut f = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(path)
+                .unwrap();
+            f.write_all(content).unwrap();
+            f.flush().unwrap();
+        }
+
+        #[test]
+        fn debounced_watcher_deduplicates_rapid_writes() {
+            let dir = TempDir::new().unwrap();
+            let engine = make_db_engine(&dir);
+
+            let path = write_file(&dir, "debounce1.txt", b"original");
+            engine.set(&path, &vec![1.0_f32]).unwrap();
+
+            // Use a 200 ms debounce window.
+            let watcher = engine
+                .debounced_watcher(Duration::from_millis(200))
+                .unwrap();
+            let rx = watcher.events();
+
+            std::thread::sleep(Duration::from_millis(50));
+
+            // Write 5 times rapidly within the debounce window.
+            for i in 0..5u8 {
+                modify(&path, &[i; 32]);
+                std::thread::sleep(Duration::from_millis(10));
+            }
+
+            // Should receive at most 2 events (debounce merges them).
+            std::thread::sleep(Duration::from_millis(500));
+            let mut count = 0usize;
+            while rx.try_recv().is_ok() {
+                count += 1;
+            }
+            assert!(count <= 2, "expected ≤ 2 debounced events, got {count}");
+            assert!(count >= 1, "expected at least 1 event");
+            drop(watcher);
+        }
+
+        #[test]
+        fn debounced_watcher_no_panic_on_empty_cache() {
+            let dir = TempDir::new().unwrap();
+            let engine = make_db_engine(&dir);
+            let _w = engine
+                .debounced_watcher(Duration::from_millis(100))
+                .unwrap();
+        }
+
+        #[test]
+        fn debounced_watcher_receives_event_for_modification() {
+            let dir = TempDir::new().unwrap();
+            let engine = make_db_engine(&dir);
+
+            let path = write_file(&dir, "debounce2.txt", b"v1");
+            engine.set(&path, &vec![1.0_f32]).unwrap();
+
+            let watcher = engine
+                .debounced_watcher(Duration::from_millis(150))
+                .unwrap();
+            let rx = watcher.events();
+
+            std::thread::sleep(Duration::from_millis(50));
+            modify(&path, b"v2 changed content");
+
+            let event = rx.recv_timeout(Duration::from_secs(3));
+            assert!(event.is_ok(), "expected a debounced event within 3 s");
+            assert_eq!(event.unwrap().path, path);
+            drop(watcher);
+        }
+    }
 }

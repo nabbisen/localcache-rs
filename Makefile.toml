@@ -1,0 +1,186 @@
+# Makefile.toml — cargo-make task runner for localcache
+#
+# Install:  cargo install cargo-make
+# Usage:    cargo make <task>
+#
+# Common tasks:
+#   cargo make check          — fmt + clippy (all feature combinations)
+#   cargo make test           — full test suite with all features
+#   cargo make bench-compile  — verify benchmarks compile
+#   cargo make pre-publish    — all checks before publishing
+#   cargo make publish-lib    — publish localcache to crates.io
+#   cargo make publish-cli    — publish localcache-cli to crates.io
+#   cargo make publish-all    — publish both (lib first)
+
+[config]
+default_to_workspace = false
+
+# ---------------------------------------------------------------------------
+# Environment
+# ---------------------------------------------------------------------------
+
+[env]
+ALL_FEATURES = "async,compression,json,encryption,tracing,watching,metrics"
+
+# ---------------------------------------------------------------------------
+# Formatting & linting
+# ---------------------------------------------------------------------------
+
+[tasks.fmt-check]
+description = "Check formatting (all crates)"
+command = "cargo"
+args = ["fmt", "--all", "--check"]
+
+[tasks.fmt]
+description = "Apply formatting (all crates)"
+command = "cargo"
+args = ["fmt", "--all"]
+
+[tasks.clippy-default]
+description = "Clippy with default features"
+command = "cargo"
+args = ["clippy", "--all-targets", "--", "-D", "warnings"]
+
+[tasks.clippy-all]
+description = "Clippy with all features enabled"
+command = "cargo"
+args = ["clippy", "--all-targets", "--features", "${ALL_FEATURES}", "--", "-D", "warnings"]
+
+[tasks.clippy-min]
+description = "Clippy with no optional features (minimal build)"
+command = "cargo"
+args = ["clippy", "--all-targets", "--no-default-features", "--", "-D", "warnings"]
+
+[tasks.check]
+description = "Format check + clippy (default, all, minimal)"
+dependencies = ["fmt-check", "clippy-default", "clippy-all", "clippy-min"]
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+[tasks.test]
+description = "Run tests with all features"
+command = "cargo"
+args = ["test", "--features", "${ALL_FEATURES}"]
+
+[tasks.test-default]
+description = "Run tests with default features only"
+command = "cargo"
+args = ["test"]
+
+[tasks.test-no-features]
+description = "Run tests with no optional features"
+command = "cargo"
+args = ["test", "--no-default-features"]
+
+[tasks.test-all]
+description = "Run tests across feature matrix"
+dependencies = ["test-no-features", "test-default", "test"]
+
+# ---------------------------------------------------------------------------
+# Benchmarks
+# ---------------------------------------------------------------------------
+
+[tasks.bench-compile]
+description = "Verify benchmarks compile (no actual run)"
+command = "cargo"
+args = ["bench", "--no-run", "--features", "json"]
+
+[tasks.bench]
+description = "Run benchmarks (requires --features json)"
+command = "cargo"
+args = ["bench", "--features", "json"]
+
+# ---------------------------------------------------------------------------
+# Documentation
+# ---------------------------------------------------------------------------
+
+[tasks.doc]
+description = "Build documentation with all features"
+command = "cargo"
+args = ["doc", "--no-deps", "--features", "${ALL_FEATURES}", "--open"]
+
+[tasks.doc-check]
+description = "Check documentation builds cleanly"
+command = "cargo"
+args = ["doc", "--no-deps", "--features", "${ALL_FEATURES}"]
+
+# ---------------------------------------------------------------------------
+# Publish checks
+# ---------------------------------------------------------------------------
+
+[tasks.package-check]
+description = "Check what will be included in the crates.io package"
+command = "cargo"
+args = ["package", "--list", "--allow-dirty"]
+
+[tasks.package-dry-run]
+description = "Dry-run package build for the library crate"
+command = "cargo"
+args = ["package", "--no-verify", "--allow-dirty"]
+
+[tasks.pre-publish]
+description = "All checks required before publishing"
+dependencies = [
+    "fmt-check",
+    "clippy-all",
+    "test-all",
+    "bench-compile",
+    "doc-check",
+    "package-check",
+]
+
+# ---------------------------------------------------------------------------
+# Publish tasks
+# ---------------------------------------------------------------------------
+
+[tasks.publish-lib]
+description = "Publish localcache (library) to crates.io"
+dependencies = ["pre-publish"]
+command = "cargo"
+args = ["publish", "-p", "localcache"]
+
+[tasks.publish-cli-only]
+description = "Publish localcache-cli to crates.io (run after publish-lib)"
+command = "cargo"
+args = ["publish", "-p", "localcache-cli"]
+
+[tasks.publish-all]
+description = "Publish library then CLI (waits for library to propagate)"
+script = [
+    "cargo make publish-lib",
+    "echo 'Waiting 30 s for crates.io to index localcache...'",
+    "sleep 30",
+    "cargo make publish-cli-only",
+]
+
+# ---------------------------------------------------------------------------
+# Release helpers
+# ---------------------------------------------------------------------------
+
+[tasks.changelog-check]
+description = "Verify CHANGELOG.md has an entry for the current version"
+script = [
+    '''
+    VERSION=$(cargo metadata --no-deps --format-version 1 | python3 -c "import sys,json; pkgs=json.load(sys.stdin)[\"packages\"]; print(next(p[\"version\"] for p in pkgs if p[\"name\"]==\"localcache\"))")
+    echo "Checking CHANGELOG for v${VERSION}..."
+    grep -q "## \\[${VERSION}\\]" CHANGELOG.md && echo "OK: found [${VERSION}]" || (echo "ERROR: no entry for [${VERSION}] in CHANGELOG.md" && exit 1)
+    '''
+]
+
+[tasks.version-check]
+description = "Verify workspace version matches in both Cargo.toml files"
+script = [
+    '''
+    LIB=$(cargo metadata --no-deps --format-version 1 | python3 -c "import sys,json; pkgs=json.load(sys.stdin)[\"packages\"]; print(next(p[\"version\"] for p in pkgs if p[\"name\"]==\"localcache\"))")
+    CLI=$(cargo metadata --no-deps --format-version 1 | python3 -c "import sys,json; pkgs=json.load(sys.stdin)[\"packages\"]; print(next(p[\"version\"] for p in pkgs if p[\"name\"]==\"localcache-cli\"))")
+    echo "localcache:     ${LIB}"
+    echo "localcache-cli: ${CLI}"
+    [ "${LIB}" = "${CLI}" ] && echo "OK: versions match" || (echo "ERROR: version mismatch" && exit 1)
+    '''
+]
+
+[tasks.release-check]
+description = "Full pre-release checklist"
+dependencies = ["version-check", "changelog-check", "pre-publish"]

@@ -120,6 +120,9 @@ enum Commands {
     ///
     /// Requires the `watching` Cargo feature in the library.
     Watch,
+
+    /// List all namespaces present in the database.
+    Namespaces,
 }
 
 #[derive(Args)]
@@ -261,6 +264,7 @@ fn run(cli: Cli) -> Result<(), LocalFileCacheError> {
         Commands::Query(args) => cmd_query(opts, args),
         Commands::Inspect(args) => cmd_inspect(opts, args),
         Commands::Watch => cmd_watch(opts),
+        Commands::Namespaces => cmd_namespaces(opts),
     }
 }
 
@@ -735,6 +739,35 @@ fn cmd_watch(opts: CacheOptions) -> Result<(), LocalFileCacheError> {
         eprintln!("       Rebuild localcache-cli with: --features watching");
         std::process::exit(1);
     }
+}
+
+fn cmd_namespaces(opts: CacheOptions) -> Result<(), LocalFileCacheError> {
+    let engine = CacheEngine::<Vec<u8>>::open(opts.clone())?;
+    let namespaces = engine.namespace_list()?;
+
+    if namespaces.is_empty() {
+        println!("(no namespaces)");
+        return Ok(());
+    }
+
+    println!("{:<30}  {}", "NAMESPACE", "ENTRIES");
+    println!("{}", "-".repeat(50));
+    for ns in &namespaces {
+        let count = CacheEngine::<Vec<u8>>::open(CacheOptions {
+            namespace: ns.clone(),
+            ..opts.clone()
+        })
+        .ok()
+        .and_then(|e| e.entry_count().ok())
+        .unwrap_or(0);
+        println!("{:<30}  {}", ns, count);
+    }
+    println!(
+        "\n{} namespace{}",
+        namespaces.len(),
+        if namespaces.len() == 1 { "" } else { "s" }
+    );
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

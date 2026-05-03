@@ -49,4 +49,4 @@ pub use pool::{CacheOptionsExt, ConnectionPool, SharedEngine, shared_engine};
 #[cfg(feature = "watching")]
 pub use cache::entry::{InvalidationReason, WatchEvent};
 #[cfg(feature = "watching")]
-pub use cache::watcher::CacheWatcher;
+pub use cache::watcher::{CacheDebouncedWatcher, CacheWatcher};

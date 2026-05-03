@@ -11,6 +11,54 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.15.0] — 2026-05-04
+
+### Added
+
+- **`metrics` Cargo feature** — opt-in instrumentation using
+  [`metrics 0.24`](https://crates.io/crates/metrics).  When enabled,
+  the following counters and histograms are emitted (all labelled
+  `namespace = <current namespace>`):
+  * `localcache.get.total` — every `get()` call.
+  * `localcache.get.hit` — cache hits in `get()`.
+  * `localcache.get.miss` — cache misses in `get()`.
+  * `localcache.set.total` — every `set()` call.
+  * `localcache.set.bytes` — payload size in bytes per `set()`.
+  Wire up any `metrics`-compatible exporter (Prometheus, StatsD, …) to
+  consume these metrics without changing the `localcache` API.
+- **`CacheEngine::namespace_list()`** — returns all distinct namespace
+  names present in the current database, sorted alphabetically.
+- **`CacheEngine::namespace_copy(source)`** — copy all entries from
+  `source` (any `CacheEngine<U>`) into the current engine's namespace,
+  replacing conflicts.  Equivalent to `import_from` with a more
+  discoverable name for namespace-management workflows.
+- **`CacheEngine::debounced_watcher(window)`** → `CacheDebouncedWatcher<T>`
+  — a debounced variant of the file-system watcher (requires `watching`
+  feature).  All OS events within `window` of each other for the same path
+  are collapsed into a single `WatchEvent`, preventing floods caused by
+  editors that write files incrementally or applications that flush many
+  times per second.
+- **`CacheDebouncedWatcher<T>`** — new public type (re-exported under
+  `watching` feature).  Has the same `events() -> &Receiver<WatchEvent>`
+  lifetime contract as `CacheWatcher`.
+- **`notify-debouncer-mini 0.7`** added as an optional dependency (included
+  by the `watching` feature alongside `notify 8`).
+- **CLI `namespaces` subcommand** — prints a table of all namespaces in the
+  database together with their entry counts.
+- **`Makefile.toml`** — `cargo-make` task definitions for the full
+  development and publish workflow:
+  * `cargo make check` — format check + clippy (default, all features,
+    no features).
+  * `cargo make test-all` — test matrix (no features / default / all
+    features).
+  * `cargo make pre-publish` — all quality gates before releasing.
+  * `cargo make release-check` — version consistency + changelog entry +
+    all quality gates.
+  * `cargo make publish-all` — publish library then CLI with a 30-second
+    propagation delay.
+
+---
+
 ## [0.14.0] — 2026-05-03
 
 ### Added
@@ -186,7 +234,8 @@ Namespaces, batch ops, TTL, PRAGMAs, schema migration.
 ## [0.1.0] — 2025-05-02
 Initial release.
 
-[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/nabbisen/localcache-rs/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/nabbisen/localcache-rs/compare/v0.13.2...v0.14.0
 [0.13.2]: https://github.com/nabbisen/localcache-rs/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/nabbisen/localcache-rs/compare/v0.13.0...v0.13.1
