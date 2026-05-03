@@ -40,4 +40,5 @@ pub use cache::entry::{
 pub use cache::options::{
     CacheOptions, ChangeDetectionMode, Codec, JournalMode, ScanOptions, SynchronousMode,
 };
+pub use cache::query::QueryBuilder;
 pub use error::LocalFileCacheError;

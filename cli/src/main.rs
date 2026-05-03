@@ -88,6 +88,17 @@ enum Commands {
     /// Existing entries for the same path are replaced.  The target namespace
     /// can be overridden with `-n`.
     Import(ImportArgs),
+
+    /// Copy all entries from one namespace to another within the same database.
+    ///
+    /// Uses the fast `import_from` path (no Base64 round-trip).
+    Copy(CopyArgs),
+
+    /// Migrate a namespace: export from the source database and import into a
+    /// new database, optionally changing namespace.
+    ///
+    /// Useful for moving data between database files or bumping schema versions.
+    Migrate(MigrateArgs),
 }
 
 #[derive(Args)]
@@ -146,6 +157,39 @@ struct ImportArgs {
     overwrite: bool,
 }
 
+#[derive(Args)]
+struct CopyArgs {
+    /// Source namespace to copy from.
+    #[arg(short, long)]
+    from: String,
+
+    /// Destination namespace to copy into.
+    /// Defaults to the `-n / --namespace` global option.
+    #[arg(short, long)]
+    to: Option<String>,
+}
+
+#[derive(Args)]
+struct MigrateArgs {
+    /// Source database file.
+    #[arg(long)]
+    src_db: PathBuf,
+
+    /// Source namespace.
+    #[arg(long, default_value = "default")]
+    src_ns: String,
+
+    /// Destination database file (created if absent).
+    /// Defaults to the `-d / --database` global option.
+    #[arg(long)]
+    dst_db: Option<PathBuf>,
+
+    /// Destination namespace.
+    /// Defaults to the `-n / --namespace` global option.
+    #[arg(long)]
+    dst_ns: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
@@ -176,6 +220,8 @@ fn run(cli: Cli) -> Result<(), LocalFileCacheError> {
         Commands::Scan(args) => cmd_scan(opts, args),
         Commands::Export(args) => cmd_export(opts, args),
         Commands::Import(args) => cmd_import(opts, args),
+        Commands::Copy(args) => cmd_copy(opts, args),
+        Commands::Migrate(args) => cmd_migrate(opts, args),
     }
 }
 
@@ -445,6 +491,59 @@ fn cmd_import(opts: CacheOptions, args: ImportArgs) -> Result<(), LocalFileCache
         "Imported {} entr{}",
         imported,
         if imported == 1 { "y" } else { "ies" }
+    );
+    Ok(())
+}
+
+fn cmd_copy(opts: CacheOptions, args: CopyArgs) -> Result<(), LocalFileCacheError> {
+    let dst_ns = args.to.unwrap_or_else(|| opts.namespace.clone());
+
+    let src: CacheEngine<Vec<u8>> = CacheEngine::open(CacheOptions {
+        namespace: args.from.clone(),
+        ..opts.clone()
+    })?;
+
+    let dst: CacheEngine<Vec<u8>> = CacheEngine::open(CacheOptions {
+        namespace: dst_ns.clone(),
+        ..opts
+    })?;
+
+    let copied = dst.import_from(&src)?;
+    eprintln!(
+        "Copied {} entr{} from namespace '{}' → '{}'",
+        copied,
+        if copied == 1 { "y" } else { "ies" },
+        args.from,
+        dst_ns
+    );
+    Ok(())
+}
+
+fn cmd_migrate(opts: CacheOptions, args: MigrateArgs) -> Result<(), LocalFileCacheError> {
+    let dst_db = args.dst_db.unwrap_or_else(|| opts.database_path.clone());
+    let dst_ns = args.dst_ns.unwrap_or_else(|| opts.namespace.clone());
+
+    let src: CacheEngine<Vec<u8>> = CacheEngine::open(CacheOptions {
+        database_path: args.src_db.clone(),
+        namespace: args.src_ns.clone(),
+        ..CacheOptions::default()
+    })?;
+
+    let dst: CacheEngine<Vec<u8>> = CacheEngine::open(CacheOptions {
+        database_path: dst_db.clone(),
+        namespace: dst_ns.clone(),
+        ..CacheOptions::default()
+    })?;
+
+    let migrated = dst.import_from(&src)?;
+    eprintln!(
+        "Migrated {} entr{}: {}::{} → {}::{}",
+        migrated,
+        if migrated == 1 { "y" } else { "ies" },
+        args.src_db.display(),
+        args.src_ns,
+        dst_db.display(),
+        dst_ns,
     );
     Ok(())
 }

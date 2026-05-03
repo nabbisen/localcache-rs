@@ -25,23 +25,26 @@ Builder API, `cache_stats`, `check_status_batch`, key rotation, glob brace expan
 Cargo workspace, `localcache-cli`, `on_evict` callback, multi-group brace expansion.
 
 ## Phase 9 — Durability & Data Portability (v0.9.x) ✅
+`export_entries` / `import_entries` / `import_from`, CLI `export` / `import`,
+nested brace expansion, Base64 payload encoding.
 
-- [x] `CacheEngine::export_entries()` — export namespace as `Vec<ExportRecord>` (Base64 payloads)
-- [x] `CacheEngine::import_entries()` — bulk-import from `Vec<ExportRecord>` (single transaction)
-- [x] `CacheEngine::import_from()` — direct engine-to-engine copy (no Base64 round-trip)
-- [x] `ExportRecord` — serialisable struct (`serde::Serialize + Deserialize`)
-- [x] `AsyncCacheEngine::export_entries()` / `import_entries()` — async variants
-- [x] CLI `export [--output PATH]` — dump namespace to JSON Lines (`-` = stdout)
-- [x] CLI `import [--input PATH]` — restore from JSON Lines (`-` = stdin)
-- [x] Nested brace expansion — `{a,{b,c}}` now correctly expands to 3 alternatives;
-      `{pre,{mid,post}}_{x,y}.txt` produces 6 combinations using proper
-      matching-brace tracking + top-level comma splitting
+## Phase 10 — Queries & Advanced CLI (v0.10.x) ✅
+
+- [x] `CacheEngine::contains()` — lightweight existence check (no payload load)
+- [x] `CacheEngine::keys(path_like)` — list all stored paths, optionally
+      filtered by a SQL `LIKE` pattern
+- [x] `CacheEngine::query()` → `QueryBuilder` — fluent predicate-based search
+      over payload content via `serde_json::Value`
+  - `field_gt` / `field_lt` / `field_eq` / `field_contains` / `payload_contains`
+  - `path_like` pre-filter on stored path
+  - `limit` cap on results
+- [x] CLI `copy --from NS [--to NS]` — fast namespace copy within one DB
+- [x] CLI `migrate --src-db / --src-ns [--dst-db / --dst-ns]` — cross-DB migration
 
 ## Future / Unscheduled
 
 - File-watching integration (`notify` crate)
 - `async-std` / `smol` feature variants
-- `serde_json` path-based queries on cached payloads
+- `QueryBuilder`: `order_by`, `offset`, async `run()`
+- Persistent indexes for frequent payload queries
 - Read-only shared-memory DB mode
-- CLI: `copy` subcommand (namespace-to-namespace within one DB)
-- CLI: `migrate` subcommand (export + re-import across DB versions)

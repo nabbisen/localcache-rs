@@ -2996,4 +2996,384 @@ mod integration {
             assert_eq!(dst.entry_count().await.unwrap(), 1);
         }
     }
+
+    // ====================================================================
+    // Phase 10 — contains() and keys()
+    // ====================================================================
+
+    #[test]
+    fn contains_returns_true_for_cached_entry() {
+        let dir = TempDir::new().unwrap();
+        let engine: CacheEngine<Vec<f32>> =
+            CacheEngine::builder().database(":memory:").build().unwrap();
+
+        let path = write_file(&dir, "exist.txt", b"data");
+        assert!(!engine.contains(&path).unwrap(), "not yet cached");
+
+        engine.set(&path, &vec![1.0_f32]).unwrap();
+        assert!(engine.contains(&path).unwrap(), "should be cached");
+    }
+
+    #[test]
+    fn contains_returns_false_when_missing() {
+        let dir = TempDir::new().unwrap();
+        let engine: CacheEngine<Vec<f32>> =
+            CacheEngine::builder().database(":memory:").build().unwrap();
+        let path = write_file(&dir, "ghost.txt", b"x");
+        assert!(!engine.contains(&path).unwrap());
+    }
+
+    #[test]
+    fn keys_returns_all_paths() {
+        let dir = TempDir::new().unwrap();
+        let engine: CacheEngine<Vec<f32>> =
+            CacheEngine::builder().database(":memory:").build().unwrap();
+
+        let p1 = write_file(&dir, "k1.txt", b"a");
+        let p2 = write_file(&dir, "k2.txt", b"b");
+        let p3 = write_file(&dir, "k3.txt", b"c");
+
+        engine.set(&p1, &vec![1.0_f32]).unwrap();
+        engine.set(&p2, &vec![2.0_f32]).unwrap();
+        engine.set(&p3, &vec![3.0_f32]).unwrap();
+
+        let keys = engine.keys(None).unwrap();
+        assert_eq!(keys.len(), 3);
+    }
+
+    #[test]
+    fn keys_with_like_filter() {
+        let dir = TempDir::new().unwrap();
+        let engine: CacheEngine<Vec<f32>> =
+            CacheEngine::builder().database(":memory:").build().unwrap();
+
+        let p1 = write_file(&dir, "alpha.txt", b"a");
+        let p2 = write_file(&dir, "beta.txt", b"b");
+
+        engine.set(&p1, &vec![1.0_f32]).unwrap();
+        engine.set(&p2, &vec![2.0_f32]).unwrap();
+
+        // Filter paths ending in "alpha.txt" using LIKE
+        let keys = engine.keys(Some("%alpha.txt")).unwrap();
+        assert_eq!(keys.len(), 1);
+        assert!(keys[0].to_string_lossy().ends_with("alpha.txt"));
+    }
+
+    #[test]
+    fn keys_empty_namespace() {
+        let engine: CacheEngine<Vec<f32>> =
+            CacheEngine::builder().database(":memory:").build().unwrap();
+        let keys = engine.keys(None).unwrap();
+        assert!(keys.is_empty());
+    }
+
+    // ====================================================================
+    // Phase 10 — QueryBuilder
+    // ====================================================================
+
+    #[cfg(feature = "json")]
+    mod query_tests {
+        use super::*;
+        use crate::Codec;
+        use serde::{Deserialize, Serialize};
+
+        #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+        struct Article {
+            title: String,
+            score: f64,
+            tags: Vec<String>,
+        }
+
+        fn make_query_engine(_dir: &TempDir) -> CacheEngine<Article> {
+            CacheEngine::builder()
+                .database(":memory:")
+                .codec(Codec::Json)
+                .build()
+                .unwrap()
+        }
+
+        #[test]
+        fn query_field_gt_filters_correctly() {
+            let dir = TempDir::new().unwrap();
+            let engine = make_query_engine(&dir);
+
+            let p1 = write_file(&dir, "high.txt", b"x");
+            let p2 = write_file(&dir, "low.txt", b"y");
+
+            engine
+                .set(
+                    &p1,
+                    &Article {
+                        title: "High".into(),
+                        score: 0.95,
+                        tags: vec![],
+                    },
+                )
+                .unwrap();
+            engine
+                .set(
+                    &p2,
+                    &Article {
+                        title: "Low".into(),
+                        score: 0.3,
+                        tags: vec![],
+                    },
+                )
+                .unwrap();
+
+            let results = engine.query().field_gt("score", 0.5).run().unwrap();
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].payload.title, "High");
+        }
+
+        #[test]
+        fn query_field_lt_filters_correctly() {
+            let dir = TempDir::new().unwrap();
+            let engine = make_query_engine(&dir);
+
+            let p1 = write_file(&dir, "a.txt", b"x");
+            let p2 = write_file(&dir, "b.txt", b"y");
+
+            engine
+                .set(
+                    &p1,
+                    &Article {
+                        title: "A".into(),
+                        score: 0.1,
+                        tags: vec![],
+                    },
+                )
+                .unwrap();
+            engine
+                .set(
+                    &p2,
+                    &Article {
+                        title: "B".into(),
+                        score: 0.9,
+                        tags: vec![],
+                    },
+                )
+                .unwrap();
+
+            let results = engine.query().field_lt("score", 0.5).run().unwrap();
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].payload.title, "A");
+        }
+
+        #[test]
+        fn query_field_eq_string() {
+            let dir = TempDir::new().unwrap();
+            let engine = make_query_engine(&dir);
+
+            let p1 = write_file(&dir, "eq1.txt", b"x");
+            let p2 = write_file(&dir, "eq2.txt", b"y");
+
+            engine
+                .set(
+                    &p1,
+                    &Article {
+                        title: "Rust".into(),
+                        score: 0.8,
+                        tags: vec![],
+                    },
+                )
+                .unwrap();
+            engine
+                .set(
+                    &p2,
+                    &Article {
+                        title: "Go".into(),
+                        score: 0.7,
+                        tags: vec![],
+                    },
+                )
+                .unwrap();
+
+            let results = engine
+                .query()
+                .field_eq("title", serde_json::json!("Rust"))
+                .run()
+                .unwrap();
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].payload.title, "Rust");
+        }
+
+        #[test]
+        fn query_field_contains_substring() {
+            let dir = TempDir::new().unwrap();
+            let engine = make_query_engine(&dir);
+
+            let p1 = write_file(&dir, "sub1.txt", b"x");
+            let p2 = write_file(&dir, "sub2.txt", b"y");
+
+            engine
+                .set(
+                    &p1,
+                    &Article {
+                        title: "Hello World".into(),
+                        score: 0.5,
+                        tags: vec![],
+                    },
+                )
+                .unwrap();
+            engine
+                .set(
+                    &p2,
+                    &Article {
+                        title: "Goodbye".into(),
+                        score: 0.5,
+                        tags: vec![],
+                    },
+                )
+                .unwrap();
+
+            let results = engine
+                .query()
+                .field_contains("title", "World")
+                .run()
+                .unwrap();
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].payload.title, "Hello World");
+        }
+
+        #[test]
+        fn query_payload_contains() {
+            let dir = TempDir::new().unwrap();
+            let engine = make_query_engine(&dir);
+
+            let p1 = write_file(&dir, "pc1.txt", b"x");
+            let p2 = write_file(&dir, "pc2.txt", b"y");
+
+            engine
+                .set(
+                    &p1,
+                    &Article {
+                        title: "Rust".into(),
+                        score: 0.9,
+                        tags: vec!["systems".into()],
+                    },
+                )
+                .unwrap();
+            engine
+                .set(
+                    &p2,
+                    &Article {
+                        title: "Python".into(),
+                        score: 0.8,
+                        tags: vec!["scripting".into()],
+                    },
+                )
+                .unwrap();
+
+            let results = engine.query().payload_contains("systems").run().unwrap();
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].payload.title, "Rust");
+        }
+
+        #[test]
+        fn query_limit() {
+            let dir = TempDir::new().unwrap();
+            let engine = make_query_engine(&dir);
+
+            for i in 0..5u32 {
+                let p = write_file(&dir, &format!("lim{i}.txt"), b"x");
+                engine
+                    .set(
+                        &p,
+                        &Article {
+                            title: format!("Item {i}"),
+                            score: 0.5,
+                            tags: vec![],
+                        },
+                    )
+                    .unwrap();
+            }
+
+            let results = engine.query().limit(2).run().unwrap();
+            assert_eq!(results.len(), 2);
+        }
+
+        #[test]
+        fn query_combined_predicates() {
+            let dir = TempDir::new().unwrap();
+            let engine = make_query_engine(&dir);
+
+            for i in 0..6u32 {
+                let p = write_file(&dir, &format!("comb{i}.txt"), b"x");
+                engine
+                    .set(
+                        &p,
+                        &Article {
+                            title: if i % 2 == 0 {
+                                "Even".into()
+                            } else {
+                                "Odd".into()
+                            },
+                            score: i as f64 * 0.1,
+                            tags: vec![],
+                        },
+                    )
+                    .unwrap();
+            }
+
+            // title == "Even" AND score > 0.3
+            let results = engine
+                .query()
+                .field_eq("title", serde_json::json!("Even"))
+                .field_gt("score", 0.3)
+                .run()
+                .unwrap();
+
+            // Scores for "Even": 0.0, 0.2, 0.4 → only 0.4 > 0.3
+            assert_eq!(results.len(), 1);
+            assert!((results[0].payload.score - 0.4).abs() < 1e-10);
+        }
+
+        #[test]
+        fn query_path_like_filter() {
+            let dir = TempDir::new().unwrap();
+            let engine = make_query_engine(&dir);
+
+            let p1 = write_file(&dir, "group_a.txt", b"x");
+            let p2 = write_file(&dir, "group_b.txt", b"y");
+            let p3 = write_file(&dir, "other.txt", b"z");
+
+            for p in [&p1, &p2, &p3] {
+                engine
+                    .set(
+                        p,
+                        &Article {
+                            title: "T".into(),
+                            score: 1.0,
+                            tags: vec![],
+                        },
+                    )
+                    .unwrap();
+            }
+
+            let results = engine.query().path_like("%group_%.txt").run().unwrap();
+            assert_eq!(results.len(), 2);
+        }
+
+        #[test]
+        fn query_no_matches_returns_empty() {
+            let dir = TempDir::new().unwrap();
+            let engine = make_query_engine(&dir);
+
+            let p = write_file(&dir, "nm.txt", b"x");
+            engine
+                .set(
+                    &p,
+                    &Article {
+                        title: "Test".into(),
+                        score: 0.5,
+                        tags: vec![],
+                    },
+                )
+                .unwrap();
+
+            let results = engine.query().field_gt("score", 0.99).run().unwrap();
+            assert!(results.is_empty());
+        }
+    }
 }

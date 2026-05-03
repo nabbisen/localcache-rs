@@ -746,6 +746,73 @@ where
     }
 
     // ------------------------------------------------------------------
+    // Lightweight existence / key queries
+    // ------------------------------------------------------------------
+
+    /// Return `true` if the current namespace contains a cache entry for
+    /// `path`.
+    ///
+    /// This is cheaper than `get()` because it does not load the payload.
+    pub fn contains<P: AsRef<Path>>(&self, path: P) -> Result<bool, LocalFileCacheError> {
+        let canonical = match crate::path::normalize_path(path.as_ref()) {
+            Ok(p) => p,
+            Err(LocalFileCacheError::FileNotFound { .. }) => {
+                // File gone from disk — check by raw path string.
+                let raw = path.as_ref().to_string_lossy();
+                return repository::exists(&self.conn, &self.namespace, raw.as_ref());
+            }
+            Err(e) => return Err(e),
+        };
+        let path_str = path_to_str(&canonical)?;
+        repository::exists(&self.conn, &self.namespace, path_str)
+    }
+
+    /// Return the canonical paths of all entries in the current namespace,
+    /// sorted lexicographically.
+    ///
+    /// Optionally filter by a SQLite `LIKE` pattern applied to the stored
+    /// path string (`%` matches any sequence, `_` matches one character).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use localcache::{CacheEngine, CacheOptions};
+    /// # let engine = CacheEngine::<Vec<f32>>::open(CacheOptions::default())?;
+    /// // All paths under /home/user/docs/
+    /// let paths = engine.keys(Some("/home/user/docs/%"))?;
+    /// # Ok::<(), localcache::LocalFileCacheError>(())
+    /// ```
+    pub fn keys(
+        &self,
+        path_like: Option<&str>,
+    ) -> Result<Vec<std::path::PathBuf>, LocalFileCacheError> {
+        repository::keys(&self.conn, &self.namespace, path_like)
+    }
+
+    // ------------------------------------------------------------------
+    // Payload queries (requires `json` feature for predicates)
+    // ------------------------------------------------------------------
+
+    /// Return a [`crate::QueryBuilder`] for filtering entries by payload
+    /// content.
+    ///
+    /// The query performs a linear scan over all entries in the namespace
+    /// (subject to optional `path_like` filtering).  Suitable for small-to-
+    /// medium caches or infrequent queries.
+    ///
+    /// Payload predicates serialise the decoded value through
+    /// `serde_json::Value`, so they work with any codec; the `json` Cargo
+    /// feature must be enabled.
+    pub fn query(&self) -> crate::cache::query::QueryBuilder<'_, T> {
+        crate::cache::query::QueryBuilder {
+            engine: self,
+            predicates: Vec::new(),
+            limit: None,
+            path_like: None,
+        }
+    }
+
+    // ------------------------------------------------------------------
     // Private helpers
     // ------------------------------------------------------------------
 
@@ -797,6 +864,16 @@ where
             #[cfg(feature = "encryption")]
             self.encryption_key.as_ref(),
         )
+    }
+
+    /// Decode bytes — same as `decode` but callable from `query.rs` via the
+    /// `pub(crate)` visibility.
+    pub(crate) fn decode_pub(
+        &self,
+        bytes: &[u8],
+        encoding: &str,
+    ) -> Result<T, LocalFileCacheError> {
+        self.decode(bytes, encoding)
     }
 }
 

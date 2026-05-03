@@ -11,43 +11,40 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [0.9.0] — 2025-05-03
+## [0.10.0] — 2025-05-03
 
 ### Added
 
-- **`CacheEngine::export_entries()`** — export every entry in the current
-  namespace as a `Vec<ExportRecord>`.  Payload bytes are stored verbatim
-  (compressed/encrypted as-is) and Base64-encoded so the record can be
-  serialised to JSON.
-- **`CacheEngine::import_entries(records)`** — import a slice of
-  `ExportRecord`s into the current namespace inside a single SQLite
-  transaction.  Existing entries for the same path are replaced.  Returns the
-  count of entries imported.
-- **`CacheEngine::import_from(source)`** — copy all entries from a `source`
-  `CacheEngine` (which may be in a different database or namespace) without a
-  Base64 round-trip.  Returns the number of entries copied.
-- **`ExportRecord`** — new public struct (`serde::Serialize + Deserialize`),
-  carrying `path`, `payload_b64`, `encoding`, `mtime`, `file_size`, `hash`,
-  `payload_version`, `updated_at`, `last_accessed_at`.
-- **`AsyncCacheEngine::export_entries()`** and
-  **`AsyncCacheEngine::import_entries(records)`** — async equivalents of the
-  sync API.
-- **CLI `export [--output/-o PATH]`** — dump the namespace to JSON Lines
-  format (one `ExportRecord` per line).  `--output -` writes to stdout.
-- **CLI `import [--input/-i PATH]`** — restore entries from a JSON Lines file.
-  `--input -` reads from stdin.  Existing entries are replaced.
-- **Nested brace expansion** — `ScanOptions::glob_pattern` now correctly
-  handles nested brace groups such as `{a,{b,c}}` → `["a","b","c"]`.  The
-  implementation uses matching-brace depth tracking and a separate
-  `split_top_level` helper that splits only on commas outside any `{...}`
-  group.
-
-### Dependencies
-
-- `base64 = "0.22"` added to the library crate for payload encoding.
-- `serde_json = "1"` added to `localcache-cli` for JSON Lines serialisation.
+- **`CacheEngine::contains(path)`** — returns `true` if the namespace contains
+  an entry for the given path.  Does **not** load the payload, making it
+  cheaper than `get()` for existence checks.
+- **`CacheEngine::keys(path_like)`** — returns all stored paths (as
+  `Vec<PathBuf>`) sorted lexicographically.  Pass a SQLite `LIKE` pattern
+  (e.g. `Some("/home/user/%")`) to restrict the result, or `None` for all keys.
+- **`CacheEngine::query()` → `QueryBuilder`** — fluent builder for
+  predicate-based searches over payload content:
+  * `.field_gt(field, threshold)` — numeric field greater than threshold
+  * `.field_lt(field, threshold)` — numeric field less than threshold
+  * `.field_eq(field, value)` — field equals a JSON value
+  * `.field_contains(field, substring)` — string field contains substring
+  * `.payload_contains(needle)` — full-payload text search
+  * `.path_like(pattern)` — pre-filter by stored path (SQL LIKE)
+  * `.limit(n)` — cap the number of returned entries
+  * `.run()` — execute and return `Vec<CacheEntry<T>>`
+  Predicates are evaluated against `serde_json::Value`, so they work with any
+  codec.  Requires the `json` Cargo feature.
+- **`QueryBuilder`** — new public type exported from `localcache`.
+- **CLI `copy --from NS [--to NS]`** — copy all entries from one namespace to
+  another within the same database using the fast `import_from` path.
+- **CLI `migrate --src-db PATH --src-ns NS [--dst-db PATH] [--dst-ns NS]`** —
+  migrate a namespace from one database file to another (or to a different
+  namespace within the same file), with optional version filtering.
 
 ---
+
+## [0.9.0] — 2025-05-03
+`export_entries` / `import_entries` / `import_from`, CLI `export` / `import`,
+nested brace expansion.
 
 ## [0.8.0] — 2025-05-03
 Cargo workspace, `localcache-cli`, `on_evict` callback, multi-group brace expansion.
@@ -73,7 +70,8 @@ Namespaces, batch ops, TTL, configurable PRAGMAs, schema migration.
 ## [0.1.0] — 2025-05-02
 Initial release.
 
-[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/nabbisen/localcache-rs/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/nabbisen/localcache-rs/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/nabbisen/localcache-rs/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/nabbisen/localcache-rs/compare/v0.6.0...v0.7.0

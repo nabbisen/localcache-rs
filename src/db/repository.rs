@@ -584,3 +584,59 @@ pub(crate) fn import_rows(
     tx.commit()?;
     Ok(n)
 }
+
+// ---------------------------------------------------------------------------
+// Lightweight key / existence helpers
+// ---------------------------------------------------------------------------
+
+/// Return `true` if a row exists for `(namespace, path)`.
+pub(crate) fn exists(
+    conn: &Connection,
+    namespace: &str,
+    path: &str,
+) -> Result<bool, LocalFileCacheError> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM files WHERE namespace = ?1 AND path = ?2",
+        params![namespace, path],
+        |r| r.get(0),
+    )?;
+    Ok(n > 0)
+}
+
+/// Return all stored paths in `namespace`, optionally filtered by a SQL
+/// `LIKE` pattern on the `path` column.
+///
+/// `pattern` uses standard SQLite LIKE semantics (`%` = any sequence,
+/// `_` = one character).  Pass `None` to return all paths.
+pub(crate) fn keys(
+    conn: &Connection,
+    namespace: &str,
+    pattern: Option<&str>,
+) -> Result<Vec<std::path::PathBuf>, LocalFileCacheError> {
+    let (sql, params_vec): (&str, Vec<String>) = if pattern.is_some() {
+        (
+            "SELECT path FROM files WHERE namespace = ?1 AND path LIKE ?2 ORDER BY path",
+            vec![namespace.to_owned(), pattern.unwrap().to_owned()],
+        )
+    } else {
+        (
+            "SELECT path FROM files WHERE namespace = ?1 ORDER BY path",
+            vec![namespace.to_owned()],
+        )
+    };
+
+    let mut stmt = conn.prepare(sql)?;
+    let paths: Result<Vec<_>, _> = match params_vec.len() {
+        1 => stmt
+            .query_map(params![params_vec[0]], |r| {
+                Ok(std::path::PathBuf::from(r.get::<_, String>(0)?))
+            })?
+            .collect(),
+        _ => stmt
+            .query_map(params![params_vec[0], params_vec[1]], |r| {
+                Ok(std::path::PathBuf::from(r.get::<_, String>(0)?))
+            })?
+            .collect(),
+    };
+    Ok(paths?)
+}
