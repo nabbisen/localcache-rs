@@ -11,61 +11,58 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [0.12.0] — 2025-05-03
+## [0.13.0] — 2025-05-03
 
 ### Added
 
-- **`ConnectionPool<T>`** — a cloneable, thread-safe wrapper around
-  `CacheEngine<T>` for multi-threaded synchronous applications.  All clones
-  share the same `Arc<Mutex<CacheEngine<T>>>`.  Exposes the full `CacheEngine`
-  API surface (`get`, `set`, `batch_get`, `batch_set`, `remove`,
-  `check_status`, `check_status_batch`, `contains`, `keys`, `touch`,
-  `scan_dir`, `scan_dir_filtered`, `list_entries`, `entry_count`, `cache_stats`,
-  `export_entries`, `import_entries`, `cleanup_*`, `shrink_database`, and
-  `query_run`).  New public item in `localcache`.
-- **`shared_engine<T>(options)`** — convenience function returning
-  `Arc<Mutex<CacheEngine<T>>>` (aka `SharedEngine<T>`).
-- **`CacheOptionsExt` trait** — ergonomic TTL builders on `CacheOptions`:
-  * `with_ttl_secs(secs)` — set TTL from seconds
-  * `with_ttl_mins(mins)` — set TTL from minutes
-  * `with_ttl_hours(hours)` — set TTL from hours
-- **`benches/cache_bench.rs`** — criterion v0.5 benchmark suite measuring:
-  `set` (three change-detection modes), `get` (hit / miss), `get_if_fresh`,
-  `batch_set` (10 / 100 / 500 entries), `check_status_batch` (10 / 100 / 500),
-  payload-size scaling (64 → 262 144 floats), and metadata queries
-  (`entry_count`, `cache_stats`, `list_entries`, `keys`).
-  Run with `cargo bench --features json`.
-- **`examples/embedding_cache.rs`** — demonstrates cold/warm cache and
-  selective re-embedding when files change.
-- **`examples/document_pipeline.rs`** — shows versioned JSON-payload analysis,
-  `batch_set` ingestion, predicate querying (`json` feature), and
-  `cache_stats`.
-- **`examples/connection_pool.rs`** — eight parallel threads sharing one
-  `ConnectionPool`, with `export_entries`, `scan_dir`, and `CacheOptionsExt`.
-
-### Changed
-
-- `[package.metadata.docs.rs]` added with `all-features = true` so docs.rs
-  renders all feature-gated items.
-- `exclude = ["benches/", "target/", ".github/"]` added for cleaner
-  crates.io packages.
-- `[[bench]]` now declares `required-features = ["json"]` so `cargo bench`
-  without the feature does not fail.
-- `serde_json` usage in `query.rs` is now fully gated behind
-  `#[cfg(feature = "json")]`.  `QueryBuilder`, `order_by_updated_at`,
-  `order_by_path`, `limit`, `offset`, and `path_like` are always available;
-  payload predicates and `order_by_field` require `json`.
+- **`tracing` Cargo feature** — when enabled, key cache operations emit
+  structured `tracing` events:
+  * `set` — `debug_span` with path, payload bytes, and encoding on completion.
+  * `get` — `debug_span` with path; logs "cache hit" or "cache miss".
+  * `check_status` — `debug` log with path, status, and reason
+    (e.g. `ttl_expired`, `version_mismatch`).
+  Zero-cost (compiled out) when the feature is disabled.
+- **`CacheEngine::explain(path)`** — returns a [`Diagnosis`] struct with:
+  * `status` — overall `CacheStatus`.
+  * `entry_exists` / `file_exists` — booleans.
+  * `ttl_remaining_secs` — `Some(0)` if expired, `None` if no TTL configured.
+  * `hash_match: Option<bool>` — hash comparison result.
+  * `metadata_diff: Option<MetadataDiff>` — `mtime` / `file_size` stored vs
+    current, with `mtime_changed` / `size_changed` flags.
+  * `payload_version: Option<PayloadVersionInfo>` — stored vs expected version,
+    with `matches` flag.
+  * `summary: String` — human-readable one-liner explaining the status.
+- **`Diagnosis`**, **`MetadataDiff`**, **`PayloadVersionInfo`** — new public
+  types exported from `localcache`.
+- **`AsyncCacheEngine::explain(path)`** and **`ConnectionPool::explain(path)`**
+  — async and pooled variants.
+- **`QueryBuilder::order_by_last_accessed(ascending)`** — sort by
+  `last_accessed_at` timestamp.  Entries never read since being written have
+  `last_accessed_at == 0` and sort as "oldest" in ascending order.
+- **Multi-column sort** — `order_by` is now a `Vec<OrderBy>` (was
+  `Option<OrderBy>`).  Chain secondary sort keys with:
+  * `then_by_field(field_path, ascending)` (requires `json` feature)
+  * `then_by_updated_at(ascending)`
+  * `then_by_last_accessed(ascending)`
+  * `then_by_path(ascending)`
+- **CLI `inspect <PATH>`** — calls `explain()` and prints a formatted report
+  with status, metadata diff, TTL, hash match, and payload version info.
+- **`rust-version = "1.85"`** in `Cargo.toml` — makes the MSRV explicit
+  (edition 2024 requires Rust ≥ 1.85).
 
 ---
 
+## [0.12.0] — 2025-05-03
+Benchmarks, `ConnectionPool`, `CacheOptionsExt`, examples, docs.rs metadata.
+
 ## [0.11.0] — 2025-05-03
-`QueryBuilder` ordering / pagination, `touch`, persistent indexes, async index ops, CLI `query`.
+`QueryBuilder` ordering / pagination, `touch`, persistent indexes, CLI `query`.
 
 ## [0.10.0] — 2025-05-03
 `contains`, `keys`, `QueryBuilder` predicates, CLI `copy` / `migrate`.
 
 ## [0.9.0] — 2025-05-03
-`export_entries` / `import_entries` / `import_from`, CLI `export` / `import`, nested brace expansion.
+`export_entries` / `import_entries` / `import_from`, CLI `export` / `import`.
 
 ## [0.8.0] — 2025-05-03
 Cargo workspace, `localcache-cli`, `on_evict`, multi-group brace expansion.
@@ -91,7 +88,8 @@ Namespaces, batch ops, TTL, PRAGMAs, schema migration.
 ## [0.1.0] — 2025-05-02
 Initial release.
 
-[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/nabbisen/localcache-rs/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/nabbisen/localcache-rs/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/nabbisen/localcache-rs/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/nabbisen/localcache-rs/compare/v0.9.0...v0.10.0

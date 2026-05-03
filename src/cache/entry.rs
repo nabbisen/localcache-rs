@@ -105,3 +105,60 @@ pub struct ExportRecord {
     /// Unix timestamp (seconds) of the last read (`0` = never read).
     pub last_accessed_at: i64,
 }
+
+/// Diagnostic report for a single cache entry.
+///
+/// Returned by [`crate::CacheEngine::explain`].  Provides human-readable
+/// detail about *why* an entry is fresh, stale, or missing — useful for
+/// debugging cache behaviour.
+#[derive(Debug, Clone)]
+pub struct Diagnosis {
+    /// Canonical path as stored in the database, or the input path if no
+    /// entry exists.
+    pub path: std::path::PathBuf,
+
+    /// Overall cache status.
+    pub status: CacheStatus,
+
+    /// `true` if a database row exists for this path.
+    pub entry_exists: bool,
+
+    /// `true` if the source file currently exists on disk.
+    pub file_exists: bool,
+
+    /// TTL status: `Some(remaining_secs)` if the entry is within TTL,
+    /// `Some(0)` if expired, or `None` if no TTL is configured.
+    pub ttl_remaining_secs: Option<i64>,
+
+    /// Hash comparison result.  `None` when no hash was stored or the
+    /// detection mode does not use hashes.
+    pub hash_match: Option<bool>,
+
+    /// Metadata comparison details.
+    pub metadata_diff: Option<MetadataDiff>,
+
+    /// Payload version stored in the entry vs the engine's configured version.
+    pub payload_version: Option<PayloadVersionInfo>,
+
+    /// Human-readable summary sentence.
+    pub summary: String,
+}
+
+/// Metadata difference between the cached and on-disk file.
+#[derive(Debug, Clone)]
+pub struct MetadataDiff {
+    pub stored_mtime: i64,
+    pub current_mtime: i64,
+    pub stored_file_size: u64,
+    pub current_file_size: u64,
+    pub mtime_changed: bool,
+    pub size_changed: bool,
+}
+
+/// Payload version information.
+#[derive(Debug, Clone)]
+pub struct PayloadVersionInfo {
+    pub stored: u32,
+    pub expected: u32,
+    pub matches: bool,
+}

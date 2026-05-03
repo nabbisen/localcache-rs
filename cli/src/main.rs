@@ -105,6 +105,12 @@ enum Commands {
     /// Prints matching stored paths and their cache status.
     /// For payload content queries use the library API directly.
     Query(QueryArgs),
+
+    /// Show detailed diagnostic information for a specific file.
+    ///
+    /// Reports staleness reason, metadata differences, hash comparison, TTL
+    /// remaining time, and payload version status.
+    Inspect(InspectArgs),
 }
 
 #[derive(Args)]
@@ -205,6 +211,12 @@ struct QueryArgs {
     path_like: Option<String>,
 }
 
+#[derive(Args)]
+struct InspectArgs {
+    /// Path of the file to inspect.
+    path: PathBuf,
+}
+
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
@@ -238,6 +250,7 @@ fn run(cli: Cli) -> Result<(), LocalFileCacheError> {
         Commands::Copy(args) => cmd_copy(opts, args),
         Commands::Migrate(args) => cmd_migrate(opts, args),
         Commands::Query(args) => cmd_query(opts, args),
+        Commands::Inspect(args) => cmd_inspect(opts, args),
     }
 }
 
@@ -609,6 +622,61 @@ fn cmd_query(opts: CacheOptions, args: QueryArgs) -> Result<(), LocalFileCacheEr
         counts.1,
         counts.2
     );
+    Ok(())
+}
+
+fn cmd_inspect(opts: CacheOptions, args: InspectArgs) -> Result<(), LocalFileCacheError> {
+    let engine = CacheEngine::<Vec<u8>>::open(CacheOptions {
+        change_detection_mode: localcache::ChangeDetectionMode::MetadataThenFullHash,
+        ..opts
+    })?;
+
+    let diag = engine.explain(&args.path)?;
+
+    println!("=== Cache Diagnosis ===");
+    println!("Path:          {}", diag.path.display());
+    println!("Status:        {:?}", diag.status);
+    println!("Entry exists:  {}", diag.entry_exists);
+    println!("File exists:   {}", diag.file_exists);
+
+    if let Some(ttl_rem) = diag.ttl_remaining_secs {
+        if ttl_rem == 0 {
+            println!("TTL:           EXPIRED");
+        } else {
+            println!("TTL remaining: {}s", ttl_rem);
+        }
+    } else {
+        println!("TTL:           not configured");
+    }
+
+    if let Some(pv) = &diag.payload_version {
+        println!(
+            "Payload ver:   stored={} expected={} match={}",
+            pv.stored, pv.expected, pv.matches
+        );
+    }
+
+    if let Some(diff) = &diag.metadata_diff {
+        println!("--- Metadata ---");
+        println!(
+            "  mtime:     stored={} current={} changed={}",
+            fmt_ts(diff.stored_mtime),
+            fmt_ts(diff.current_mtime),
+            diff.mtime_changed
+        );
+        println!(
+            "  file_size: stored={} current={} changed={}",
+            fmt_bytes(diff.stored_file_size),
+            fmt_bytes(diff.current_file_size),
+            diff.size_changed
+        );
+    }
+
+    if let Some(hash_match) = diag.hash_match {
+        println!("Hash match:    {}", hash_match);
+    }
+
+    println!("\nSummary: {}", diag.summary);
     Ok(())
 }
 

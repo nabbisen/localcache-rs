@@ -167,10 +167,16 @@ where
     where
         P: AsRef<Path>,
     {
+        #[cfg(feature = "tracing")]
+        let _span =
+            tracing::debug_span!("localcache::get", path = %path.as_ref().display()).entered();
+
         let canonical = normalize_path(path.as_ref())?;
         let path_str = path_to_str(&canonical)?;
 
         let Some(row) = repository::find_file(&self.conn, &self.namespace, path_str)? else {
+            #[cfg(feature = "tracing")]
+            tracing::debug!("cache miss");
             return Ok(None);
         };
         let Some(payload_row) = repository::load_payload(&self.conn, row.id)? else {
@@ -180,6 +186,8 @@ where
         if !self.read_only {
             let _ = repository::touch_last_accessed(&self.conn, row.id);
         }
+        #[cfg(feature = "tracing")]
+        tracing::debug!("cache hit");
         Ok(Some(CacheEntry {
             path: PathBuf::from(&row.path),
             metadata: row.metadata,
@@ -263,6 +271,10 @@ where
     where
         P: AsRef<Path>,
     {
+        #[cfg(feature = "tracing")]
+        let _span =
+            tracing::debug_span!("localcache::set", path = %path.as_ref().display()).entered();
+
         self.guard_write()?;
         let canonical = normalize_path(path.as_ref())?;
         let path_str = path_to_str(&canonical)?;
@@ -279,6 +291,8 @@ where
             self.payload_version,
         )?;
         self.enforce_max_entries()?;
+        #[cfg(feature = "tracing")]
+        tracing::debug!(bytes = bytes.len(), encoding, "stored");
         Ok(())
     }
 
@@ -394,20 +408,192 @@ where
     {
         let canonical = match normalize_path(path.as_ref()) {
             Ok(p) => p,
-            Err(LocalFileCacheError::FileNotFound { .. }) => return Ok(CacheStatus::Missing),
+            Err(LocalFileCacheError::FileNotFound { .. }) => {
+                #[cfg(feature = "tracing")]
+                tracing::debug!(path = %path.as_ref().display(), status = "Missing", "check_status");
+                return Ok(CacheStatus::Missing);
+            }
             Err(e) => return Err(e),
         };
         let path_str = path_to_str(&canonical)?;
         let Some(row) = repository::find_file(&self.conn, &self.namespace, path_str)? else {
+            #[cfg(feature = "tracing")]
+            tracing::debug!(path = %canonical.display(), status = "Missing", "check_status");
             return Ok(CacheStatus::Missing);
         };
         if is_expired(row.updated_at, self.ttl) {
+            #[cfg(feature = "tracing")]
+            tracing::debug!(path = %canonical.display(), status = "Stale", reason = "ttl_expired", "check_status");
             return Ok(CacheStatus::Stale);
         }
         if self.payload_version > 0 && row.payload_version != self.payload_version {
+            #[cfg(feature = "tracing")]
+            tracing::debug!(
+                path = %canonical.display(), status = "Stale",
+                reason = "version_mismatch",
+                stored = row.payload_version,
+                expected = self.payload_version,
+                "check_status"
+            );
             return Ok(CacheStatus::Stale);
         }
-        detect_change(&canonical, &row.metadata, self.mode)
+        let status = detect_change(&canonical, &row.metadata, self.mode)?;
+        #[cfg(feature = "tracing")]
+        tracing::debug!(path = %canonical.display(), status = ?status, "check_status");
+        Ok(status)
+    }
+
+    /// Return a detailed [`Diagnosis`] for `path`.
+    ///
+    /// Unlike [`check_status`](Self::check_status), `explain` returns rich
+    /// structured information about *why* an entry is in its current state:
+    /// metadata differences, hash comparison results, TTL remaining time,
+    /// and payload version mismatches.
+    ///
+    /// This is intended for debugging and CLI tooling, not for hot paths.
+    pub fn explain<P: AsRef<Path>>(
+        &self,
+        path: P,
+    ) -> Result<crate::cache::entry::Diagnosis, LocalFileCacheError> {
+        use crate::cache::entry::{Diagnosis, MetadataDiff, PayloadVersionInfo};
+        use crate::detection::hash::compute_full_hash;
+        use crate::detection::metadata::collect_metadata;
+
+        let path = path.as_ref();
+
+        // Try to canonicalise; record whether the file exists.
+        let (canonical, file_exists) = match normalize_path(path) {
+            Ok(p) => (p, true),
+            Err(LocalFileCacheError::FileNotFound { .. }) => (path.to_path_buf(), false),
+            Err(e) => return Err(e),
+        };
+        let path_str = canonical.to_str().unwrap_or("");
+
+        let entry_row = if file_exists {
+            repository::find_file(&self.conn, &self.namespace, path_str)?
+        } else {
+            // Try raw path string when file is gone.
+            repository::find_file(&self.conn, &self.namespace, &path.to_string_lossy())?
+        };
+
+        let entry_exists = entry_row.is_some();
+
+        if !entry_exists {
+            return Ok(Diagnosis {
+                path: canonical.clone(),
+                status: CacheStatus::Missing,
+                entry_exists: false,
+                file_exists,
+                ttl_remaining_secs: None,
+                hash_match: None,
+                metadata_diff: None,
+                payload_version: None,
+                summary: if file_exists {
+                    "File exists on disk but has no cache entry.".into()
+                } else {
+                    "File does not exist on disk and has no cache entry.".into()
+                },
+            });
+        }
+
+        let row = entry_row.unwrap();
+
+        // TTL check.
+        let ttl_remaining_secs = self.ttl.map(|ttl| {
+            let elapsed = repository::now_secs().saturating_sub(row.updated_at);
+            let ttl_secs = ttl.as_secs() as i64;
+            (ttl_secs - elapsed).max(0)
+        });
+        let ttl_expired = self
+            .ttl
+            .map(|_| ttl_remaining_secs == Some(0))
+            .unwrap_or(false);
+
+        // Version check.
+        let pv_info = if self.payload_version > 0 {
+            Some(PayloadVersionInfo {
+                stored: row.payload_version,
+                expected: self.payload_version,
+                matches: row.payload_version == self.payload_version,
+            })
+        } else {
+            None
+        };
+        let version_mismatch = pv_info.as_ref().map(|i| !i.matches).unwrap_or(false);
+
+        // Metadata + hash diff (only if file exists).
+        let (metadata_diff, hash_match) = if file_exists {
+            let current = collect_metadata(&canonical)?;
+            let diff = MetadataDiff {
+                stored_mtime: row.metadata.mtime,
+                current_mtime: current.mtime,
+                stored_file_size: row.metadata.file_size,
+                current_file_size: current.file_size,
+                mtime_changed: row.metadata.mtime != current.mtime,
+                size_changed: row.metadata.file_size != current.file_size,
+            };
+            // Compare hash if one was stored.
+            let hm = if let Some(stored_hash) = &row.metadata.hash {
+                let current_hash = compute_full_hash(&canonical).ok();
+                current_hash.map(|h| {
+                    let stored_base = stored_hash
+                        .strip_prefix(crate::detection::hash::PARTIAL_PREFIX)
+                        .unwrap_or(stored_hash);
+                    h == stored_base || &h == stored_hash
+                })
+            } else {
+                None
+            };
+            (Some(diff), hm)
+        } else {
+            (None, None)
+        };
+
+        // Overall status.
+        let status = self.check_status(path)?;
+
+        // Build summary.
+        let summary = if !file_exists {
+            "Source file no longer exists on disk.".into()
+        } else if ttl_expired {
+            format!(
+                "TTL expired (entry is {} s old).",
+                repository::now_secs().saturating_sub(row.updated_at)
+            )
+        } else if version_mismatch {
+            format!(
+                "Payload version mismatch: stored={}, expected={}.",
+                row.payload_version, self.payload_version
+            )
+        } else if metadata_diff
+            .as_ref()
+            .map(|d| d.mtime_changed || d.size_changed)
+            .unwrap_or(false)
+        {
+            let d = metadata_diff.as_ref().unwrap();
+            match (d.mtime_changed, d.size_changed) {
+                (true, true) => "Both mtime and file_size differ.".into(),
+                (true, false) => "mtime changed; file_size unchanged.".into(),
+                (false, true) => "file_size changed; mtime unchanged.".into(),
+                (false, false) => unreachable!(),
+            }
+        } else if hash_match == Some(false) {
+            "File content changed (hash mismatch).".into()
+        } else {
+            "Entry is fresh.".into()
+        };
+
+        Ok(Diagnosis {
+            path: canonical,
+            status,
+            entry_exists,
+            file_exists,
+            ttl_remaining_secs,
+            hash_match,
+            metadata_diff,
+            payload_version: pv_info,
+            summary,
+        })
     }
 
     // ------------------------------------------------------------------
@@ -811,7 +997,7 @@ where
             limit: None,
             offset: 0,
             path_like: None,
-            order_by: None,
+            order_by: Vec::new(),
         }
     }
 

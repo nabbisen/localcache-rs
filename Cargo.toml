@@ -4,8 +4,9 @@ resolver = "2"
 
 [package]
 name        = "localcache"
-version     = "0.12.0"
+version     = "0.13.0"
 edition     = "2024"
+rust-version = "1.85"
 authors     = ["nabbisen"]
 license     = "Apache-2.0"
 description = "A Rust library for caching expensive computation results associated with local files"
@@ -23,6 +24,8 @@ async       = ["dep:tokio"]
 compression = ["dep:zstd"]
 json        = ["dep:serde_json"]
 encryption  = ["dep:aes-gcm"]
+## Enable `tracing` instrumentation on key cache operations.
+tracing     = ["dep:tracing"]
 
 [dependencies]
 rusqlite   = { version = "0.32", features = ["bundled"] }
@@ -35,6 +38,7 @@ tokio      = { version = "1",    features = ["rt"],     optional = true }
 zstd       = { version = "0.13",                        optional = true }
 serde_json = { version = "1",                           optional = true }
 aes-gcm    = { version = "0.10",                        optional = true }
+tracing    = { version = "0.1",                         optional = true }
 
 [dev-dependencies]
 tempfile  = "3"

@@ -58,6 +58,8 @@ pub(crate) enum OrderBy {
     Field { path: String, order: SortOrder },
     /// Sort by `mtime` timestamp proxy.
     UpdatedAt(SortOrder),
+    /// Sort by `last_accessed_at` timestamp.
+    LastAccessed(SortOrder),
     /// Sort by stored path string.
     Path(SortOrder),
 }
@@ -139,7 +141,8 @@ pub struct QueryBuilder<'e, T> {
     pub(crate) limit: Option<usize>,
     pub(crate) offset: usize,
     pub(crate) path_like: Option<String>,
-    pub(crate) order_by: Option<OrderBy>,
+    /// Multiple sort keys applied in order (primary, secondary, …).
+    pub(crate) order_by: Vec<OrderBy>,
 }
 
 impl<'e, T> QueryBuilder<'e, T>
@@ -222,9 +225,61 @@ where
     // ------------------------------------------------------------------
 
     /// Sort results by a dot-separated JSON payload field (requires `json` feature).
+    ///
+    /// Clears any previous sort keys and sets this as the primary key.
+    /// Chain with `then_by_*` for secondary sorting.
     #[cfg(feature = "json")]
     pub fn order_by_field(mut self, field_path: impl Into<String>, ascending: bool) -> Self {
-        self.order_by = Some(OrderBy::Field {
+        self.order_by = vec![OrderBy::Field {
+            path: field_path.into(),
+            order: if ascending {
+                SortOrder::Asc
+            } else {
+                SortOrder::Desc
+            },
+        }];
+        self
+    }
+
+    /// Sort results by `updated_at` timestamp (primary key).
+    pub fn order_by_updated_at(mut self, ascending: bool) -> Self {
+        self.order_by = vec![OrderBy::UpdatedAt(if ascending {
+            SortOrder::Asc
+        } else {
+            SortOrder::Desc
+        })];
+        self
+    }
+
+    /// Sort results by `last_accessed_at` timestamp (primary key).
+    ///
+    /// Entries never read since being written have `last_accessed_at == 0`
+    /// and sort as oldest under ascending order.
+    pub fn order_by_last_accessed(mut self, ascending: bool) -> Self {
+        self.order_by = vec![OrderBy::LastAccessed(if ascending {
+            SortOrder::Asc
+        } else {
+            SortOrder::Desc
+        })];
+        self
+    }
+
+    /// Sort results by the stored path string (primary key).
+    pub fn order_by_path(mut self, ascending: bool) -> Self {
+        self.order_by = vec![OrderBy::Path(if ascending {
+            SortOrder::Asc
+        } else {
+            SortOrder::Desc
+        })];
+        self
+    }
+
+    /// Add a secondary sort by a JSON payload field (requires `json` feature).
+    ///
+    /// Call after one of the `order_by_*` methods.
+    #[cfg(feature = "json")]
+    pub fn then_by_field(mut self, field_path: impl Into<String>, ascending: bool) -> Self {
+        self.order_by.push(OrderBy::Field {
             path: field_path.into(),
             order: if ascending {
                 SortOrder::Asc
@@ -235,9 +290,9 @@ where
         self
     }
 
-    /// Sort results by `updated_at` timestamp.
-    pub fn order_by_updated_at(mut self, ascending: bool) -> Self {
-        self.order_by = Some(OrderBy::UpdatedAt(if ascending {
+    /// Add a secondary sort by `updated_at`.
+    pub fn then_by_updated_at(mut self, ascending: bool) -> Self {
+        self.order_by.push(OrderBy::UpdatedAt(if ascending {
             SortOrder::Asc
         } else {
             SortOrder::Desc
@@ -245,9 +300,19 @@ where
         self
     }
 
-    /// Sort results by the stored path string.
-    pub fn order_by_path(mut self, ascending: bool) -> Self {
-        self.order_by = Some(OrderBy::Path(if ascending {
+    /// Add a secondary sort by `last_accessed_at`.
+    pub fn then_by_last_accessed(mut self, ascending: bool) -> Self {
+        self.order_by.push(OrderBy::LastAccessed(if ascending {
+            SortOrder::Asc
+        } else {
+            SortOrder::Desc
+        }));
+        self
+    }
+
+    /// Add a secondary sort by path.
+    pub fn then_by_path(mut self, ascending: bool) -> Self {
+        self.order_by.push(OrderBy::Path(if ascending {
             SortOrder::Asc
         } else {
             SortOrder::Desc
@@ -281,10 +346,6 @@ where
     }
 }
 
-// ---------------------------------------------------------------------------
-// Execution
-// ---------------------------------------------------------------------------
-
 pub(crate) fn execute_query<T>(
     q: QueryBuilder<'_, T>,
 ) -> Result<Vec<CacheEntry<T>>, LocalFileCacheError>
@@ -295,12 +356,11 @@ where
 
     let paths = repository::keys(&q.engine.conn, &q.engine.namespace, q.path_like.as_deref())?;
 
-    // When json feature is on, we collect (entry, json_value) for predicate eval.
-    // When off, we collect (entry, ()) as a dummy.
+    // Tuple: (entry, json_value_or_null, last_accessed_at)
     #[cfg(feature = "json")]
-    let mut matched: Vec<(CacheEntry<T>, serde_json::Value)> = Vec::new();
+    let mut matched: Vec<(CacheEntry<T>, serde_json::Value, i64)> = Vec::new();
     #[cfg(not(feature = "json"))]
-    let mut matched: Vec<CacheEntry<T>> = Vec::new();
+    let mut matched: Vec<(CacheEntry<T>, i64)> = Vec::new();
 
     for path in &paths {
         let path_str = match path.to_str() {
@@ -326,6 +386,8 @@ where
             Err(_) => continue,
         };
 
+        let laa = row.last_accessed_at;
+
         let entry = CacheEntry {
             path: PathBuf::from(&row.path),
             metadata: FileMetadata {
@@ -338,7 +400,10 @@ where
 
         #[cfg(feature = "json")]
         {
-            let needs_json = !q.predicates.is_empty() || q.order_by.is_some();
+            let needs_json = !q.predicates.is_empty()
+                || q.order_by
+                    .iter()
+                    .any(|o| matches!(o, OrderBy::Field { .. }));
             let json_val = if needs_json {
                 match serde_json::to_value(&entry.payload) {
                     Ok(v) => v,
@@ -347,29 +412,43 @@ where
             } else {
                 serde_json::Value::Null
             };
-
             if q.predicates.iter().all(|p| p.matches(&json_val)) {
-                matched.push((entry, json_val));
+                matched.push((entry, json_val, laa));
             }
         }
 
         #[cfg(not(feature = "json"))]
-        {
-            matched.push(entry);
-        }
+        matched.push((entry, laa));
     }
 
-    // Apply ordering.
+    // Multi-column ordering.
     #[cfg(feature = "json")]
-    if let Some(ref order) = q.order_by {
-        apply_order(&mut matched, order);
-    }
-    #[cfg(not(feature = "json"))]
-    if let Some(ref order) = q.order_by {
-        apply_order_simple(&mut matched, order);
+    if !q.order_by.is_empty() {
+        matched.sort_by(|(ea, va, la_a), (eb, vb, la_b)| {
+            for key in &q.order_by {
+                let c = cmp_key_json(ea, va, *la_a, eb, vb, *la_b, key);
+                if c != std::cmp::Ordering::Equal {
+                    return c;
+                }
+            }
+            std::cmp::Ordering::Equal
+        });
     }
 
-    // Apply offset + limit.
+    #[cfg(not(feature = "json"))]
+    if !q.order_by.is_empty() {
+        matched.sort_by(|(ea, la_a), (eb, la_b)| {
+            for key in &q.order_by {
+                let c = cmp_key_simple(ea, *la_a, eb, *la_b, key);
+                if c != std::cmp::Ordering::Equal {
+                    return c;
+                }
+            }
+            std::cmp::Ordering::Equal
+        });
+    }
+
+    // Offset + limit.
     let start = q.offset.min(matched.len());
     let end = q
         .limit
@@ -381,20 +460,33 @@ where
         .into_iter()
         .skip(start)
         .take(end - start)
-        .map(|(e, _)| e)
+        .map(|(e, _, _)| e)
         .collect());
 
     #[cfg(not(feature = "json"))]
-    return Ok(matched.into_iter().skip(start).take(end - start).collect());
+    return Ok(matched
+        .into_iter()
+        .skip(start)
+        .take(end - start)
+        .map(|(e, _)| e)
+        .collect());
 }
 
 // ---------------------------------------------------------------------------
-// Sorting helpers
+// Per-key comparison helpers
 // ---------------------------------------------------------------------------
 
 #[cfg(feature = "json")]
-fn apply_order<T>(matched: &mut [(CacheEntry<T>, serde_json::Value)], order: &OrderBy) {
-    matched.sort_by(|(ea, va), (eb, vb)| match order {
+fn cmp_key_json<T>(
+    ea: &CacheEntry<T>,
+    va: &serde_json::Value,
+    la_a: i64,
+    eb: &CacheEntry<T>,
+    vb: &serde_json::Value,
+    la_b: i64,
+    key: &OrderBy,
+) -> std::cmp::Ordering {
+    match key {
         OrderBy::Field { path, order } => {
             let a = get_field(va, path).and_then(json_sort_key);
             let b = get_field(vb, path).and_then(json_sort_key);
@@ -405,52 +497,36 @@ fn apply_order<T>(matched: &mut [(CacheEntry<T>, serde_json::Value)], order: &Or
                 c
             }
         }
-        OrderBy::UpdatedAt(ord) => {
-            let c = ea.metadata.mtime.cmp(&eb.metadata.mtime);
-            let c = if c == std::cmp::Ordering::Equal {
-                ea.path.cmp(&eb.path)
-            } else {
-                c
-            };
-            if *ord == SortOrder::Desc {
-                c.reverse()
-            } else {
-                c
-            }
-        }
-        OrderBy::Path(ord) => {
-            let c = ea.path.cmp(&eb.path);
-            if *ord == SortOrder::Desc {
-                c.reverse()
-            } else {
-                c
-            }
-        }
-    });
+        OrderBy::UpdatedAt(ord) => ord_dir(ea.metadata.mtime.cmp(&eb.metadata.mtime), *ord),
+        OrderBy::LastAccessed(ord) => ord_dir(la_a.cmp(&la_b), *ord),
+        OrderBy::Path(ord) => ord_dir(ea.path.cmp(&eb.path), *ord),
+    }
 }
 
 #[allow(dead_code)]
-fn apply_order_simple<T>(matched: &mut [CacheEntry<T>], order: &OrderBy) {
-    matched.sort_by(|ea, eb| match order {
+fn cmp_key_simple<T>(
+    ea: &CacheEntry<T>,
+    la_a: i64,
+    eb: &CacheEntry<T>,
+    la_b: i64,
+    key: &OrderBy,
+) -> std::cmp::Ordering {
+    match key {
         #[cfg(feature = "json")]
         OrderBy::Field { .. } => std::cmp::Ordering::Equal,
-        OrderBy::UpdatedAt(ord) => {
-            let c = ea.metadata.mtime.cmp(&eb.metadata.mtime);
-            if *ord == SortOrder::Desc {
-                c.reverse()
-            } else {
-                c
-            }
-        }
-        OrderBy::Path(ord) => {
-            let c = ea.path.cmp(&eb.path);
-            if *ord == SortOrder::Desc {
-                c.reverse()
-            } else {
-                c
-            }
-        }
-    });
+        OrderBy::UpdatedAt(ord) => ord_dir(ea.metadata.mtime.cmp(&eb.metadata.mtime), *ord),
+        OrderBy::LastAccessed(ord) => ord_dir(la_a.cmp(&la_b), *ord),
+        OrderBy::Path(ord) => ord_dir(ea.path.cmp(&eb.path), *ord),
+    }
+}
+
+#[inline]
+fn ord_dir(c: std::cmp::Ordering, ord: SortOrder) -> std::cmp::Ordering {
+    if ord == SortOrder::Desc {
+        c.reverse()
+    } else {
+        c
+    }
 }
 
 #[cfg(feature = "json")]

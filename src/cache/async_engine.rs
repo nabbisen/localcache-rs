@@ -234,6 +234,15 @@ where
         spawn(move || inner.lock().unwrap().contains(&path)).await
     }
 
+    /// Async version of [`CacheEngine::explain`].
+    pub async fn explain(
+        &self,
+        path: PathBuf,
+    ) -> Result<crate::cache::entry::Diagnosis, LocalFileCacheError> {
+        let inner = Arc::clone(&self.inner);
+        spawn(move || inner.lock().unwrap().explain(&path)).await
+    }
+
     /// Async version of [`CacheEngine::keys`].
     pub async fn keys(
         &self,

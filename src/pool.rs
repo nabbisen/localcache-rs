@@ -190,6 +190,14 @@ where
         self.lock()?.contains(path)
     }
 
+    /// Pooled version of [`CacheEngine::explain`].
+    pub fn explain<P: AsRef<Path>>(
+        &self,
+        path: P,
+    ) -> Result<crate::cache::entry::Diagnosis, LocalFileCacheError> {
+        self.lock()?.explain(path)
+    }
+
     // ------------------------------------------------------------------
     // Directory scan
     // ------------------------------------------------------------------
