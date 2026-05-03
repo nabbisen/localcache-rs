@@ -1,0 +1,19 @@
+localcache
+Copyright 2026 nabbisen
+
+This product is licensed under the Apache License, Version 2.0.
+See the LICENSE file for details.
+
+-------------------------------------------------------------------------------
+Third-party dependencies
+-------------------------------------------------------------------------------
+
+This software includes the following open-source packages.  Each package
+retains its own copyright and license.
+
+  rusqlite      — MIT / Apache-2.0   https://github.com/rusqlite/rusqlite
+  serde         — MIT / Apache-2.0   https://github.com/serde-rs/serde
+  bincode       — MIT                https://github.com/bincode-org/bincode
+  blake3        — CC0 / Apache-2.0   https://github.com/BLAKE3-team/BLAKE3
+  thiserror     — MIT / Apache-2.0   https://github.com/dtolnay/thiserror
+  tempfile      — MIT / Apache-2.0   https://github.com/Stebalien/tempfile

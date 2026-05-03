@@ -1,0 +1,20 @@
+[package]
+name = "localcache"
+version = "0.1.0"
+edition = "2024"
+authors = ["nabbisen"]
+license = "Apache-2.0"
+description = "A Rust library for caching expensive computation results associated with local files"
+repository = "https://github.com/nabbisen/localcache"
+keywords = ["cache", "local-file", "sqlite", "embedding", "memoize"]
+categories = ["caching", "filesystem"]
+
+[dependencies]
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+bincode = "1.3"
+blake3 = "1"
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"

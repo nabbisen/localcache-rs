@@ -1,0 +1,9 @@
+[book]
+title       = "localcache — Documentation"
+authors     = ["nabbisen"]
+language    = "en"
+src         = "src"
+
+[output.html]
+git-repository-url = "https://github.com/nabbisen/localcache-rs"
+edit-url-template  = "https://github.com/nabbisen/localcache-rs/edit/main/docs/{path}"
