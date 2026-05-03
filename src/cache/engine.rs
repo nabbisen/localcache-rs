@@ -15,16 +15,16 @@ use crate::detection::metadata::collect_metadata;
 use crate::detection::strategy::detect_change;
 use crate::error::LocalFileCacheError;
 use crate::path::normalize_path;
-use crate::serialization::{deserialize_payload, serialize_payload};
+use crate::serialization::{decode_payload, encode_payload};
 
 // ---------------------------------------------------------------------------
-// Public result types for batch operations
+// Public result types
 // ---------------------------------------------------------------------------
 
 /// Result summary returned by [`CacheEngine::batch_set`].
 #[derive(Debug, Default)]
 pub struct BatchSetReport {
-    /// Number of entries that were stored successfully.
+    /// Number of entries stored successfully.
     pub succeeded: usize,
     /// Per-item errors: `(path, error)`.
     pub failed: Vec<(PathBuf, LocalFileCacheError)>,
@@ -37,25 +37,21 @@ pub struct BatchSetReport {
 /// The main entry point for `localcache`.
 ///
 /// `CacheEngine<T>` manages a SQLite-backed store that associates canonical
-/// file paths with arbitrary, serialisable payloads.  A typical payload is a
-/// vector embedding, a parsed document structure, or any other costly-to-compute
-/// value derived from a local file.
-///
-/// `T` must implement [`serde::Serialize`] and [`serde::de::DeserializeOwned`]
-/// because payloads are stored as bincode bytes.
+/// file paths with arbitrary serialisable payloads.
 ///
 /// ## In-memory databases
 ///
-/// Pass `database_path: ":memory:".into()` to use an in-memory SQLite
-/// database.  The cache only persists for the lifetime of the engine instance
-/// and is not shared with other instances.  This mode is particularly useful
-/// in unit tests.
+/// Set `database_path: ":memory:".into()` in [`CacheOptions`] for an
+/// ephemeral, in-process database — ideal for unit tests.
 ///
 /// ## Read-only mode
 ///
-/// Set `read_only: true` in [`CacheOptions`] to open an existing database
-/// without write access.  All mutation methods return
-/// [`LocalFileCacheError::ReadOnly`].
+/// Set `read_only: true` to open an existing database without write access.
+///
+/// ## Async support
+///
+/// Enable the `async` Cargo feature to access [`crate::AsyncCacheEngine`],
+/// which wraps this engine in a `tokio::task::spawn_blocking` adapter.
 ///
 /// # Example
 ///
@@ -76,11 +72,13 @@ pub struct BatchSetReport {
 /// # Ok::<(), localcache::LocalFileCacheError>(())
 /// ```
 pub struct CacheEngine<T> {
-    conn: Connection,
-    mode: ChangeDetectionMode,
-    namespace: String,
-    ttl: Option<Duration>,
-    read_only: bool,
+    pub(crate) conn: Connection,
+    pub(crate) mode: ChangeDetectionMode,
+    pub(crate) namespace: String,
+    pub(crate) ttl: Option<Duration>,
+    pub(crate) read_only: bool,
+    pub(crate) payload_version: u32,
+    pub(crate) compress: bool,
     _phantom: PhantomData<T>,
 }
 
@@ -93,12 +91,6 @@ where
     // ------------------------------------------------------------------
 
     /// Open (or create) a [`CacheEngine`] using `options`.
-    ///
-    /// * For a regular file path the SQLite database is created if it does not
-    ///   exist yet, and the schema is applied (and migrated if necessary).
-    /// * For `":memory:"` an in-memory database is created fresh.
-    /// * For `read_only: true` the database is opened with
-    ///   `SQLITE_OPEN_READ_ONLY`; the schema is **not** modified.
     pub fn open(options: CacheOptions) -> Result<Self, LocalFileCacheError> {
         let is_memory = is_memory_path(&options.database_path);
 
@@ -114,7 +106,6 @@ where
         };
 
         if is_memory || !options.read_only {
-            // Apply configurable PRAGMAs for writable connections.
             if !is_memory {
                 conn.execute_batch(&format!(
                     "PRAGMA journal_mode = {}; PRAGMA synchronous = {};",
@@ -124,9 +115,19 @@ where
             }
             schema::initialize(&conn)?;
         } else {
-            // Read-only: enable FK enforcement but skip DDL.
             schema::enable_foreign_keys(&conn)?;
         }
+
+        let compress = {
+            #[cfg(feature = "compression")]
+            {
+                options.compress_payloads
+            }
+            #[cfg(not(feature = "compression"))]
+            {
+                false
+            }
+        };
 
         Ok(Self {
             conn,
@@ -134,6 +135,8 @@ where
             namespace: options.namespace,
             ttl: options.ttl,
             read_only: options.read_only,
+            payload_version: options.payload_version,
+            compress,
             _phantom: PhantomData,
         })
     }
@@ -144,8 +147,7 @@ where
 
     /// Return the cached entry for `path`, if one exists.
     ///
-    /// No change-detection is performed.  Use
-    /// [`get_if_fresh`](Self::get_if_fresh) for that.
+    /// No change-detection or version check is performed.
     pub fn get<P>(&self, path: P) -> Result<Option<CacheEntry<T>>, LocalFileCacheError>
     where
         P: AsRef<Path>,
@@ -156,10 +158,10 @@ where
         let Some(row) = repository::find_file(&self.conn, &self.namespace, path_str)? else {
             return Ok(None);
         };
-        let Some(bytes) = repository::load_payload(&self.conn, row.id)? else {
+        let Some(payload_row) = repository::load_payload(&self.conn, row.id)? else {
             return Ok(None);
         };
-        let payload: T = deserialize_payload(&bytes)?;
+        let payload: T = decode_payload(&payload_row.content, &payload_row.encoding)?;
         Ok(Some(CacheEntry {
             path: PathBuf::from(&row.path),
             metadata: row.metadata,
@@ -169,8 +171,9 @@ where
 
     /// Return the cached entry for `path` only if it is still fresh.
     ///
-    /// Returns `Ok(None)` when the file is missing, the entry is missing,
-    /// the entry is stale, or the entry has exceeded the configured TTL.
+    /// Returns `Ok(None)` when the file or entry is missing, the entry is
+    /// stale, the TTL has elapsed, or the stored payload version does not
+    /// match [`CacheOptions::payload_version`].
     pub fn get_if_fresh<P>(&self, path: P) -> Result<Option<CacheEntry<T>>, LocalFileCacheError>
     where
         P: AsRef<Path>,
@@ -188,14 +191,17 @@ where
         if is_expired(row.updated_at, self.ttl) {
             return Ok(None);
         }
+        if self.payload_version > 0 && row.payload_version != self.payload_version {
+            return Ok(None);
+        }
         match detect_change(&canonical, &row.metadata, self.mode)? {
             CacheStatus::Stale | CacheStatus::Missing => return Ok(None),
             CacheStatus::Fresh => {}
         }
-        let Some(bytes) = repository::load_payload(&self.conn, row.id)? else {
+        let Some(payload_row) = repository::load_payload(&self.conn, row.id)? else {
             return Ok(None);
         };
-        let payload: T = deserialize_payload(&bytes)?;
+        let payload: T = decode_payload(&payload_row.content, &payload_row.encoding)?;
         Ok(Some(CacheEntry {
             path: PathBuf::from(&row.path),
             metadata: row.metadata,
@@ -207,7 +213,7 @@ where
     // Batch reads
     // ------------------------------------------------------------------
 
-    /// Retrieve multiple entries in a single pass (no change-detection).
+    /// Retrieve multiple entries (no change-detection).
     pub fn batch_get<P>(
         &self,
         paths: &[P],
@@ -244,12 +250,18 @@ where
         self.guard_write()?;
         let canonical = normalize_path(path.as_ref())?;
         let path_str = path_to_str(&canonical)?;
-
         let mut metadata = collect_metadata(&canonical)?;
         metadata.hash = compute_hash_for_mode(&canonical, self.mode)?;
-
-        let bytes = serialize_payload(payload)?;
-        repository::upsert(&self.conn, &self.namespace, path_str, &metadata, &bytes)?;
+        let (bytes, encoding) = encode_payload(payload, self.compress)?;
+        repository::upsert(
+            &self.conn,
+            &self.namespace,
+            path_str,
+            &metadata,
+            &bytes,
+            encoding,
+            self.payload_version,
+        )?;
         Ok(())
     }
 
@@ -261,8 +273,12 @@ where
         self.guard_write()?;
 
         let mut report = BatchSetReport::default();
-        let mut prepared: Vec<(String, crate::detection::metadata::FileMetadata, Vec<u8>)> =
-            Vec::with_capacity(items.len());
+        let mut prepared: Vec<(
+            String,
+            crate::detection::metadata::FileMetadata,
+            Vec<u8>,
+            &'static str,
+        )> = Vec::with_capacity(items.len());
 
         for (path, payload) in items {
             let canonical = match normalize_path(path.as_ref()) {
@@ -293,23 +309,30 @@ where
                     continue;
                 }
             }
-            let bytes = match serialize_payload(payload) {
-                Ok(b) => b,
+            let (bytes, encoding) = match encode_payload(payload, self.compress) {
+                Ok(r) => r,
                 Err(e) => {
                     report.failed.push((canonical.clone(), e));
                     continue;
                 }
             };
-            prepared.push((path_str, metadata, bytes));
+            prepared.push((path_str, metadata, bytes, encoding));
         }
 
         let tx = self.conn.unchecked_transaction()?;
-        for (path_str, metadata, bytes) in &prepared {
-            repository::upsert_in_tx(&tx, &self.namespace, path_str, metadata, bytes)?;
+        for (path_str, metadata, bytes, encoding) in &prepared {
+            repository::upsert_in_tx(
+                &tx,
+                &self.namespace,
+                path_str,
+                metadata,
+                bytes,
+                encoding,
+                self.payload_version,
+            )?;
             report.succeeded += 1;
         }
         tx.commit()?;
-
         Ok(report)
     }
 
@@ -317,10 +340,8 @@ where
     // Removal
     // ------------------------------------------------------------------
 
-    /// Remove the cache entry for `path`.
-    ///
-    /// Returns `true` if an entry was deleted.  Works even when the source
-    /// file no longer exists on disk.
+    /// Remove the cache entry for `path`.  Works even when the file no longer
+    /// exists on disk.  Returns `true` if an entry was deleted.
     pub fn remove<P>(&self, path: P) -> Result<bool, LocalFileCacheError>
     where
         P: AsRef<Path>,
@@ -334,21 +355,15 @@ where
             Err(LocalFileCacheError::FileNotFound { .. }) => {}
             Err(e) => return Err(e),
         }
-
-        // File is gone — search the DB by stored path string.
         let raw = path.as_ref().to_string_lossy();
-        let stored_paths = repository::all_paths_in_namespace(&self.conn, &self.namespace)?;
-        for stored in &stored_paths {
-            if stored.as_str() == raw.as_ref()
-                || (stored.ends_with(raw.as_ref())
-                    && std::path::Path::new(stored)
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        == std::path::Path::new(raw.as_ref())
-                            .file_name()
-                            .and_then(|n| n.to_str()))
+        let stored = repository::all_paths_in_namespace(&self.conn, &self.namespace)?;
+        for s in &stored {
+            if s.as_str() == raw.as_ref()
+                || (s.ends_with(raw.as_ref())
+                    && Path::new(s).file_name().and_then(|n| n.to_str())
+                        == Path::new(raw.as_ref()).file_name().and_then(|n| n.to_str()))
             {
-                return repository::delete_by_path(&self.conn, &self.namespace, stored);
+                return repository::delete_by_path(&self.conn, &self.namespace, s);
             }
         }
         repository::delete_by_path(&self.conn, &self.namespace, raw.as_ref())
@@ -359,6 +374,9 @@ where
     // ------------------------------------------------------------------
 
     /// Check the freshness of the cache entry for `path`.
+    ///
+    /// Returns [`CacheStatus::Stale`] when the entry exists but the payload
+    /// version does not match [`CacheOptions::payload_version`].
     pub fn check_status<P>(&self, path: P) -> Result<CacheStatus, LocalFileCacheError>
     where
         P: AsRef<Path>,
@@ -369,14 +387,47 @@ where
             Err(e) => return Err(e),
         };
         let path_str = path_to_str(&canonical)?;
-
         let Some(row) = repository::find_file(&self.conn, &self.namespace, path_str)? else {
             return Ok(CacheStatus::Missing);
         };
         if is_expired(row.updated_at, self.ttl) {
             return Ok(CacheStatus::Stale);
         }
+        if self.payload_version > 0 && row.payload_version != self.payload_version {
+            return Ok(CacheStatus::Stale);
+        }
         detect_change(&canonical, &row.metadata, self.mode)
+    }
+
+    // ------------------------------------------------------------------
+    // Directory scan
+    // ------------------------------------------------------------------
+
+    /// Scan `dir` and return the [`CacheStatus`] of every regular file found.
+    ///
+    /// Each tuple is `(canonical_path, status)`.  Files not in the cache have
+    /// status [`CacheStatus::Missing`].
+    ///
+    /// Set `recursive` to `true` to descend into subdirectories.
+    pub fn scan_dir<P: AsRef<Path>>(
+        &self,
+        dir: P,
+        recursive: bool,
+    ) -> Result<Vec<(PathBuf, CacheStatus)>, LocalFileCacheError> {
+        let dir = dir.as_ref();
+        if !dir.is_dir() {
+            return Err(LocalFileCacheError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("not a directory: {}", dir.display()),
+            )));
+        }
+        let files = walk_dir(dir, recursive)?;
+        let mut results = Vec::with_capacity(files.len());
+        for file in files {
+            let status = self.check_status(&file)?;
+            results.push((file, status));
+        }
+        Ok(results)
     }
 
     // ------------------------------------------------------------------
@@ -389,7 +440,7 @@ where
         let paths = repository::all_paths_in_namespace(&self.conn, &self.namespace)?;
         let mut removed = 0;
         for p in &paths {
-            if !std::path::Path::new(p).exists() {
+            if !Path::new(p).exists() {
                 repository::delete_path(&self.conn, &self.namespace, p)?;
                 removed += 1;
             }
@@ -422,21 +473,33 @@ where
         self.conn.execute_batch("VACUUM;")?;
         Ok(())
     }
+
+    // ------------------------------------------------------------------
+    // Private helpers
+    // ------------------------------------------------------------------
+
+    #[inline]
+    fn guard_write(&self) -> Result<(), LocalFileCacheError> {
+        if self.read_only {
+            Err(LocalFileCacheError::ReadOnly)
+        } else {
+            Ok(())
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
-// Private helpers
+// Free helpers
 // ---------------------------------------------------------------------------
 
-fn path_to_str(path: &Path) -> Result<&str, LocalFileCacheError> {
+pub(crate) fn path_to_str(path: &Path) -> Result<&str, LocalFileCacheError> {
     path.to_str()
         .ok_or_else(|| LocalFileCacheError::InvalidPath {
             path: path.to_path_buf(),
         })
 }
 
-/// Compute the appropriate hash (or `None`) for the given detection mode.
-fn compute_hash_for_mode(
+pub(crate) fn compute_hash_for_mode(
     path: &Path,
     mode: ChangeDetectionMode,
 ) -> Result<Option<String>, LocalFileCacheError> {
@@ -449,7 +512,7 @@ fn compute_hash_for_mode(
     }
 }
 
-fn is_expired(updated_at: i64, ttl: Option<Duration>) -> bool {
+pub(crate) fn is_expired(updated_at: i64, ttl: Option<Duration>) -> bool {
     let Some(ttl) = ttl else {
         return false;
     };
@@ -457,17 +520,20 @@ fn is_expired(updated_at: i64, ttl: Option<Duration>) -> bool {
     now.saturating_sub(updated_at) as u64 >= ttl.as_secs()
 }
 
-impl<T> CacheEngine<T>
-where
-    T: Serialize + DeserializeOwned,
-{
-    /// Return `Err(ReadOnly)` if the engine is in read-only mode.
-    #[inline]
-    fn guard_write(&self) -> Result<(), LocalFileCacheError> {
-        if self.read_only {
-            Err(LocalFileCacheError::ReadOnly)
-        } else {
-            Ok(())
+/// Recursively (or non-recursively) collect all regular files under `dir`.
+fn walk_dir(dir: &Path, recursive: bool) -> Result<Vec<PathBuf>, LocalFileCacheError> {
+    let mut files = Vec::new();
+    let mut dirs = vec![dir.to_path_buf()];
+    while let Some(d) = dirs.pop() {
+        for entry in std::fs::read_dir(&d)? {
+            let entry = entry?;
+            let ft = entry.file_type()?;
+            if ft.is_file() {
+                files.push(entry.path());
+            } else if recursive && ft.is_dir() {
+                dirs.push(entry.path());
+            }
         }
     }
+    Ok(files)
 }

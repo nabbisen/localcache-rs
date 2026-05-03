@@ -11,57 +11,57 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [0.3.0] — 2025-05-02
+## [0.4.0] — 2025-05-02
 
 ### Added
 
-- **True `MetadataThenPartialHash`** — now reads the first 64 KiB and last
-  64 KiB of the file (128 KiB total I/O maximum per check).  For files
-  ≤ 128 KiB the entire content is hashed.  Partial hashes are stored with a
-  `"partial:"` prefix so they are distinguishable from full-hash entries
-  written by other modes.  No schema change required.
-- **`read_only` open mode** — `CacheOptions::read_only: bool`.  When `true`,
-  the SQLite connection is opened with `SQLITE_OPEN_READ_ONLY`; all write
-  operations (`set`, `batch_set`, `remove`, `cleanup_missing_files`,
-  `cleanup_expired`, `shrink_database`) return
-  `LocalFileCacheError::ReadOnly`.
-- **In-memory backend** — pass `database_path: ":memory:".into()` to open a
-  private, ephemeral SQLite database.  Useful for unit tests that need a
-  fully functional `CacheEngine` without touching the filesystem.
-- **`LocalFileCacheError::ReadOnly`** — new error variant.
+- **`async` feature** — `AsyncCacheEngine<T>`: an async wrapper that delegates
+  every blocking operation (SQLite + filesystem) to
+  `tokio::task::spawn_blocking` via an `Arc<Mutex<CacheEngine<T>>>`.  Provides
+  the full API surface: `open`, `get`, `get_if_fresh`, `set`, `batch_set`,
+  `batch_get`, `batch_get_fresh`, `remove`, `check_status`, `scan_dir`,
+  `cleanup_missing_files`, `cleanup_expired`, `shrink_database`.
+  `AsyncCacheEngine` is `Clone` — clones share the same underlying engine.
+- **`compression` feature** — zstd payload compression.  Set
+  `CacheOptions::compress_payloads = true` to compress on write.  The encoding
+  (`"raw"` or `"zstd"`) is recorded in a new `payloads.encoding` column; reads
+  decompress transparently.  Mixed encoding within a single database (via
+  namespaces) is fully supported.
+- **`scan_dir(dir, recursive)`** — scans a directory tree and returns a
+  `Vec<(PathBuf, CacheStatus)>` for every regular file found.  Available on
+  both `CacheEngine` and `AsyncCacheEngine`.
+- **Payload schema versioning** — `CacheOptions::payload_version: u32`.  When
+  non-zero, `get_if_fresh`, `batch_get_fresh`, and `check_status` treat entries
+  with a different stored version as `Stale`.  The version is stored in a new
+  `files.payload_version` column.
+- **`LocalFileCacheError::UnknownEncoding(String)`** — returned when a stored
+  payload uses an encoding unknown to the current build (e.g. `"zstd"` when the
+  `compression` feature is not enabled).
+- **`LocalFileCacheError::PayloadVersionMismatch`** — returned on explicit
+  version-mismatch errors (reserved for future strict-mode API).
+- **`LocalFileCacheError::AsyncTaskPanicked`** (`async` feature only) —
+  propagated when a `spawn_blocking` task panics.
 
 ### Changed
 
-- **Streaming bincode serialisation** — `serialize_payload` now uses
-  `bincode::serialized_size` to pre-allocate the output `Vec` and
-  `bincode::serialize_into` to write without internal reallocation.
-  `deserialize_payload` uses `bincode::deserialize_from` with a zero-copy
-  `std::io::Cursor`, eliminating an intermediate buffer copy on reads.
-- `MetadataThenPartialHash` no longer silently falls back to
-  `MetadataThenFullHash`.  It uses genuine head+tail sampling.
+- Schema bumped to v3 (`PRAGMA user_version = 3`).  Migration from v2 adds
+  `files.payload_version` and `payloads.encoding` via lightweight
+  `ALTER TABLE ADD COLUMN` statements (no data movement required).
+  v1 databases are migrated v1 → v2 → v3 in one `open` call.
 
 ---
+
+## [0.3.0] — 2025-05-02
+True `MetadataThenPartialHash`, streaming bincode, `read_only`, in-memory backend.
 
 ## [0.2.0] — 2025-05-02
-
-### Added
-
-- `cache_namespace`, `JournalMode`, `SynchronousMode`, `CacheOptions::ttl`.
-- `batch_set` / `batch_get` / `batch_get_fresh`, `BatchSetReport`.
-- `cleanup_expired`.
-- Automatic schema migration v1 → v2.
-- Improved `remove` (works on deleted files).
-
----
+Namespaces, batch ops, TTL, configurable PRAGMAs, schema migration.
 
 ## [0.1.0] — 2025-05-02
+Initial release.
 
-### Added
-
-- Initial release: core sync API, bincode payloads, BLAKE3 hashing, SQLite
-  schema, 14 integration tests.
-
-[Unreleased]: https://github.com/nabbisen/localcach-rs/compare/v0.3.0...HEAD
-[0.3.0]: https://github.com/nabbisen/localcach-rs/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/nabbisen/localcach-rs/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/nabbisen/localcach-rs/releases/tag/v0.1.0
+[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/nabbisen/localcache-rs/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/nabbisen/localcache-rs/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/nabbisen/localcache-rs/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/nabbisen/localcache-rs/releases/tag/v0.1.0

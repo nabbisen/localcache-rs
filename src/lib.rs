@@ -1,7 +1,7 @@
 //! # localcache
 //!
 //! `localcache` is a Rust library for caching the results of expensive
-//! computations that are derived from local files.
+//! computations derived from local files.
 //!
 //! ## Quick start
 //!
@@ -39,6 +39,8 @@ mod tests;
 // Public re-exports
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "async")]
+pub use cache::async_engine::AsyncCacheEngine;
 pub use cache::engine::{BatchSetReport, CacheEngine};
 pub use cache::entry::{CacheEntry, CacheStatus, FileMetadata};
 pub use cache::options::{CacheOptions, ChangeDetectionMode, JournalMode, SynchronousMode};

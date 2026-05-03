@@ -1,42 +1,21 @@
 # Roadmap
 
 ## Phase 1 — Foundation (v0.1.x) ✅
-
-- [x] SQLite-backed persistent cache
-- [x] `set` / `get` / `get_if_fresh` / `remove`
-- [x] `check_status` — `Fresh` / `Stale` / `Missing`
-- [x] `cleanup_missing_files` / `shrink_database`
-- [x] `MetadataOnly` / `MetadataThenFullHash` / `StrictFullHash` change detection
-- [x] `MetadataThenPartialHash` (fell back to full hash in this phase)
-- [x] bincode serialisation for arbitrary `T: Serialize + DeserializeOwned`
-- [x] Atomic `set` via SQLite transactions
-- [x] `ON DELETE CASCADE` for payload cleanup
-- [x] Full integration test suite
+Core sync API, SQLite schema, bincode payloads, BLAKE3 hashing, 14 tests.
 
 ## Phase 2 — Ergonomics & Reliability (v0.2.x) ✅
-
-- [x] `batch_set` / `batch_get` / `batch_get_fresh` API
-- [x] `remove` accepts paths that no longer exist on disk
-- [x] Configurable `journal_mode` / `synchronous` pragma
-- [x] Optional `ttl` (time-to-live) for cache entries
-- [x] `cache_namespace` — multiple independent caches in a single DB
-- [x] Automatic schema migration v1 → v2
-- [x] `cleanup_expired` maintenance helper
+Namespaces, batch ops, TTL, configurable PRAGMAs, schema migration, 26 tests.
 
 ## Phase 3 — Performance (v0.3.x) ✅
+True partial hash, streaming bincode, read-only mode, in-memory backend, 39 tests.
 
-- [x] True `MetadataThenPartialHash` — head + tail sampling (64 KiB each)
-- [x] Streaming bincode — pre-allocated `Vec` via `serialized_size`, zero-copy
-      `deserialize_from` with `Cursor`
-- [x] `read_only` open mode — all write operations return `ReadOnly` error
-- [x] In-memory backend — `database_path: ":memory:"` for ephemeral / test use
+## Phase 4 — Async & Ecosystem (v0.4.x) ✅
 
-## Phase 4 — Async & Ecosystem (v0.4.x)
-
-- [ ] `async` feature flag (tokio-rusqlite)
-- [ ] `compression` feature flag (zstd)
-- [ ] Directory scan helper (`scan_dir`)
-- [ ] Payload schema versioning
+- [x] `async` feature — `AsyncCacheEngine<T>` via `tokio::task::spawn_blocking`
+- [x] `compression` feature — zstd payload compression (`payloads.encoding` column)
+- [x] `scan_dir(dir, recursive)` — directory scan helper on sync and async engines
+- [x] Payload schema versioning — `payload_version` in `CacheOptions` and DB schema
+- [x] Schema v3 migration (v2 → v3 via `ALTER TABLE ADD COLUMN`)
 
 ## Future / Unscheduled
 
@@ -44,3 +23,6 @@
 - LRU / max-entry eviction
 - File-watching integration
 - `serde_json` alternative codec feature
+- `async-std` / `smol` feature variants
+- Batch schema version migration helper
+- `scan_dir` with glob/extension filters

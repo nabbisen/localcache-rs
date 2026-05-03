@@ -1,36 +1,34 @@
 //! Database schema initialisation and migration.
 //!
-//! Schema versioning uses SQLite's built-in `PRAGMA user_version`.
-//!
-//! | user_version | Description                          |
-//! |--------------|--------------------------------------|
-//! | 0            | Empty / pre-migration                |
-//! | 1            | v0.1 schema (no namespace column)    |
-//! | 2            | v0.2 schema (namespace column added) |
-//!
-//! No structural changes were needed for v0.3; partial-hash values are
-//! distinguished by a `"partial:"` prefix in the existing `hash` column.
+//! | user_version | Description                                         |
+//! |--------------|-----------------------------------------------------|
+//! | 0            | Empty / pre-migration                               |
+//! | 1            | v0.1 schema (no namespace)                          |
+//! | 2            | v0.2 schema (namespace column)                      |
+//! | 3            | v0.4 schema (`files.payload_version`,               |
+//! |              |               `payloads.encoding`)                  |
 
 use rusqlite::Connection;
 
 use crate::error::LocalFileCacheError;
 
-const CURRENT_VERSION: u32 = 2;
+const CURRENT_VERSION: u32 = 3;
 
 /// Apply the current schema to `conn`, running any necessary migrations.
-///
-/// Must not be called when `conn` was opened in read-only mode.
 pub(crate) fn initialize(conn: &Connection) -> Result<(), LocalFileCacheError> {
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
-
     let version = user_version(conn)?;
     match version {
         0 => create_fresh(conn)?,
-        1 => migrate_v1_to_v2(conn)?,
+        1 => {
+            migrate_v1_to_v2(conn)?;
+            migrate_v2_to_v3(conn)?;
+        }
+        2 => migrate_v2_to_v3(conn)?,
         CURRENT_VERSION => {}
         v => {
             return Err(LocalFileCacheError::UnsupportedFeature(format!(
-                "database schema version {v} is newer than this library supports \
+                "database schema version {v} is newer than this build supports \
                  (max {CURRENT_VERSION})"
             )));
         }
@@ -38,7 +36,7 @@ pub(crate) fn initialize(conn: &Connection) -> Result<(), LocalFileCacheError> {
     Ok(())
 }
 
-/// Enable foreign-key enforcement only (safe to call on a read-only connection).
+/// Enable FK enforcement only — safe to call on a read-only connection.
 pub(crate) fn enable_foreign_keys(conn: &Connection) -> Result<(), LocalFileCacheError> {
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     Ok(())
@@ -62,19 +60,21 @@ fn create_fresh(conn: &Connection) -> Result<(), LocalFileCacheError> {
     conn.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS files (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            namespace   TEXT    NOT NULL DEFAULT 'default',
-            path        TEXT    NOT NULL,
-            mtime       INTEGER NOT NULL,
-            file_size   INTEGER NOT NULL,
-            hash        TEXT,
-            updated_at  INTEGER NOT NULL,
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            namespace       TEXT    NOT NULL DEFAULT 'default',
+            path            TEXT    NOT NULL,
+            mtime           INTEGER NOT NULL,
+            file_size       INTEGER NOT NULL,
+            hash            TEXT,
+            updated_at      INTEGER NOT NULL,
+            payload_version INTEGER NOT NULL DEFAULT 0,
             UNIQUE(namespace, path)
         );
 
         CREATE TABLE IF NOT EXISTS payloads (
-            file_id INTEGER PRIMARY KEY,
-            content BLOB    NOT NULL,
+            file_id  INTEGER PRIMARY KEY,
+            content  BLOB    NOT NULL,
+            encoding TEXT    NOT NULL DEFAULT 'raw',
             FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
         );
 
@@ -85,6 +85,7 @@ fn create_fresh(conn: &Connection) -> Result<(), LocalFileCacheError> {
     Ok(())
 }
 
+/// Promote a v1 DB (no namespace) to v2 (namespace column).
 fn migrate_v1_to_v2(conn: &Connection) -> Result<(), LocalFileCacheError> {
     conn.execute_batch(
         "
@@ -117,6 +118,21 @@ fn migrate_v1_to_v2(conn: &Connection) -> Result<(), LocalFileCacheError> {
         CREATE INDEX IF NOT EXISTS idx_files_namespace_path ON files(namespace, path);
 
         COMMIT;
+        ",
+    )?;
+    set_user_version(conn, 2)?;
+    Ok(())
+}
+
+/// Add `payload_version` to `files` and `encoding` to `payloads`.
+///
+/// SQLite supports `ALTER TABLE … ADD COLUMN` without recreating the table,
+/// so this migration is lightweight.
+fn migrate_v2_to_v3(conn: &Connection) -> Result<(), LocalFileCacheError> {
+    conn.execute_batch(
+        "
+        ALTER TABLE files    ADD COLUMN payload_version INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE payloads ADD COLUMN encoding        TEXT    NOT NULL DEFAULT 'raw';
         ",
     )?;
     set_user_version(conn, CURRENT_VERSION)?;

@@ -32,4 +32,21 @@ pub enum LocalFileCacheError {
     /// A write operation was attempted on a read-only [`crate::CacheEngine`].
     #[error("operation not permitted: cache is open in read-only mode")]
     ReadOnly,
+
+    /// A stored payload uses an encoding that is not understood by this build.
+    ///
+    /// This typically means a payload was written with the `compression`
+    /// feature enabled but is being read with a build that does not have it.
+    #[error("unknown payload encoding: {0}")]
+    UnknownEncoding(String),
+
+    /// A payload's schema version does not match the version configured in
+    /// [`crate::CacheOptions::payload_version`].
+    #[error("payload version mismatch: stored={stored}, expected={expected}")]
+    PayloadVersionMismatch { stored: u32, expected: u32 },
+
+    /// An async task spawned via `tokio::task::spawn_blocking` panicked.
+    #[cfg(feature = "async")]
+    #[error("async blocking task panicked")]
+    AsyncTaskPanicked,
 }

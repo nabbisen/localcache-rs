@@ -1,6 +1,6 @@
 //! Low-level database operations (repository layer).
 //!
-//! All SQL is confined to this module.  Higher layers work with Rust types only.
+//! All SQL is confined to this module.
 
 use std::time::UNIX_EPOCH;
 
@@ -10,30 +10,37 @@ use crate::detection::metadata::FileMetadata;
 use crate::error::LocalFileCacheError;
 
 // ---------------------------------------------------------------------------
-// Row types (crate-internal)
+// Row types
 // ---------------------------------------------------------------------------
 
-/// A row from the `files` table (payload not included).
+/// A row from the `files` table (payload content not included).
 pub(crate) struct FileRow {
     pub id: i64,
     pub path: String,
     pub metadata: FileMetadata,
-    /// Unix timestamp recorded when this entry was last written.
     pub updated_at: i64,
+    /// Payload schema version stored when this entry was last written.
+    pub payload_version: u32,
+}
+
+/// Payload content plus its encoding tag.
+pub(crate) struct PayloadRow {
+    pub content: Vec<u8>,
+    pub encoding: String,
 }
 
 // ---------------------------------------------------------------------------
 // Single-row queries
 // ---------------------------------------------------------------------------
 
-/// Look up the `files` row for `(namespace, path)`.  Payload is not loaded.
+/// Find the `files` row for `(namespace, path)`.
 pub(crate) fn find_file(
     conn: &Connection,
     namespace: &str,
     path: &str,
 ) -> Result<Option<FileRow>, LocalFileCacheError> {
     let mut stmt = conn.prepare_cached(
-        "SELECT id, path, mtime, file_size, hash, updated_at
+        "SELECT id, path, mtime, file_size, hash, updated_at, payload_version
          FROM files
          WHERE namespace = ?1 AND path = ?2",
     )?;
@@ -48,38 +55,55 @@ pub(crate) fn find_file(
                     hash: r.get(4)?,
                 },
                 updated_at: r.get(5)?,
+                payload_version: r.get::<_, i64>(6)? as u32,
             })
         })
         .optional()?;
     Ok(row)
 }
 
-/// Load the raw payload bytes for `file_id`.
+/// Load the payload content and encoding for `file_id`.
 pub(crate) fn load_payload(
     conn: &Connection,
     file_id: i64,
-) -> Result<Option<Vec<u8>>, LocalFileCacheError> {
-    let mut stmt = conn.prepare_cached("SELECT content FROM payloads WHERE file_id = ?1")?;
-    let bytes = stmt
-        .query_row(params![file_id], |r| r.get::<_, Vec<u8>>(0))
+) -> Result<Option<PayloadRow>, LocalFileCacheError> {
+    let mut stmt =
+        conn.prepare_cached("SELECT content, encoding FROM payloads WHERE file_id = ?1")?;
+    let row = stmt
+        .query_row(params![file_id], |r| {
+            Ok(PayloadRow {
+                content: r.get(0)?,
+                encoding: r.get(1)?,
+            })
+        })
         .optional()?;
-    Ok(bytes)
+    Ok(row)
 }
 
 // ---------------------------------------------------------------------------
 // Writes
 // ---------------------------------------------------------------------------
 
-/// Upsert a `files` row and its `payloads` row inside a single transaction.
+/// Upsert a `files` row and its `payloads` row in a single transaction.
 pub(crate) fn upsert(
     conn: &Connection,
     namespace: &str,
     path: &str,
     metadata: &FileMetadata,
     payload_bytes: &[u8],
+    encoding: &str,
+    payload_version: u32,
 ) -> Result<(), LocalFileCacheError> {
     let tx = conn.unchecked_transaction()?;
-    upsert_in_tx(&tx, namespace, path, metadata, payload_bytes)?;
+    upsert_in_tx(
+        &tx,
+        namespace,
+        path,
+        metadata,
+        payload_bytes,
+        encoding,
+        payload_version,
+    )?;
     tx.commit()?;
     Ok(())
 }
@@ -91,17 +115,21 @@ pub(crate) fn upsert_in_tx(
     path: &str,
     metadata: &FileMetadata,
     payload_bytes: &[u8],
+    encoding: &str,
+    payload_version: u32,
 ) -> Result<(), LocalFileCacheError> {
     let updated_at = now_secs();
 
     tx.execute(
-        "INSERT INTO files (namespace, path, mtime, file_size, hash, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        "INSERT INTO files
+             (namespace, path, mtime, file_size, hash, updated_at, payload_version)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
          ON CONFLICT(namespace, path) DO UPDATE SET
-             mtime      = excluded.mtime,
-             file_size  = excluded.file_size,
-             hash       = excluded.hash,
-             updated_at = excluded.updated_at",
+             mtime           = excluded.mtime,
+             file_size       = excluded.file_size,
+             hash            = excluded.hash,
+             updated_at      = excluded.updated_at,
+             payload_version = excluded.payload_version",
         params![
             namespace,
             path,
@@ -109,6 +137,7 @@ pub(crate) fn upsert_in_tx(
             metadata.file_size as i64,
             metadata.hash,
             updated_at,
+            payload_version as i64,
         ],
     )?;
 
@@ -119,10 +148,12 @@ pub(crate) fn upsert_in_tx(
     )?;
 
     tx.execute(
-        "INSERT INTO payloads (file_id, content)
-         VALUES (?1, ?2)
-         ON CONFLICT(file_id) DO UPDATE SET content = excluded.content",
-        params![file_id, payload_bytes],
+        "INSERT INTO payloads (file_id, content, encoding)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(file_id) DO UPDATE SET
+             content  = excluded.content,
+             encoding = excluded.encoding",
+        params![file_id, payload_bytes, encoding],
     )?;
 
     Ok(())
@@ -132,7 +163,7 @@ pub(crate) fn upsert_in_tx(
 // Deletes
 // ---------------------------------------------------------------------------
 
-/// Delete the row for `(namespace, path)`.  Returns `true` if a row was deleted.
+/// Delete the row for `(namespace, path)`.  Returns `true` if deleted.
 pub(crate) fn delete_by_path(
     conn: &Connection,
     namespace: &str,
@@ -145,7 +176,7 @@ pub(crate) fn delete_by_path(
     Ok(n > 0)
 }
 
-/// Delete a row by its stored path string within `namespace`.
+/// Delete a row by stored path string (used by maintenance helpers).
 pub(crate) fn delete_path(
     conn: &Connection,
     namespace: &str,
@@ -162,7 +193,7 @@ pub(crate) fn delete_path(
 // Scans
 // ---------------------------------------------------------------------------
 
-/// Return all `(id, path, updated_at)` triples stored in `namespace`.
+/// Return `(id, path, updated_at)` for all rows in `namespace`.
 pub(crate) fn all_file_rows_in_namespace(
     conn: &Connection,
     namespace: &str,
@@ -181,7 +212,7 @@ pub(crate) fn all_file_rows_in_namespace(
     Ok(rows?)
 }
 
-/// Return all paths in `namespace` (lightweight version of the above).
+/// Return all stored paths in `namespace`.
 pub(crate) fn all_paths_in_namespace(
     conn: &Connection,
     namespace: &str,
@@ -192,10 +223,10 @@ pub(crate) fn all_paths_in_namespace(
 }
 
 // ---------------------------------------------------------------------------
-// TTL helpers
+// Utilities
 // ---------------------------------------------------------------------------
 
-/// Return the current Unix timestamp in seconds.
+/// Current Unix timestamp in seconds.
 pub(crate) fn now_secs() -> i64 {
     UNIX_EPOCH
         .elapsed()
