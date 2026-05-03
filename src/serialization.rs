@@ -1,18 +1,18 @@
 //! Serialization and encoding helpers.
 //!
-//! Two orthogonal layers:
+//! The encoding pipeline is: **codec → compress → encrypt**.
+//! The encoding tag stored in the database reflects all active layers:
 //!
-//! 1. **Codec** — serialize `T` → `Vec<u8>` using bincode or serde_json.
-//! 2. **Compression** — optionally zstd-compress those bytes.
-//!
-//! The combination is captured in a short encoding tag stored in the database:
-//!
-//! | Tag          | Codec   | Compression |
-//! |--------------|---------|-------------|
-//! | `"raw"`      | bincode | none        |
-//! | `"zstd"`     | bincode | zstd        |
-//! | `"json"`     | json    | none        |
-//! | `"json-zstd"`| json    | zstd        |
+//! | Tag                     | Codec   | Compress | Encrypt   |
+//! |-------------------------|---------|----------|-----------|
+//! | `"raw"`                 | bincode | —        | —         |
+//! | `"zstd"`                | bincode | zstd     | —         |
+//! | `"json"`                | json    | —        | —         |
+//! | `"json-zstd"`           | json    | zstd     | —         |
+//! | `"raw-aes256gcm"`       | bincode | —        | AES-256   |
+//! | `"zstd-aes256gcm"`      | bincode | zstd     | AES-256   |
+//! | `"json-aes256gcm"`      | json    | —        | AES-256   |
+//! | `"json-zstd-aes256gcm"` | json    | zstd     | AES-256   |
 
 use std::io::Cursor;
 
@@ -22,7 +22,13 @@ use crate::cache::options::Codec;
 use crate::error::LocalFileCacheError;
 
 // ---------------------------------------------------------------------------
-// Public API
+// Encryption suffix
+// ---------------------------------------------------------------------------
+
+const ENC_SUFFIX: &str = "-aes256gcm";
+
+// ---------------------------------------------------------------------------
+// Public encode / decode
 // ---------------------------------------------------------------------------
 
 /// Encode `payload` for storage, returning `(bytes, encoding_tag)`.
@@ -30,52 +36,115 @@ pub(crate) fn encode_payload<T>(
     payload: &T,
     compress: bool,
     codec: Codec,
+    #[cfg(feature = "encryption")] encryption_key: Option<&[u8; 32]>,
 ) -> Result<(Vec<u8>, &'static str), LocalFileCacheError>
 where
     T: Serialize,
 {
     let serialized = serialize_with_codec(payload, codec)?;
 
-    #[cfg(feature = "compression")]
-    if compress {
-        let compressed = compress_bytes(&serialized)?;
-        let tag = match codec {
-            Codec::Bincode => "zstd",
-            #[cfg(feature = "json")]
-            Codec::Json => "json-zstd",
-        };
-        return Ok((compressed, tag));
-    }
-    let _ = compress;
-
-    let tag = match codec {
-        Codec::Bincode => "raw",
-        #[cfg(feature = "json")]
-        Codec::Json => "json",
+    // Compression step.
+    #[allow(unused_mut)]
+    let (mut bytes, mut base_tag): (Vec<u8>, &'static str) = {
+        #[cfg(feature = "compression")]
+        if compress {
+            let compressed = compress_bytes(&serialized)?;
+            let tag = match codec {
+                Codec::Bincode => "zstd",
+                #[cfg(feature = "json")]
+                Codec::Json => "json-zstd",
+            };
+            (compressed, tag)
+        } else {
+            let tag = match codec {
+                Codec::Bincode => "raw",
+                #[cfg(feature = "json")]
+                Codec::Json => "json",
+            };
+            (serialized, tag)
+        }
+        #[cfg(not(feature = "compression"))]
+        {
+            let _ = compress;
+            let tag = match codec {
+                Codec::Bincode => "raw",
+                #[cfg(feature = "json")]
+                Codec::Json => "json",
+            };
+            (serialized, tag)
+        }
     };
-    Ok((serialized, tag))
+
+    // Encryption step.
+    #[cfg(feature = "encryption")]
+    if let Some(key) = encryption_key {
+        bytes = encrypt_bytes(&bytes, key)?;
+        base_tag = match base_tag {
+            "raw" => "raw-aes256gcm",
+            "zstd" => "zstd-aes256gcm",
+            #[cfg(feature = "json")]
+            "json" => "json-aes256gcm",
+            #[cfg(all(feature = "json", feature = "compression"))]
+            "json-zstd" => "json-zstd-aes256gcm",
+            other => {
+                return Err(LocalFileCacheError::UnsupportedFeature(format!(
+                    "no encrypted tag for base tag '{other}'"
+                )));
+            }
+        };
+    }
+
+    Ok((bytes, base_tag))
 }
 
 /// Decode stored bytes back into `T` given the `encoding` tag.
-pub(crate) fn decode_payload<T>(bytes: &[u8], encoding: &str) -> Result<T, LocalFileCacheError>
+pub(crate) fn decode_payload<T>(
+    bytes: &[u8],
+    encoding: &str,
+    #[cfg(feature = "encryption")] encryption_key: Option<&[u8; 32]>,
+) -> Result<T, LocalFileCacheError>
 where
     T: DeserializeOwned,
 {
-    match encoding {
-        "raw" => deserialize_bincode(bytes),
+    // Decryption step (if the tag ends with the encryption suffix).
+    let (inner_bytes_cow, inner_tag) = if let Some(base) = encoding.strip_suffix(ENC_SUFFIX) {
+        #[cfg(feature = "encryption")]
+        {
+            let key = encryption_key.ok_or_else(|| {
+                LocalFileCacheError::UnsupportedFeature(
+                    "entry is encrypted but no encryption key was provided".into(),
+                )
+            })?;
+            let decrypted = decrypt_bytes(bytes, key)?;
+            (std::borrow::Cow::Owned(decrypted), base)
+        }
+        #[cfg(not(feature = "encryption"))]
+        {
+            let _ = (bytes, base);
+            return Err(LocalFileCacheError::UnknownEncoding(encoding.to_owned()));
+        }
+    } else {
+        (std::borrow::Cow::Borrowed(bytes), encoding)
+    };
+
+    let data: &[u8] = &inner_bytes_cow;
+
+    // Decompression + deserialization.
+    match inner_tag {
+        "raw" => deserialize_bincode(data),
 
         #[cfg(feature = "compression")]
         "zstd" => {
-            let d = decompress_bytes(bytes)?;
+            let d = decompress_bytes(data)?;
             deserialize_bincode(&d)
         }
 
         #[cfg(feature = "json")]
-        "json" => deserialize_json(bytes),
+        "json" => deserialize_json(data),
 
         #[cfg(all(feature = "json", feature = "compression"))]
         "json-zstd" => {
-            let d = decompress_bytes(bytes)?;
+            let d = decompress_bytes(data)?;
             deserialize_json(&d)
         }
 
@@ -84,7 +153,7 @@ where
 }
 
 // ---------------------------------------------------------------------------
-// Codec-level serialization
+// Codec helpers
 // ---------------------------------------------------------------------------
 
 fn serialize_with_codec<T: Serialize>(
@@ -98,7 +167,6 @@ fn serialize_with_codec<T: Serialize>(
     }
 }
 
-/// bincode: pre-allocate via `serialized_size`, then `serialize_into`.
 pub(crate) fn serialize_bincode<T: Serialize>(payload: &T) -> Result<Vec<u8>, LocalFileCacheError> {
     let capacity = bincode::serialized_size(payload).unwrap_or(256) as usize;
     let mut buf = Vec::with_capacity(capacity);
@@ -106,7 +174,6 @@ pub(crate) fn serialize_bincode<T: Serialize>(payload: &T) -> Result<Vec<u8>, Lo
     Ok(buf)
 }
 
-/// bincode: zero-copy read via `Cursor`.
 pub(crate) fn deserialize_bincode<T: DeserializeOwned>(
     bytes: &[u8],
 ) -> Result<T, LocalFileCacheError> {
@@ -128,7 +195,7 @@ fn deserialize_json<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, LocalFileCac
 }
 
 // ---------------------------------------------------------------------------
-// Compression helpers
+// Compression
 // ---------------------------------------------------------------------------
 
 #[cfg(feature = "compression")]
@@ -139,4 +206,51 @@ fn compress_bytes(data: &[u8]) -> Result<Vec<u8>, LocalFileCacheError> {
 #[cfg(feature = "compression")]
 fn decompress_bytes(data: &[u8]) -> Result<Vec<u8>, LocalFileCacheError> {
     zstd::decode_all(Cursor::new(data)).map_err(LocalFileCacheError::Io)
+}
+
+// ---------------------------------------------------------------------------
+// Encryption (AES-256-GCM)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "encryption")]
+fn encrypt_bytes(plaintext: &[u8], key: &[u8; 32]) -> Result<Vec<u8>, LocalFileCacheError> {
+    use aes_gcm::{
+        Aes256Gcm, KeyInit,
+        aead::{Aead, AeadCore, OsRng},
+    };
+
+    let cipher = Aes256Gcm::new_from_slice(key)
+        .map_err(|e| LocalFileCacheError::EncryptionError(format!("key init failed: {e}")))?;
+    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+    let ciphertext = cipher
+        .encrypt(&nonce, plaintext)
+        .map_err(|e| LocalFileCacheError::EncryptionError(format!("encryption failed: {e}")))?;
+
+    // Store as: nonce (12 bytes) ‖ ciphertext.
+    let mut result = Vec::with_capacity(nonce.len() + ciphertext.len());
+    result.extend_from_slice(&nonce);
+    result.extend_from_slice(&ciphertext);
+    Ok(result)
+}
+
+#[cfg(feature = "encryption")]
+fn decrypt_bytes(data: &[u8], key: &[u8; 32]) -> Result<Vec<u8>, LocalFileCacheError> {
+    use aes_gcm::{Aes256Gcm, KeyInit, Nonce, aead::Aead};
+
+    const NONCE_LEN: usize = 12;
+    if data.len() < NONCE_LEN {
+        return Err(LocalFileCacheError::EncryptionError(
+            "ciphertext too short to contain nonce".into(),
+        ));
+    }
+
+    let (nonce_bytes, ciphertext) = data.split_at(NONCE_LEN);
+    let cipher = Aes256Gcm::new_from_slice(key)
+        .map_err(|e| LocalFileCacheError::EncryptionError(format!("key init failed: {e}")))?;
+    let nonce = Nonce::from_slice(nonce_bytes);
+    cipher.decrypt(nonce, ciphertext).map_err(|_| {
+        LocalFileCacheError::EncryptionError(
+            "decryption failed — wrong key or corrupted data".into(),
+        )
+    })
 }

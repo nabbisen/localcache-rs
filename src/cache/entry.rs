@@ -28,3 +28,26 @@ pub struct CacheEntry<T> {
     /// The cached computation result.
     pub payload: T,
 }
+
+/// Lightweight metadata about a cache entry, returned by
+/// [`crate::CacheEngine::list_entries`].
+///
+/// Unlike [`CacheEntry`], this type does **not** include the payload, making
+/// it cheap to enumerate large caches.
+#[derive(Debug, Clone)]
+pub struct EntryInfo {
+    /// Canonical path to the source file.
+    pub path: PathBuf,
+    /// File metadata at the time the entry was last written.
+    pub metadata: FileMetadata,
+    /// Payload schema version stored with this entry.
+    pub payload_version: u32,
+    /// Encoding tag (e.g. `"raw"`, `"zstd"`, `"json"`, `"raw-aes256gcm"`).
+    pub encoding: String,
+    /// Unix timestamp (seconds) when this entry was last written via `set`.
+    pub updated_at: i64,
+    /// Unix timestamp (seconds) when this entry was last read via `get` or
+    /// `get_if_fresh`.  `0` means the entry has never been read after being
+    /// written.
+    pub last_accessed_at: i64,
+}

@@ -7,7 +7,7 @@ use std::time::Duration;
 use rusqlite::{Connection, OpenFlags};
 use serde::{Serialize, de::DeserializeOwned};
 
-use crate::cache::entry::{CacheEntry, CacheStatus};
+use crate::cache::entry::{CacheEntry, CacheStatus, EntryInfo};
 use crate::cache::options::{
     CacheOptions, ChangeDetectionMode, Codec, ScanOptions, is_memory_path,
 };
@@ -38,23 +38,7 @@ pub struct BatchSetReport {
 
 /// The main entry point for `localcache`.
 ///
-/// `CacheEngine<T>` manages a SQLite-backed store that associates canonical
-/// file paths with arbitrary serialisable payloads.
-///
-/// ## In-memory databases
-///
-/// Set `database_path: ":memory:".into()` in [`CacheOptions`] for an
-/// ephemeral, in-process database — ideal for unit tests.
-///
-/// ## Read-only mode
-///
-/// Set `read_only: true` to open an existing database without write access.
-///
-/// ## Async support
-///
-/// Enable the `async` Cargo feature to access [`crate::AsyncCacheEngine`].
-///
-/// # Example
+/// ## Quick example
 ///
 /// ```no_run
 /// use localcache::{CacheEngine, CacheOptions, ChangeDetectionMode};
@@ -82,6 +66,8 @@ pub struct CacheEngine<T> {
     pub(crate) payload_version: u32,
     pub(crate) compress: bool,
     pub(crate) max_entries: Option<usize>,
+    #[cfg(feature = "encryption")]
+    pub(crate) encryption_key: Option<[u8; 32]>,
     _phantom: PhantomData<T>,
 }
 
@@ -132,6 +118,20 @@ where
             }
         };
 
+        #[cfg(feature = "encryption")]
+        let encryption_key: Option<[u8; 32]> = match options.encryption_key {
+            None => None,
+            Some(ref k) => {
+                let arr: [u8; 32] = k.as_slice().try_into().map_err(|_| {
+                    LocalFileCacheError::UnsupportedFeature(format!(
+                        "encryption key must be exactly 32 bytes, got {}",
+                        k.len()
+                    ))
+                })?;
+                Some(arr)
+            }
+        };
+
         Ok(Self {
             conn,
             mode: options.change_detection_mode,
@@ -142,6 +142,8 @@ where
             payload_version: options.payload_version,
             compress,
             max_entries: options.max_entries,
+            #[cfg(feature = "encryption")]
+            encryption_key,
             _phantom: PhantomData,
         })
     }
@@ -152,6 +154,7 @@ where
 
     /// Return the cached entry for `path`, if one exists.
     ///
+    /// Updates `last_accessed_at` on a cache hit (LRU tracking).
     /// No change-detection or version check is performed.
     pub fn get<P>(&self, path: P) -> Result<Option<CacheEntry<T>>, LocalFileCacheError>
     where
@@ -166,7 +169,10 @@ where
         let Some(payload_row) = repository::load_payload(&self.conn, row.id)? else {
             return Ok(None);
         };
-        let payload: T = decode_payload(&payload_row.content, &payload_row.encoding)?;
+        let payload: T = self.decode(&payload_row.content, &payload_row.encoding)?;
+        if !self.read_only {
+            let _ = repository::touch_last_accessed(&self.conn, row.id);
+        }
         Ok(Some(CacheEntry {
             path: PathBuf::from(&row.path),
             metadata: row.metadata,
@@ -176,8 +182,7 @@ where
 
     /// Return the cached entry for `path` only if it is still fresh.
     ///
-    /// Returns `Ok(None)` when the file or entry is missing, the entry is
-    /// stale, the TTL has elapsed, or the payload version does not match.
+    /// Updates `last_accessed_at` on a fresh hit (LRU tracking).
     pub fn get_if_fresh<P>(&self, path: P) -> Result<Option<CacheEntry<T>>, LocalFileCacheError>
     where
         P: AsRef<Path>,
@@ -205,7 +210,10 @@ where
         let Some(payload_row) = repository::load_payload(&self.conn, row.id)? else {
             return Ok(None);
         };
-        let payload: T = decode_payload(&payload_row.content, &payload_row.encoding)?;
+        let payload: T = self.decode(&payload_row.content, &payload_row.encoding)?;
+        if !self.read_only {
+            let _ = repository::touch_last_accessed(&self.conn, row.id);
+        }
         Ok(Some(CacheEntry {
             path: PathBuf::from(&row.path),
             metadata: row.metadata,
@@ -217,7 +225,6 @@ where
     // Batch reads
     // ------------------------------------------------------------------
 
-    /// Retrieve multiple entries (no change-detection).
     pub fn batch_get<P>(
         &self,
         paths: &[P],
@@ -228,7 +235,6 @@ where
         paths.iter().map(|p| self.get(p.as_ref())).collect()
     }
 
-    /// Retrieve multiple entries, returning only those that are still fresh.
     pub fn batch_get_fresh<P>(
         &self,
         paths: &[P],
@@ -246,7 +252,6 @@ where
     // Writes
     // ------------------------------------------------------------------
 
-    /// Store `payload` for `path`.
     pub fn set<P>(&self, path: P, payload: &T) -> Result<(), LocalFileCacheError>
     where
         P: AsRef<Path>,
@@ -256,7 +261,7 @@ where
         let path_str = path_to_str(&canonical)?;
         let mut metadata = collect_metadata(&canonical)?;
         metadata.hash = compute_hash_for_mode(&canonical, self.mode)?;
-        let (bytes, encoding) = encode_payload(payload, self.compress, self.codec)?;
+        let (bytes, encoding) = self.encode(payload)?;
         repository::upsert(
             &self.conn,
             &self.namespace,
@@ -270,7 +275,6 @@ where
         Ok(())
     }
 
-    /// Store multiple `(path, payload)` pairs in a single transaction.
     pub fn batch_set<P>(&self, items: &[(P, T)]) -> Result<BatchSetReport, LocalFileCacheError>
     where
         P: AsRef<Path>,
@@ -314,7 +318,7 @@ where
                     continue;
                 }
             }
-            let (bytes, encoding) = match encode_payload(payload, self.compress, self.codec) {
+            let (bytes, encoding) = match self.encode(payload) {
                 Ok(r) => r,
                 Err(e) => {
                     report.failed.push((canonical.clone(), e));
@@ -346,7 +350,6 @@ where
     // Removal
     // ------------------------------------------------------------------
 
-    /// Remove the cache entry for `path`.  Works even when the file is gone.
     pub fn remove<P>(&self, path: P) -> Result<bool, LocalFileCacheError>
     where
         P: AsRef<Path>,
@@ -378,7 +381,6 @@ where
     // Status
     // ------------------------------------------------------------------
 
-    /// Check the freshness of the cache entry for `path`.
     pub fn check_status<P>(&self, path: P) -> Result<CacheStatus, LocalFileCacheError>
     where
         P: AsRef<Path>,
@@ -405,9 +407,6 @@ where
     // Directory scan
     // ------------------------------------------------------------------
 
-    /// Scan `dir` and return the [`CacheStatus`] of every regular file found.
-    ///
-    /// Set `recursive` to `true` to descend into subdirectories.
     pub fn scan_dir<P: AsRef<Path>>(
         &self,
         dir: P,
@@ -424,9 +423,8 @@ where
 
     /// Scan `dir` with fine-grained filtering via [`ScanOptions`].
     ///
-    /// Unlike [`scan_dir`](Self::scan_dir), this method supports:
-    /// * Limiting depth via [`ScanOptions::max_depth`].
-    /// * Restricting by file extension via [`ScanOptions::extensions`].
+    /// Supports extension filtering, `max_depth`, and glob patterns on file
+    /// names (`*` matches any sequence; `?` matches exactly one character).
     pub fn scan_dir_filtered<P: AsRef<Path>>(
         &self,
         dir: P,
@@ -439,7 +437,14 @@ where
                 format!("not a directory: {}", dir.display()),
             )));
         }
-        let files = walk_dir_filtered(dir, &options, 0)?;
+        // Compile glob pattern once before walking.
+        let glob = options
+            .glob_pattern
+            .as_deref()
+            .map(glob_to_regex)
+            .transpose()?;
+
+        let files = walk_dir_filtered(dir, &options, &glob, 0)?;
         let mut results = Vec::with_capacity(files.len());
         for file in files {
             let status = self.check_status(&file)?;
@@ -449,10 +454,29 @@ where
     }
 
     // ------------------------------------------------------------------
+    // Observability
+    // ------------------------------------------------------------------
+
+    /// Return lightweight metadata for all entries in the current namespace.
+    ///
+    /// Entries are ordered by `updated_at` descending (most recently written
+    /// first).  Payload content is **not** loaded.
+    pub fn list_entries(&self) -> Result<Vec<EntryInfo>, LocalFileCacheError> {
+        repository::list_entries(&self.conn, &self.namespace)
+    }
+
+    pub fn entry_count(&self) -> Result<usize, LocalFileCacheError> {
+        repository::count_in_namespace(&self.conn, &self.namespace)
+    }
+
+    pub fn entry_count_by_version(&self) -> Result<Vec<(u32, usize)>, LocalFileCacheError> {
+        repository::count_by_version(&self.conn, &self.namespace)
+    }
+
+    // ------------------------------------------------------------------
     // Maintenance
     // ------------------------------------------------------------------
 
-    /// Delete entries in the current namespace whose source files are missing.
     pub fn cleanup_missing_files(&self) -> Result<usize, LocalFileCacheError> {
         self.guard_write()?;
         let paths = repository::all_paths_in_namespace(&self.conn, &self.namespace)?;
@@ -466,7 +490,6 @@ where
         Ok(removed)
     }
 
-    /// Delete entries in the current namespace that have exceeded the TTL.
     pub fn cleanup_expired(&self) -> Result<usize, LocalFileCacheError> {
         self.guard_write()?;
         let Some(ttl) = self.ttl else {
@@ -483,39 +506,15 @@ where
         Ok(removed)
     }
 
-    /// Delete all entries in the current namespace whose
-    /// `payload_version != self.payload_version`.
-    ///
-    /// Use this after bumping [`CacheOptions::payload_version`] to free the
-    /// disk space occupied by old-format entries.  Returns the number of
-    /// entries deleted.
     pub fn purge_stale_versions(&self) -> Result<usize, LocalFileCacheError> {
         self.guard_write()?;
         repository::delete_by_other_version(&self.conn, &self.namespace, self.payload_version)
     }
 
-    /// Reclaim disk space via SQLite `VACUUM`.
     pub fn shrink_database(&self) -> Result<(), LocalFileCacheError> {
         self.guard_write()?;
         self.conn.execute_batch("VACUUM;")?;
         Ok(())
-    }
-
-    // ------------------------------------------------------------------
-    // Observability
-    // ------------------------------------------------------------------
-
-    /// Count the total number of entries in the current namespace.
-    pub fn entry_count(&self) -> Result<usize, LocalFileCacheError> {
-        repository::count_in_namespace(&self.conn, &self.namespace)
-    }
-
-    /// Count entries in the current namespace grouped by `payload_version`.
-    ///
-    /// Returns a `Vec<(version, count)>` sorted by version ascending.
-    /// Useful for diagnosing migration completeness.
-    pub fn entry_count_by_version(&self) -> Result<Vec<(u32, usize)>, LocalFileCacheError> {
-        repository::count_by_version(&self.conn, &self.namespace)
     }
 
     // ------------------------------------------------------------------
@@ -537,14 +536,33 @@ where
         };
         let count = repository::count_in_namespace(&self.conn, &self.namespace)?;
         if count > max {
-            repository::delete_oldest_n(&self.conn, &self.namespace, count - max)?;
+            repository::delete_lru_n(&self.conn, &self.namespace, count - max)?;
         }
         Ok(())
+    }
+
+    fn encode(&self, payload: &T) -> Result<(Vec<u8>, &'static str), LocalFileCacheError> {
+        encode_payload(
+            payload,
+            self.compress,
+            self.codec,
+            #[cfg(feature = "encryption")]
+            self.encryption_key.as_ref(),
+        )
+    }
+
+    fn decode(&self, bytes: &[u8], encoding: &str) -> Result<T, LocalFileCacheError> {
+        decode_payload(
+            bytes,
+            encoding,
+            #[cfg(feature = "encryption")]
+            self.encryption_key.as_ref(),
+        )
     }
 }
 
 // ---------------------------------------------------------------------------
-// Free helpers (pub(crate) so async_engine can reuse them)
+// Free helpers (pub(crate) for async_engine)
 // ---------------------------------------------------------------------------
 
 pub(crate) fn path_to_str(path: &Path) -> Result<&str, LocalFileCacheError> {
@@ -575,10 +593,142 @@ pub(crate) fn is_expired(updated_at: i64, ttl: Option<Duration>) -> bool {
     now.saturating_sub(updated_at) as u64 >= ttl.as_secs()
 }
 
-/// Walk `dir`, optionally recursively, applying `ScanOptions` filters.
+// ---------------------------------------------------------------------------
+// Glob matching
+// ---------------------------------------------------------------------------
+
+/// A compiled glob pattern (only `*` and `?` wildcards).
+struct GlobPattern {
+    /// The original pattern, stored for error messages.
+    _raw: String,
+    /// Segments produced by splitting on `*`.
+    parts: Vec<String>,
+    /// True if the pattern ends with `*`.
+    trailing_star: bool,
+}
+
+/// Compile a simple glob pattern into a [`GlobPattern`].
+fn glob_to_regex(pattern: &str) -> Result<GlobPattern, LocalFileCacheError> {
+    let parts: Vec<String> = pattern.split('*').map(|s| s.to_owned()).collect();
+    let trailing_star = pattern.ends_with('*');
+    Ok(GlobPattern {
+        _raw: pattern.to_owned(),
+        parts,
+        trailing_star,
+    })
+}
+
+impl GlobPattern {
+    /// Return `true` if `text` matches this pattern.
+    fn matches(&self, text: &str) -> bool {
+        glob_match(&self.parts, self.trailing_star, text)
+    }
+}
+
+/// Recursive glob matcher.
+///
+/// `parts` are the substrings between consecutive `*` wildcards; `?` within
+/// each part matches exactly one character.
+fn glob_match(parts: &[String], trailing_star: bool, text: &str) -> bool {
+    if parts.is_empty() {
+        return trailing_star || text.is_empty();
+    }
+    if parts.len() == 1 && !trailing_star {
+        // No `*` in pattern → must match exactly (but `?` can vary).
+        return question_match(&parts[0], text);
+    }
+
+    // First part must match at the beginning of `text`.
+    let first = &parts[0];
+    if !text.starts_with_question(first) {
+        return false;
+    }
+    let after_first = &text[question_len(first)..];
+
+    // Each subsequent part must appear somewhere after the previous match.
+    let mut remaining = after_first;
+    for part in &parts[1..parts.len() - 1] {
+        if let Some(pos) = find_question(part, remaining) {
+            remaining = &remaining[pos + question_len(part)..];
+        } else {
+            return false;
+        }
+    }
+
+    // Last part.
+    let last = parts.last().unwrap();
+    if trailing_star {
+        // Last segment can match anywhere.
+        find_question(last, remaining).is_some()
+    } else {
+        // Last segment must match at the end.
+        remaining.len() >= question_len(last)
+            && question_match(last, &remaining[remaining.len() - question_len(last)..])
+    }
+}
+
+// Helper: length in chars of a `?`-containing pattern segment.
+fn question_len(pattern: &str) -> usize {
+    pattern.chars().count()
+}
+
+// Helper: does `text` exactly match `pattern` where `?` matches one char?
+fn question_match(pattern: &str, text: &str) -> bool {
+    let mut pt = pattern.chars();
+    let mut tt = text.chars();
+    loop {
+        match (pt.next(), tt.next()) {
+            (None, None) => return true,
+            (Some('?'), Some(_)) => {}
+            (Some(p), Some(t)) if p == t => {}
+            _ => return false,
+        }
+    }
+}
+
+// Helper: find the first position in `text` where `pattern` starts (question matching).
+fn find_question(pattern: &str, text: &str) -> Option<usize> {
+    let plen = question_len(pattern);
+    if plen == 0 {
+        return Some(0);
+    }
+    let chars: Vec<char> = text.chars().collect();
+    if chars.len() < plen {
+        return None;
+    }
+    for i in 0..=(chars.len() - plen) {
+        let slice: String = chars[i..i + plen].iter().collect();
+        if question_match(pattern, &slice) {
+            return Some(i);
+        }
+    }
+    None
+}
+
+// Extension trait for starts_with with `?` patterns.
+trait StartsWithQuestion {
+    fn starts_with_question(&self, pattern: &str) -> bool;
+}
+
+impl StartsWithQuestion for str {
+    fn starts_with_question(&self, pattern: &str) -> bool {
+        let plen = question_len(pattern);
+        if self.chars().count() < plen {
+            return false;
+        }
+        let prefix: String = self.chars().take(plen).collect();
+        question_match(pattern, &prefix)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Directory walking
+// ---------------------------------------------------------------------------
+
 fn walk_dir_filtered(
     dir: &Path,
     opts: &ScanOptions,
+    glob: &Option<GlobPattern>,
     current_depth: usize,
 ) -> Result<Vec<PathBuf>, LocalFileCacheError> {
     let mut files = Vec::new();
@@ -589,7 +739,7 @@ fn walk_dir_filtered(
         let path = entry.path();
 
         if ft.is_file() {
-            // Extension filter (case-insensitive, without leading dot).
+            // Extension filter.
             if !opts.extensions.is_empty() {
                 let ext = path
                     .extension()
@@ -600,12 +750,19 @@ fn walk_dir_filtered(
                     continue;
                 }
             }
+            // Glob filter (matched against file name, not full path).
+            if let Some(pat) = glob {
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if !pat.matches(name) {
+                    continue;
+                }
+            }
             files.push(path);
         } else if ft.is_dir() {
             let can_descend =
                 opts.recursive && opts.max_depth.is_none_or(|max| current_depth < max);
             if can_descend {
-                let sub = walk_dir_filtered(&path, opts, current_depth + 1)?;
+                let sub = walk_dir_filtered(&path, opts, glob, current_depth + 1)?;
                 files.extend(sub);
             }
         }

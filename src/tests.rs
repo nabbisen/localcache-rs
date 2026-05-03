@@ -1672,4 +1672,457 @@ mod integration {
             assert_eq!(e2.entry_count().await.unwrap(), 0);
         }
     }
+
+    // ====================================================================
+    // Phase 6 — Encryption (requires `encryption` feature)
+    // ====================================================================
+
+    #[cfg(feature = "encryption")]
+    mod encryption_tests {
+        use super::*;
+
+        fn key32(seed: u8) -> Vec<u8> {
+            vec![seed; 32]
+        }
+
+        #[test]
+        fn encrypted_payload_roundtrip() {
+            let dir = TempDir::new().unwrap();
+            let engine: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
+                database_path: ":memory:".into(),
+                encryption_key: Some(key32(0xAB)),
+                ..CacheOptions::default()
+            })
+            .unwrap();
+
+            let path = write_file(&dir, "enc.txt", b"secret content");
+            let payload = vec![1.0_f32, 2.0, 3.0];
+            engine.set(&path, &payload).unwrap();
+            let entry = engine.get(&path).unwrap().unwrap();
+            assert_eq!(entry.payload, payload);
+        }
+
+        #[test]
+        fn encrypted_entry_has_aes_tag() {
+            let dir = TempDir::new().unwrap();
+            let engine: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
+                database_path: ":memory:".into(),
+                encryption_key: Some(key32(0x11)),
+                ..CacheOptions::default()
+            })
+            .unwrap();
+
+            let path = write_file(&dir, "tag.txt", b"data");
+            engine.set(&path, &vec![1.0_f32]).unwrap();
+
+            let entries = engine.list_entries().unwrap();
+            assert_eq!(entries.len(), 1);
+            assert!(
+                entries[0].encoding.ends_with("-aes256gcm"),
+                "expected aes256gcm suffix, got: {}",
+                entries[0].encoding
+            );
+        }
+
+        #[test]
+        fn wrong_key_fails_decryption() {
+            let dir = TempDir::new().unwrap();
+            let db = dir.path().join("enc_key.sqlite3");
+
+            {
+                let e: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
+                    database_path: db.clone(),
+                    encryption_key: Some(key32(0x01)),
+                    ..CacheOptions::default()
+                })
+                .unwrap();
+                let p = write_file(&dir, "wk.txt", b"data");
+                e.set(&p, &vec![1.0_f32]).unwrap();
+            }
+
+            // Re-open with a different key.
+            let e2: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
+                database_path: db,
+                encryption_key: Some(key32(0x02)),
+                ..CacheOptions::default()
+            })
+            .unwrap();
+            let p = dir.path().join("wk.txt");
+            let result = e2.get(&p);
+            assert!(result.is_err(), "decryption with wrong key should fail");
+        }
+
+        #[test]
+        fn no_key_fails_on_encrypted_entry() {
+            let dir = TempDir::new().unwrap();
+            let db = dir.path().join("enc_nokey.sqlite3");
+
+            {
+                let e: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
+                    database_path: db.clone(),
+                    encryption_key: Some(key32(0xCC)),
+                    ..CacheOptions::default()
+                })
+                .unwrap();
+                let p = write_file(&dir, "nk.txt", b"data");
+                e.set(&p, &vec![1.0_f32]).unwrap();
+            }
+
+            let e2: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
+                database_path: db,
+                encryption_key: None,
+                ..CacheOptions::default()
+            })
+            .unwrap();
+            let p = dir.path().join("nk.txt");
+            let result = e2.get(&p);
+            assert!(
+                result.is_err(),
+                "reading encrypted entry without key should fail"
+            );
+        }
+
+        #[test]
+        fn encryption_and_freshness_check() {
+            let dir = TempDir::new().unwrap();
+            let engine: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
+                database_path: ":memory:".into(),
+                encryption_key: Some(key32(0x42)),
+                ..CacheOptions::default()
+            })
+            .unwrap();
+
+            let path = write_file(&dir, "enc_fresh.txt", b"stable");
+            engine.set(&path, &vec![7.0_f32]).unwrap();
+
+            assert_eq!(engine.check_status(&path).unwrap(), CacheStatus::Fresh);
+            assert!(engine.get_if_fresh(&path).unwrap().is_some());
+        }
+
+        #[cfg(feature = "compression")]
+        #[test]
+        fn encryption_with_compression_roundtrip() {
+            let dir = TempDir::new().unwrap();
+            let engine: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
+                database_path: ":memory:".into(),
+                encryption_key: Some(key32(0x77)),
+                compress_payloads: true,
+                ..CacheOptions::default()
+            })
+            .unwrap();
+
+            let path = write_file(&dir, "enc_zstd.txt", b"content");
+            let payload: Vec<f32> = (0..500).map(|i| i as f32).collect();
+            engine.set(&path, &payload).unwrap();
+            let entry = engine.get(&path).unwrap().unwrap();
+            assert_eq!(entry.payload.len(), 500);
+
+            // Verify tag has both zstd and aes256gcm.
+            let entries = engine.list_entries().unwrap();
+            assert!(entries[0].encoding.contains("zstd"));
+            assert!(entries[0].encoding.ends_with("-aes256gcm"));
+        }
+    }
+
+    // ====================================================================
+    // Phase 6 — True LRU eviction (last_accessed_at tracking)
+    // ====================================================================
+
+    #[test]
+    fn lru_updates_last_accessed_on_get() {
+        let dir = TempDir::new().unwrap();
+        let engine: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
+            database_path: ":memory:".into(),
+            ..CacheOptions::default()
+        })
+        .unwrap();
+
+        let path = write_file(&dir, "lru.txt", b"x");
+        engine.set(&path, &vec![1.0_f32]).unwrap();
+
+        let before = engine.list_entries().unwrap()[0].last_accessed_at;
+        assert_eq!(before, 0, "last_accessed_at should be 0 after write");
+
+        engine.get(&path).unwrap();
+
+        let after = engine.list_entries().unwrap()[0].last_accessed_at;
+        assert!(after > 0, "last_accessed_at should be non-zero after read");
+    }
+
+    #[test]
+    fn lru_evicts_least_recently_accessed() {
+        let dir = TempDir::new().unwrap();
+        let engine: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
+            database_path: ":memory:".into(),
+            max_entries: Some(2),
+            ..CacheOptions::default()
+        })
+        .unwrap();
+
+        let p1 = write_file(&dir, "lru1.txt", b"a");
+        let p2 = write_file(&dir, "lru2.txt", b"b");
+
+        engine.set(&p1, &vec![1.0_f32]).unwrap();
+        engine.set(&p2, &vec![2.0_f32]).unwrap();
+
+        // Read p2 → p2 is now more recently accessed than p1.
+        engine.get(&p2).unwrap();
+
+        // Adding p3 should evict p1 (least recently accessed).
+        let p3 = write_file(&dir, "lru3.txt", b"c");
+        engine.set(&p3, &vec![3.0_f32]).unwrap();
+
+        assert_eq!(engine.entry_count().unwrap(), 2);
+        // p2 and p3 should survive; p1 should be evicted.
+        assert!(engine.get(&p2).unwrap().is_some(), "p2 should survive");
+        assert!(engine.get(&p3).unwrap().is_some(), "p3 should survive");
+    }
+
+    // ====================================================================
+    // Phase 6 — Glob pattern matching in scan_dir_filtered
+    // ====================================================================
+
+    #[test]
+    fn glob_star_wildcard() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("glob_star");
+        fs::create_dir(&root).unwrap();
+
+        let engine: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
+            database_path: ":memory:".into(),
+            ..CacheOptions::default()
+        })
+        .unwrap();
+
+        let f1 = {
+            let p = root.join("report_2024.txt");
+            fs::write(&p, b"r").unwrap();
+            p
+        };
+        let f2 = {
+            let p = root.join("report_2025.txt");
+            fs::write(&p, b"r").unwrap();
+            p
+        };
+        let f3 = {
+            let p = root.join("summary.txt");
+            fs::write(&p, b"s").unwrap();
+            p
+        };
+
+        let opts = ScanOptions {
+            recursive: false,
+            glob_pattern: Some("report_*.txt".into()),
+            ..ScanOptions::default()
+        };
+        let results = engine.scan_dir_filtered(&root, opts).unwrap();
+        let paths: Vec<_> = results.iter().map(|(p, _)| p.clone()).collect();
+
+        assert_eq!(paths.len(), 2);
+        assert!(paths.contains(&f1));
+        assert!(paths.contains(&f2));
+        assert!(!paths.contains(&f3));
+    }
+
+    #[test]
+    fn glob_question_wildcard() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("glob_q");
+        fs::create_dir(&root).unwrap();
+
+        let engine: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
+            database_path: ":memory:".into(),
+            ..CacheOptions::default()
+        })
+        .unwrap();
+
+        let fa = {
+            let p = root.join("a1.txt");
+            fs::write(&p, b"a").unwrap();
+            p
+        };
+        let fb = {
+            let p = root.join("b2.txt");
+            fs::write(&p, b"b").unwrap();
+            p
+        };
+        let fc = {
+            let p = root.join("ab.txt");
+            fs::write(&p, b"c").unwrap();
+            p
+        };
+
+        // "??.txt" matches exactly two-char names before extension.
+        let opts = ScanOptions {
+            recursive: false,
+            glob_pattern: Some("??.txt".into()),
+            ..ScanOptions::default()
+        };
+        let results = engine.scan_dir_filtered(&root, opts).unwrap();
+        let paths: Vec<_> = results.iter().map(|(p, _)| p.clone()).collect();
+
+        assert_eq!(paths.len(), 3, "all three files match ??. txt");
+        assert!(paths.contains(&fa));
+        assert!(paths.contains(&fb));
+        assert!(paths.contains(&fc));
+    }
+
+    #[test]
+    fn glob_combined_with_extension_filter() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("glob_ext");
+        fs::create_dir(&root).unwrap();
+
+        let engine: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
+            database_path: ":memory:".into(),
+            ..CacheOptions::default()
+        })
+        .unwrap();
+
+        let txt = {
+            let p = root.join("data_01.txt");
+            fs::write(&p, b"t").unwrap();
+            p
+        };
+        let md = {
+            let p = root.join("data_01.md");
+            fs::write(&p, b"m").unwrap();
+            p
+        };
+        let _x = {
+            let p = root.join("other.txt");
+            fs::write(&p, b"o").unwrap();
+            p
+        };
+
+        let opts = ScanOptions {
+            recursive: false,
+            extensions: vec!["txt".into()],
+            glob_pattern: Some("data_*.txt".into()),
+            ..ScanOptions::default()
+        };
+        let results = engine.scan_dir_filtered(&root, opts).unwrap();
+        let paths: Vec<_> = results.iter().map(|(p, _)| p.clone()).collect();
+
+        // Only data_01.txt should match (correct extension + glob).
+        assert_eq!(paths.len(), 1);
+        assert!(paths.contains(&txt));
+        assert!(!paths.contains(&md));
+    }
+
+    // ====================================================================
+    // Phase 6 — list_entries
+    // ====================================================================
+
+    #[test]
+    fn list_entries_returns_all_metadata() {
+        let dir = TempDir::new().unwrap();
+        let engine: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
+            database_path: ":memory:".into(),
+            payload_version: 3,
+            ..CacheOptions::default()
+        })
+        .unwrap();
+
+        let p1 = write_file(&dir, "le1.txt", b"a");
+        let p2 = write_file(&dir, "le2.txt", b"b");
+        engine.set(&p1, &vec![1.0_f32]).unwrap();
+        engine.set(&p2, &vec![2.0_f32]).unwrap();
+
+        let entries = engine.list_entries().unwrap();
+        assert_eq!(entries.len(), 2);
+
+        for e in &entries {
+            assert_eq!(e.payload_version, 3);
+            assert_eq!(e.encoding, "raw");
+            assert!(e.updated_at > 0);
+            assert_eq!(e.last_accessed_at, 0); // never read since write
+        }
+    }
+
+    #[test]
+    fn list_entries_empty_namespace() {
+        let engine: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
+            database_path: ":memory:".into(),
+            ..CacheOptions::default()
+        })
+        .unwrap();
+
+        let entries = engine.list_entries().unwrap();
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn list_entries_last_accessed_at_updated_after_read() {
+        let dir = TempDir::new().unwrap();
+        let engine: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
+            database_path: ":memory:".into(),
+            ..CacheOptions::default()
+        })
+        .unwrap();
+
+        let path = write_file(&dir, "le_read.txt", b"content");
+        engine.set(&path, &vec![1.0_f32]).unwrap();
+
+        let before = engine.list_entries().unwrap()[0].last_accessed_at;
+        engine.get(&path).unwrap();
+        let after = engine.list_entries().unwrap()[0].last_accessed_at;
+
+        assert_eq!(before, 0);
+        assert!(after > 0);
+    }
+
+    // ====================================================================
+    // Phase 6 — Schema migration (v3 → v4)
+    // ====================================================================
+
+    #[test]
+    fn migrates_v3_database_to_v4() {
+        use rusqlite::Connection;
+
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("v3tov4.sqlite3");
+
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                "
+                PRAGMA user_version = 3;
+                CREATE TABLE files (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    namespace       TEXT    NOT NULL DEFAULT 'default',
+                    path            TEXT    NOT NULL,
+                    mtime           INTEGER NOT NULL,
+                    file_size       INTEGER NOT NULL,
+                    hash            TEXT,
+                    updated_at      INTEGER NOT NULL,
+                    payload_version INTEGER NOT NULL DEFAULT 0,
+                    UNIQUE(namespace, path)
+                );
+                CREATE TABLE payloads (
+                    file_id  INTEGER PRIMARY KEY,
+                    content  BLOB NOT NULL,
+                    encoding TEXT NOT NULL DEFAULT 'raw',
+                    FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
+                );
+                INSERT INTO files (namespace, path, mtime, file_size, updated_at)
+                VALUES ('default', '/v3/legacy.txt', 1000, 10, 1000);
+                ",
+            )
+            .unwrap();
+        }
+
+        // Opening must migrate v3 → v4 transparently.
+        let engine: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
+            database_path: db_path,
+            ..CacheOptions::default()
+        })
+        .unwrap();
+
+        // Legacy row is accessible.
+        assert_eq!(
+            engine.check_status("/v3/legacy.txt").unwrap(),
+            CacheStatus::Missing
+        );
+    }
 }

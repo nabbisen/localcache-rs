@@ -26,9 +26,6 @@ pub enum ChangeDetectionMode {
 // ---------------------------------------------------------------------------
 
 /// Selects the serialization codec used to encode payload values.
-///
-/// Different codecs can coexist in the same database (the codec used is
-/// recorded per-entry in the `payloads.encoding` column).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Codec {
     /// Binary encoding via `bincode` — compact and fast.  Default.
@@ -71,14 +68,10 @@ impl JournalMode {
 /// SQLite `synchronous` pragma.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SynchronousMode {
-    /// No `fsync` calls.
     Off,
-    /// `fsync` at critical moments.
     #[default]
     Normal,
-    /// `fsync` at every checkpoint.
     Full,
-    /// Like `Full` plus extra syncs on directory entries.
     Extra,
 }
 
@@ -103,20 +96,27 @@ pub struct ScanOptions {
     /// Descend into subdirectories.
     pub recursive: bool,
 
-    /// Maximum directory depth (relative to the root passed to `scan_dir_filtered`).
+    /// Maximum directory depth relative to the root directory.
     ///
-    /// * `None` — unlimited depth (descend into all nested directories).
-    /// * `Some(0)` — only the root directory (equivalent to `recursive = false`).
+    /// * `None` — unlimited.
+    /// * `Some(0)` — root only.
     /// * `Some(1)` — root and one level of subdirectories.
     pub max_depth: Option<usize>,
 
-    /// Restrict results to files whose extension matches one of these strings.
-    ///
-    /// Extensions are compared case-insensitively and **without** a leading
-    /// dot.  E.g., `vec!["txt".into(), "md".into()]`.
-    ///
-    /// An empty list means *all* extensions are accepted.
+    /// Restrict to files whose extension (case-insensitive, no leading dot)
+    /// matches one of these strings.  Empty list accepts all extensions.
     pub extensions: Vec<String>,
+
+    /// Glob pattern matched against the **file name** (not the full path).
+    ///
+    /// Supports `*` (any sequence of characters) and `?` (exactly one
+    /// character).  The match is case-sensitive on Unix and case-insensitive
+    /// on Windows, following platform conventions.
+    ///
+    /// Examples: `"*.txt"`, `"report_???.md"`, `"data_*"`.
+    ///
+    /// `None` (default) disables glob filtering.
+    pub glob_pattern: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -133,7 +133,7 @@ pub struct CacheOptions {
     /// Algorithm used to decide whether a cached entry is still valid.
     pub change_detection_mode: ChangeDetectionMode,
 
-    /// Payload serialization codec.  Defaults to [`Codec::Bincode`].
+    /// Payload serialization codec.
     pub codec: Codec,
 
     /// SQLite journal mode.  Defaults to [`JournalMode::Wal`].
@@ -151,22 +151,33 @@ pub struct CacheOptions {
     /// Open the database in read-only mode.
     pub read_only: bool,
 
-    /// Payload schema version.  Non-zero enables version checks in
-    /// `get_if_fresh` and `check_status`.
+    /// Payload schema version.
     pub payload_version: u32,
 
     /// Maximum number of entries to keep in the current namespace.
     ///
-    /// When a `set` operation causes the namespace entry count to exceed this
-    /// limit, the oldest entries (by `updated_at`) are automatically removed
-    /// until the count is at most `max_entries`.
-    ///
-    /// `None` (default) means no limit.
+    /// When exceeded after a `set`, the **least recently accessed** entries
+    /// (by `last_accessed_at`, with `updated_at` as tiebreaker) are evicted
+    /// until the count is within the limit.
     pub max_entries: Option<usize>,
 
-    /// Compress payloads with zstd before storing.
+    /// AES-256-GCM encryption key (exactly 32 bytes).
     ///
-    /// Requires the `compression` feature.
+    /// When set, all payloads written by this engine are encrypted with
+    /// AES-256-GCM.  A fresh 96-bit nonce is generated per write; the nonce
+    /// is prepended to the ciphertext in the database.
+    ///
+    /// Requires the `encryption` Cargo feature.
+    ///
+    /// **Important**: losing the key makes all encrypted entries permanently
+    /// unreadable.
+    #[cfg(feature = "encryption")]
+    pub encryption_key: Option<Vec<u8>>,
+
+    /// Compress payloads with zstd before storing (and before encrypting, if
+    /// encryption is also enabled).
+    ///
+    /// Requires the `compression` Cargo feature.
     #[cfg(feature = "compression")]
     pub compress_payloads: bool,
 }
@@ -184,6 +195,8 @@ impl Default for CacheOptions {
             read_only: false,
             payload_version: 0,
             max_entries: None,
+            #[cfg(feature = "encryption")]
+            encryption_key: None,
             #[cfg(feature = "compression")]
             compress_payloads: false,
         }

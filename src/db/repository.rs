@@ -1,11 +1,11 @@
 //! Low-level database operations (repository layer).
-//!
-//! All SQL is confined to this module.
 
+use std::path::PathBuf;
 use std::time::UNIX_EPOCH;
 
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
+use crate::cache::entry::EntryInfo;
 use crate::detection::metadata::FileMetadata;
 use crate::error::LocalFileCacheError;
 
@@ -19,6 +19,8 @@ pub(crate) struct FileRow {
     pub metadata: FileMetadata,
     pub updated_at: i64,
     pub payload_version: u32,
+    #[allow(dead_code)]
+    pub last_accessed_at: i64,
 }
 
 pub(crate) struct PayloadRow {
@@ -36,7 +38,7 @@ pub(crate) fn find_file(
     path: &str,
 ) -> Result<Option<FileRow>, LocalFileCacheError> {
     let mut stmt = conn.prepare_cached(
-        "SELECT id, path, mtime, file_size, hash, updated_at, payload_version
+        "SELECT id, path, mtime, file_size, hash, updated_at, payload_version, last_accessed_at
          FROM files
          WHERE namespace = ?1 AND path = ?2",
     )?;
@@ -52,6 +54,7 @@ pub(crate) fn find_file(
                 },
                 updated_at: r.get(5)?,
                 payload_version: r.get::<_, i64>(6)? as u32,
+                last_accessed_at: r.get::<_, i64>(7)?,
             })
         })
         .optional()?;
@@ -73,6 +76,22 @@ pub(crate) fn load_payload(
         })
         .optional()?;
     Ok(row)
+}
+
+/// Update `last_accessed_at` for a file row, recording the current time.
+///
+/// This is called after every successful `get` / `get_if_fresh` read so that
+/// LRU eviction has accurate access-time data.
+pub(crate) fn touch_last_accessed(
+    conn: &Connection,
+    file_id: i64,
+) -> Result<(), LocalFileCacheError> {
+    let now = now_secs();
+    conn.execute(
+        "UPDATE files SET last_accessed_at = ?1 WHERE id = ?2",
+        params![now, file_id],
+    )?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -115,14 +134,15 @@ pub(crate) fn upsert_in_tx(
 
     tx.execute(
         "INSERT INTO files
-             (namespace, path, mtime, file_size, hash, updated_at, payload_version)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             (namespace, path, mtime, file_size, hash, updated_at, payload_version,
+              last_accessed_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
          ON CONFLICT(namespace, path) DO UPDATE SET
-             mtime           = excluded.mtime,
-             file_size       = excluded.file_size,
-             hash            = excluded.hash,
-             updated_at      = excluded.updated_at,
-             payload_version = excluded.payload_version",
+             mtime            = excluded.mtime,
+             file_size        = excluded.file_size,
+             hash             = excluded.hash,
+             updated_at       = excluded.updated_at,
+             payload_version  = excluded.payload_version",
         params![
             namespace,
             path,
@@ -131,6 +151,7 @@ pub(crate) fn upsert_in_tx(
             metadata.hash,
             updated_at,
             payload_version as i64,
+            0i64, // last_accessed_at reset to 0 on write (entry is "fresh from write")
         ],
     )?;
 
@@ -180,9 +201,6 @@ pub(crate) fn delete_path(
     Ok(())
 }
 
-/// Delete entries in `namespace` whose `payload_version != current_version`.
-///
-/// Returns the number of entries deleted.
 pub(crate) fn delete_by_other_version(
     conn: &Connection,
     namespace: &str,
@@ -195,10 +213,12 @@ pub(crate) fn delete_by_other_version(
     Ok(n)
 }
 
-/// Delete the `n` oldest entries (by `updated_at`) in `namespace`.
+/// Delete the `n` **least recently accessed** entries in `namespace`.
 ///
-/// Returns the number of entries actually deleted.
-pub(crate) fn delete_oldest_n(
+/// Entries with `last_accessed_at = 0` (never read since last write) are
+/// evicted first, then by ascending `last_accessed_at`, using `updated_at`
+/// as a tiebreaker.
+pub(crate) fn delete_lru_n(
     conn: &Connection,
     namespace: &str,
     n: usize,
@@ -209,7 +229,7 @@ pub(crate) fn delete_oldest_n(
            AND id IN (
                SELECT id FROM files
                WHERE namespace = ?1
-               ORDER BY updated_at ASC
+               ORDER BY last_accessed_at ASC, updated_at ASC
                LIMIT ?2
            )",
         params![namespace, n as i64],
@@ -248,7 +268,6 @@ pub(crate) fn all_paths_in_namespace(
     Ok(paths?)
 }
 
-/// Count the total number of entries in `namespace`.
 pub(crate) fn count_in_namespace(
     conn: &Connection,
     namespace: &str,
@@ -261,9 +280,6 @@ pub(crate) fn count_in_namespace(
     Ok(n as usize)
 }
 
-/// Count entries in `namespace` grouped by `payload_version`.
-///
-/// Returns a list of `(version, count)` pairs sorted by version ascending.
 pub(crate) fn count_by_version(
     conn: &Connection,
     namespace: &str,
@@ -278,6 +294,40 @@ pub(crate) fn count_by_version(
     let rows: Result<Vec<_>, _> = stmt
         .query_map(params![namespace], |r| {
             Ok((r.get::<_, i64>(0)? as u32, r.get::<_, i64>(1)? as usize))
+        })?
+        .collect();
+    Ok(rows?)
+}
+
+/// Return lightweight metadata for all entries in `namespace`, joined with
+/// their encoding from `payloads`.  Does **not** load payload content.
+pub(crate) fn list_entries(
+    conn: &Connection,
+    namespace: &str,
+) -> Result<Vec<EntryInfo>, LocalFileCacheError> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT f.path, f.mtime, f.file_size, f.hash,
+                f.updated_at, f.payload_version, f.last_accessed_at,
+                p.encoding
+         FROM files f
+         JOIN payloads p ON p.file_id = f.id
+         WHERE f.namespace = ?1
+         ORDER BY f.updated_at DESC",
+    )?;
+    let rows: Result<Vec<EntryInfo>, _> = stmt
+        .query_map(params![namespace], |r| {
+            Ok(EntryInfo {
+                path: PathBuf::from(r.get::<_, String>(0)?),
+                metadata: FileMetadata {
+                    mtime: r.get(1)?,
+                    file_size: r.get::<_, i64>(2)? as u64,
+                    hash: r.get(3)?,
+                },
+                updated_at: r.get(4)?,
+                payload_version: r.get::<_, i64>(5)? as u32,
+                last_accessed_at: r.get::<_, i64>(6)?,
+                encoding: r.get(7)?,
+            })
         })?
         .collect();
     Ok(rows?)

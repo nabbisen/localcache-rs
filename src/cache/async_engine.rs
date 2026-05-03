@@ -6,11 +6,11 @@ use std::sync::{Arc, Mutex};
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::cache::engine::{BatchSetReport, CacheEngine};
-use crate::cache::entry::{CacheEntry, CacheStatus};
+use crate::cache::entry::{CacheEntry, CacheStatus, EntryInfo};
 use crate::cache::options::{CacheOptions, ScanOptions};
 use crate::error::LocalFileCacheError;
 
-/// An async wrapper around [`CacheEngine`].
+/// Async wrapper around [`CacheEngine`].
 ///
 /// Every blocking operation runs on `tokio::task::spawn_blocking`.
 /// `AsyncCacheEngine` is `Clone` — all clones share the same engine.
@@ -138,6 +138,11 @@ where
     ) -> Result<Vec<(PathBuf, CacheStatus)>, LocalFileCacheError> {
         let inner = Arc::clone(&self.inner);
         spawn(move || inner.lock().unwrap().scan_dir_filtered(&dir, options)).await
+    }
+
+    pub async fn list_entries(&self) -> Result<Vec<EntryInfo>, LocalFileCacheError> {
+        let inner = Arc::clone(&self.inner);
+        spawn(move || inner.lock().unwrap().list_entries()).await
     }
 
     pub async fn cleanup_missing_files(&self) -> Result<usize, LocalFileCacheError> {

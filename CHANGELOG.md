@@ -11,40 +11,49 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [0.5.0] — 2025-05-02
+## [0.6.0] — 2025-05-02
 
 ### Added
 
-- **`json` feature** — `Codec::Json` variant using `serde_json`.  Payloads can
-  now be stored as human-readable JSON by setting `CacheOptions::codec`.
-  Supported encoding tags: `"json"` (uncompressed), `"json-zstd"` (requires
-  `json` + `compression` features together).  Bincode and JSON entries coexist
-  transparently in the same database.
-- **`CacheOptions::max_entries: Option<usize>`** — automatic eviction.  When
-  set, the oldest entries (by `updated_at`) are removed after every `set` or
-  `batch_set` until the namespace entry count is within the configured limit.
-- **`CacheEngine::scan_dir_filtered(dir, ScanOptions)`** — replaces the
-  boolean `recursive` flag with a rich [`ScanOptions`] struct that supports
-  `max_depth` (limit descent depth) and `extensions` (case-insensitive file
-  extension filter).  The existing `scan_dir(dir, recursive)` now delegates to
-  this method and remains unchanged.
-- **`CacheEngine::purge_stale_versions()`** — delete all entries in the current
-  namespace whose stored `payload_version` differs from
-  `CacheOptions::payload_version`.  Frees disk space after a schema upgrade.
-- **`CacheEngine::entry_count()`** — count total entries in the current namespace.
-- **`CacheEngine::entry_count_by_version()`** — group entry count by
-  `payload_version`; returns `Vec<(u32, usize)>` sorted by version.
-- All new engine methods are also available on `AsyncCacheEngine` (requires
-  the `async` feature).
-- `Codec` and `ScanOptions` are now public API items.
+- **`encryption` feature** — AES-256-GCM payload encryption.
+  Set `CacheOptions::encryption_key: Some(Vec<u8>)` (exactly 32 bytes) to
+  encrypt every payload written by that engine.  A fresh 96-bit nonce is
+  generated per write and prepended to the ciphertext.  Encoding tags follow
+  the `"<codec-layers>-aes256gcm"` convention (e.g. `"raw-aes256gcm"`,
+  `"zstd-aes256gcm"`, `"json-zstd-aes256gcm"`), so encryption is orthogonal
+  to codec and compression choices.  Reading with a wrong or absent key returns
+  `LocalFileCacheError::EncryptionError`.
+- **True LRU eviction** — `files.last_accessed_at` column (schema v4).  Every
+  successful `get` or `get_if_fresh` call updates `last_accessed_at` for the
+  returned entry (skipped in read-only mode).  When `max_entries` is set,
+  eviction now removes the **least recently accessed** entries (ordering by
+  `last_accessed_at ASC, updated_at ASC`) instead of oldest-by-write.
+- **Glob pattern support in `scan_dir_filtered`** — `ScanOptions::glob_pattern:
+  Option<String>` matches the file *name* (not full path) using `*` (any
+  sequence) and `?` (exactly one character) wildcards.  Can be combined with
+  the `extensions` filter; both must match for a file to be included.
+- **`CacheEngine::list_entries()`** — returns `Vec<EntryInfo>` (sorted by
+  `updated_at DESC`) with full per-entry metadata: `path`, `metadata`,
+  `payload_version`, `encoding`, `updated_at`, `last_accessed_at`.  Payload
+  content is **not** loaded.  Available on both sync and async engines.
+- **`EntryInfo`** struct — new public type, available without any features.
+- **`LocalFileCacheError::EncryptionError(String)`** — new error variant
+  (requires `encryption` feature).
+- Schema v4 migration: `ALTER TABLE files ADD COLUMN last_accessed_at INTEGER
+  NOT NULL DEFAULT 0` plus a composite LRU index
+  `(namespace, last_accessed_at, updated_at)`.  Databases at v1–v3 are
+  migrated in a single `open` call.
 
 ---
 
+## [0.5.0] — 2025-05-02
+JSON codec, max_entries, scan_dir_filtered, version migration helpers.
+
 ## [0.4.0] — 2025-05-02
-`AsyncCacheEngine`, `compression` feature (zstd), `scan_dir`, payload versioning.
+AsyncCacheEngine, zstd compression, scan_dir, payload schema versioning.
 
 ## [0.3.0] — 2025-05-02
-True `MetadataThenPartialHash`, streaming bincode, `read_only`, in-memory backend.
+True partial hash, streaming bincode, read_only, in-memory backend.
 
 ## [0.2.0] — 2025-05-02
 Namespaces, batch ops, TTL, configurable PRAGMAs, schema migration.
@@ -52,7 +61,8 @@ Namespaces, batch ops, TTL, configurable PRAGMAs, schema migration.
 ## [0.1.0] — 2025-05-02
 Initial release.
 
-[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/nabbisen/localcache-rs/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/nabbisen/localcache-rs/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/nabbisen/localcache-rs/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/nabbisen/localcache-rs/compare/v0.2.0...v0.3.0

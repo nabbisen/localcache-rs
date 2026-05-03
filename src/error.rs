@@ -34,16 +34,20 @@ pub enum LocalFileCacheError {
     ReadOnly,
 
     /// A stored payload uses an encoding that is not understood by this build.
-    ///
-    /// This typically means a payload was written with the `compression`
-    /// feature enabled but is being read with a build that does not have it.
     #[error("unknown payload encoding: {0}")]
     UnknownEncoding(String),
 
-    /// A payload's schema version does not match the version configured in
-    /// [`crate::CacheOptions::payload_version`].
+    /// A payload's schema version does not match the configured version.
     #[error("payload version mismatch: stored={stored}, expected={expected}")]
     PayloadVersionMismatch { stored: u32, expected: u32 },
+
+    /// An AES-256-GCM encryption or decryption failure.
+    ///
+    /// Possible causes: wrong key, corrupted data, missing `encryption` feature
+    /// when trying to decrypt an encrypted entry.
+    #[cfg(feature = "encryption")]
+    #[error("encryption error: {0}")]
+    EncryptionError(String),
 
     /// An async task spawned via `tokio::task::spawn_blocking` panicked.
     #[cfg(feature = "async")]

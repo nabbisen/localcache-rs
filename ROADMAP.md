@@ -13,18 +13,25 @@ True partial hash, streaming bincode, read-only mode, in-memory backend, 39 test
 `AsyncCacheEngine`, zstd compression, `scan_dir`, payload schema versioning, 56 tests.
 
 ## Phase 5 — Polish & Observability (v0.5.x) ✅
+JSON codec, `max_entries` eviction, `scan_dir_filtered`, `purge_stale_versions`,
+`entry_count*`, 72 tests.
 
-- [x] `json` feature — `serde_json` codec; `"json"` / `"json-zstd"` encoding tags
-- [x] LRU/max-entries eviction — `CacheOptions::max_entries`; oldest-first deletion on `set`
-- [x] `scan_dir_filtered` — `ScanOptions` with `extensions` filter and `max_depth`
-- [x] `purge_stale_versions` — delete all entries whose version ≠ current
-- [x] `entry_count` / `entry_count_by_version` — observability helpers
-- [x] `Codec` enum exported as public API
+## Phase 6 — Security & Advanced Queries (v0.6.x) ✅
+
+- [x] `encryption` feature — AES-256-GCM payload encryption; nonce prepended to
+      ciphertext; encoding tags `"*-aes256gcm"` orthogonal to codec/compression
+- [x] True LRU eviction — `files.last_accessed_at` (schema v4); updated on every
+      `get` / `get_if_fresh`; `max_entries` now evicts least-recently-accessed entries
+- [x] `scan_dir` glob patterns — `ScanOptions::glob_pattern: Option<String>` with
+      inline `*` / `?` wildcard matching against file names
+- [x] `list_entries()` — return `Vec<EntryInfo>` with path, metadata, encoding,
+      `payload_version`, `updated_at`, `last_accessed_at` (no payload loaded)
+- [x] Schema v4 migration (`files.last_accessed_at` + LRU composite index)
 
 ## Future / Unscheduled
 
-- Encryption at rest
-- File-watching integration
+- File-watching integration (`notify` crate)
 - `async-std` / `smol` feature variants
-- `scan_dir` with glob patterns
-- LRU based on last-read time (requires `last_accessed_at` tracking)
+- Glob brace expansion (`{a,b}` patterns)
+- Key rotation helper for encrypted caches
+- LRU eviction policy choices (LRU vs LFU vs TTL-based)
