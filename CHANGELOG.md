@@ -11,48 +11,61 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [0.11.0] — 2025-05-03
+## [0.12.0] — 2025-05-03
 
 ### Added
 
-- **`QueryBuilder::order_by_field(field_path, ascending)`** — sort results by
-  the value of a dot-separated JSON payload field.  Non-numeric / absent fields
-  are placed at the end.
-- **`QueryBuilder::order_by_updated_at(ascending)`** — sort by the `mtime`
-  metadata field (proxy for `updated_at`).
-- **`QueryBuilder::order_by_path(ascending)`** — sort by stored path string.
-- **`QueryBuilder::offset(n)`** — skip the first `n` matching entries before
-  applying `limit`.  Enables cursor-free pagination:
-  `query().order_by_field("score", false).limit(10).offset(page * 10).run()`.
-- **`SortOrder`** enum (`Asc` / `Desc`) — new public type.
-- **`AsyncCacheEngine::query_run(|q| build_q)`** — execute a query built from
-  a closure on the async blocking thread pool.  The closure receives a
-  `QueryBuilder<'_, T>` and must return one.
-- **`CacheEngine::touch(path)`** — update `last_accessed_at` for `path` to the
-  current time without loading the payload.  Useful for marking entries as
-  recently used so they are not evicted by the LRU policy.  Returns `true` if
-  the entry existed.
-- **`CacheEngine::create_path_index(name)`** — create an additional SQLite
-  index on `files(namespace, path)`.  The full name is `"lc_user_{name}"`.
-  Idempotent (`IF NOT EXISTS`).  Returns the full index name.
-- **`CacheEngine::drop_path_index(name)`** — drop a user-created index.
-  Returns `true` if it existed.
-- **`CacheEngine::list_path_indexes()`** — return a sorted list of all
-  `"lc_user_*"` indexes.
-- Async equivalents on `AsyncCacheEngine`: `touch`, `contains`, `keys`,
-  `create_path_index`, `drop_path_index`, `list_path_indexes`.
-- **CLI `query [--path-like PATTERN]`** — list matching stored entries with
-  coloured status output, similar to `scan` but operating on the DB rather
-  than the filesystem.
+- **`ConnectionPool<T>`** — a cloneable, thread-safe wrapper around
+  `CacheEngine<T>` for multi-threaded synchronous applications.  All clones
+  share the same `Arc<Mutex<CacheEngine<T>>>`.  Exposes the full `CacheEngine`
+  API surface (`get`, `set`, `batch_get`, `batch_set`, `remove`,
+  `check_status`, `check_status_batch`, `contains`, `keys`, `touch`,
+  `scan_dir`, `scan_dir_filtered`, `list_entries`, `entry_count`, `cache_stats`,
+  `export_entries`, `import_entries`, `cleanup_*`, `shrink_database`, and
+  `query_run`).  New public item in `localcache`.
+- **`shared_engine<T>(options)`** — convenience function returning
+  `Arc<Mutex<CacheEngine<T>>>` (aka `SharedEngine<T>`).
+- **`CacheOptionsExt` trait** — ergonomic TTL builders on `CacheOptions`:
+  * `with_ttl_secs(secs)` — set TTL from seconds
+  * `with_ttl_mins(mins)` — set TTL from minutes
+  * `with_ttl_hours(hours)` — set TTL from hours
+- **`benches/cache_bench.rs`** — criterion v0.5 benchmark suite measuring:
+  `set` (three change-detection modes), `get` (hit / miss), `get_if_fresh`,
+  `batch_set` (10 / 100 / 500 entries), `check_status_batch` (10 / 100 / 500),
+  payload-size scaling (64 → 262 144 floats), and metadata queries
+  (`entry_count`, `cache_stats`, `list_entries`, `keys`).
+  Run with `cargo bench --features json`.
+- **`examples/embedding_cache.rs`** — demonstrates cold/warm cache and
+  selective re-embedding when files change.
+- **`examples/document_pipeline.rs`** — shows versioned JSON-payload analysis,
+  `batch_set` ingestion, predicate querying (`json` feature), and
+  `cache_stats`.
+- **`examples/connection_pool.rs`** — eight parallel threads sharing one
+  `ConnectionPool`, with `export_entries`, `scan_dir`, and `CacheOptionsExt`.
+
+### Changed
+
+- `[package.metadata.docs.rs]` added with `all-features = true` so docs.rs
+  renders all feature-gated items.
+- `exclude = ["benches/", "target/", ".github/"]` added for cleaner
+  crates.io packages.
+- `[[bench]]` now declares `required-features = ["json"]` so `cargo bench`
+  without the feature does not fail.
+- `serde_json` usage in `query.rs` is now fully gated behind
+  `#[cfg(feature = "json")]`.  `QueryBuilder`, `order_by_updated_at`,
+  `order_by_path`, `limit`, `offset`, and `path_like` are always available;
+  payload predicates and `order_by_field` require `json`.
 
 ---
 
+## [0.11.0] — 2025-05-03
+`QueryBuilder` ordering / pagination, `touch`, persistent indexes, async index ops, CLI `query`.
+
 ## [0.10.0] — 2025-05-03
-`contains`, `keys`, `QueryBuilder` (predicates), CLI `copy` / `migrate`.
+`contains`, `keys`, `QueryBuilder` predicates, CLI `copy` / `migrate`.
 
 ## [0.9.0] — 2025-05-03
-`export_entries` / `import_entries` / `import_from`, CLI `export` / `import`,
-nested brace expansion.
+`export_entries` / `import_entries` / `import_from`, CLI `export` / `import`, nested brace expansion.
 
 ## [0.8.0] — 2025-05-03
 Cargo workspace, `localcache-cli`, `on_evict`, multi-group brace expansion.
@@ -78,7 +91,8 @@ Namespaces, batch ops, TTL, PRAGMAs, schema migration.
 ## [0.1.0] — 2025-05-02
 Initial release.
 
-[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/nabbisen/localcache-rs/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/nabbisen/localcache-rs/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/nabbisen/localcache-rs/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/nabbisen/localcache-rs/compare/v0.8.0...v0.9.0

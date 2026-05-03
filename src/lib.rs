@@ -25,6 +25,7 @@ mod db;
 mod detection;
 mod error;
 mod path;
+mod pool;
 mod serialization;
 
 #[cfg(test)]
@@ -42,3 +43,4 @@ pub use cache::options::{
 };
 pub use cache::query::{QueryBuilder, SortOrder};
 pub use error::LocalFileCacheError;
+pub use pool::{CacheOptionsExt, ConnectionPool, SharedEngine, shared_engine};

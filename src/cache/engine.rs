@@ -806,6 +806,7 @@ where
     pub fn query(&self) -> crate::cache::query::QueryBuilder<'_, T> {
         crate::cache::query::QueryBuilder {
             engine: self,
+            #[cfg(feature = "json")]
             predicates: Vec::new(),
             limit: None,
             offset: 0,

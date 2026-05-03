@@ -3735,4 +3735,175 @@ mod integration {
             assert!(dropped);
         }
     }
+
+    // ====================================================================
+    // Phase 12 — ConnectionPool
+    // ====================================================================
+
+    #[test]
+    fn pool_basic_set_and_get() {
+        let dir = TempDir::new().unwrap();
+        let pool = crate::ConnectionPool::<Vec<f32>>::open(CacheOptions {
+            database_path: ":memory:".into(),
+            ..CacheOptions::default()
+        })
+        .unwrap();
+
+        let path = write_file(&dir, "pool.txt", b"content");
+        pool.set(&path, &vec![1.0_f32, 2.0]).unwrap();
+        let entry = pool.get(&path).unwrap().unwrap();
+        assert_eq!(entry.payload, vec![1.0_f32, 2.0]);
+    }
+
+    #[test]
+    fn pool_clone_shares_engine() {
+        let dir = TempDir::new().unwrap();
+        let pool = crate::ConnectionPool::<Vec<f32>>::open(CacheOptions {
+            database_path: ":memory:".into(),
+            ..CacheOptions::default()
+        })
+        .unwrap();
+
+        let pool2 = pool.clone();
+        let path = write_file(&dir, "shared.txt", b"x");
+        pool.set(&path, &vec![9.0_f32]).unwrap();
+
+        // Clone sees the entry.
+        assert!(pool2.get(&path).unwrap().is_some());
+    }
+
+    #[test]
+    fn pool_multithreaded_access() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let dir = Arc::new(TempDir::new().unwrap());
+        let pool = Arc::new(
+            crate::ConnectionPool::<Vec<f32>>::open(CacheOptions {
+                database_path: ":memory:".into(),
+                ..CacheOptions::default()
+            })
+            .unwrap(),
+        );
+
+        let handles: Vec<_> = (0..4)
+            .map(|tid| {
+                let pool = Arc::clone(&pool);
+                let dir = Arc::clone(&dir);
+                thread::spawn(move || {
+                    let p = write_file(&dir, &format!("t{tid}.txt"), b"data");
+                    pool.set(&p, &vec![tid as f32]).unwrap();
+                    let _ = pool.get(&p).unwrap();
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        assert_eq!(pool.entry_count().unwrap(), 4);
+    }
+
+    #[test]
+    fn pool_get_if_fresh_and_check_status() {
+        let dir = TempDir::new().unwrap();
+        let pool = crate::ConnectionPool::<Vec<f32>>::open(CacheOptions {
+            database_path: ":memory:".into(),
+            ..CacheOptions::default()
+        })
+        .unwrap();
+
+        let path = write_file(&dir, "pf.txt", b"stable");
+        pool.set(&path, &vec![1.0_f32]).unwrap();
+
+        assert!(pool.get_if_fresh(&path).unwrap().is_some());
+        assert_eq!(pool.check_status(&path).unwrap(), CacheStatus::Fresh);
+    }
+
+    #[test]
+    fn pool_entry_count_and_stats() {
+        let dir = TempDir::new().unwrap();
+        let pool = crate::ConnectionPool::<Vec<f32>>::open(CacheOptions {
+            database_path: ":memory:".into(),
+            ..CacheOptions::default()
+        })
+        .unwrap();
+
+        for i in 0..3u32 {
+            let p = write_file(&dir, &format!("pec{i}.txt"), b"x");
+            pool.set(&p, &vec![i as f32]).unwrap();
+        }
+
+        assert_eq!(pool.entry_count().unwrap(), 3);
+        let stats = pool.cache_stats().unwrap();
+        assert_eq!(stats.total_entries, 3);
+        assert!(stats.total_payload_bytes > 0);
+    }
+
+    #[test]
+    fn pool_remove() {
+        let dir = TempDir::new().unwrap();
+        let pool = crate::ConnectionPool::<Vec<f32>>::open(CacheOptions {
+            database_path: ":memory:".into(),
+            ..CacheOptions::default()
+        })
+        .unwrap();
+
+        let path = write_file(&dir, "prm.txt", b"x");
+        pool.set(&path, &vec![1.0_f32]).unwrap();
+        assert!(pool.remove(&path).unwrap());
+        assert!(pool.get(&path).unwrap().is_none());
+    }
+
+    #[test]
+    fn pool_query_run() {
+        let dir = TempDir::new().unwrap();
+        let pool = crate::ConnectionPool::<Vec<f32>>::open(CacheOptions {
+            database_path: ":memory:".into(),
+            ..CacheOptions::default()
+        })
+        .unwrap();
+
+        for i in 0..5u32 {
+            let p = write_file(&dir, &format!("pq{i}.txt"), b"x");
+            pool.set(&p, &vec![i as f32]).unwrap();
+        }
+
+        // Path-like filter (no json feature needed).
+        let results = pool.query_run(|q| q.path_like("%pq%.txt")).unwrap();
+        assert_eq!(results.len(), 5);
+    }
+
+    // ====================================================================
+    // Phase 12 — CacheOptionsExt
+    // ====================================================================
+
+    #[test]
+    fn cache_options_ext_ttl_helpers() {
+        use crate::CacheOptionsExt as _;
+
+        let opts_secs = CacheOptions::default().with_ttl_secs(120);
+        assert_eq!(opts_secs.ttl, Some(Duration::from_secs(120)));
+
+        let opts_mins = CacheOptions::default().with_ttl_mins(5);
+        assert_eq!(opts_mins.ttl, Some(Duration::from_secs(300)));
+
+        let opts_hours = CacheOptions::default().with_ttl_hours(2);
+        assert_eq!(opts_hours.ttl, Some(Duration::from_secs(7200)));
+    }
+
+    #[test]
+    fn shared_engine_helper() {
+        let shared = crate::shared_engine::<Vec<f32>>(CacheOptions {
+            database_path: ":memory:".into(),
+            ..CacheOptions::default()
+        })
+        .unwrap();
+
+        let dir = TempDir::new().unwrap();
+        let p = write_file(&dir, "se.txt", b"x");
+        let _ = shared.lock().unwrap().set(&p, &vec![1.0_f32]);
+        assert!(shared.lock().unwrap().get(&p).unwrap().is_some());
+    }
 }

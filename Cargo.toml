@@ -3,15 +3,20 @@ members  = [".", "cli"]
 resolver = "2"
 
 [package]
-name = "localcache"
-version = "0.11.0"
-edition = "2024"
-authors = ["nabbisen"]
-license = "Apache-2.0"
+name        = "localcache"
+version     = "0.12.0"
+edition     = "2024"
+authors     = ["nabbisen"]
+license     = "Apache-2.0"
 description = "A Rust library for caching expensive computation results associated with local files"
-repository = "https://github.com/nabbisen/localcach-rs"
-keywords = ["cache", "local-file", "sqlite", "embedding", "memoize"]
-categories = ["caching", "filesystem"]
+repository  = "https://github.com/nabbisen/localcache-rs"
+keywords    = ["cache", "local-file", "sqlite", "embedding", "memoize"]
+categories  = ["caching", "filesystem"]
+exclude     = ["benches/", "target/", ".github/"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 async       = ["dep:tokio"]
@@ -32,5 +37,11 @@ serde_json = { version = "1",                           optional = true }
 aes-gcm    = { version = "0.10",                        optional = true }
 
 [dev-dependencies]
-tempfile   = "3"
-tokio      = { version = "1", features = ["rt", "macros", "rt-multi-thread"] }
+tempfile  = "3"
+tokio     = { version = "1", features = ["rt", "macros", "rt-multi-thread"] }
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name              = "cache_bench"
+harness           = false
+required-features = ["json"]
