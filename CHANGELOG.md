@@ -11,6 +11,38 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.13.1] — 2026-05-03
+
+### Changed
+
+- Updated repository URL to <https://github.com/nabbisen/localcache-rs> across
+  all manifests and documentation.
+- `rusqlite` dependency bumped from 0.32 to **0.39** (no API changes to the
+  localcache public interface).
+- `criterion` dev-dependency bumped from 0.5 to **0.8**; migrated
+  `criterion::black_box` → `std::hint::black_box` as required by the new version.
+- `base64` bumped from 0.22.0 to **0.22.1** (patch).
+- Workspace-level package metadata (`[workspace.package]`) introduced: `version`,
+  `edition`, `rust-version`, `authors`, `license`, `repository` are now declared
+  once in the root `Cargo.toml` and inherited by `localcache-cli`.
+- `criterion::black_box` replaced with `std::hint::black_box` in bench suite.
+- `.gitignore`, `LICENSE`, `README.md`, and `.github/` refreshed.
+- `NOTICE` copyright year updated to 2026.
+- `.github/workflows/ci.yaml` added: matrix test across 7 feature combinations,
+  bench compile check, and MSRV check — all using `dtolnay/rust-toolchain@stable`
+  so the suite tracks the current stable release rather than a pinned version.
+- GitHub Actions versions updated across both workflow files:
+  | Action | Version |
+  |---|---|
+  | `actions/checkout` | **v6** |
+  | `actions/cache` | **v5** (Node.js 24, new cache service v2) |
+  | `actions/configure-pages` | **v6** |
+  | `actions/upload-pages-artifact` | **v5** |
+  | `actions/deploy-pages` | **v5** |
+  | `dtolnay/rust-toolchain` | **@stable** (was @1.85) |
+
+---
+
 ## [0.13.0] — 2025-05-03
 
 ### Added
@@ -88,7 +120,8 @@ Namespaces, batch ops, TTL, PRAGMAs, schema migration.
 ## [0.1.0] — 2025-05-02
 Initial release.
 
-[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/v0.13.1...HEAD
+[0.13.1]: https://github.com/nabbisen/localcache-rs/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/nabbisen/localcache-rs/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/nabbisen/localcache-rs/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/nabbisen/localcache-rs/compare/v0.10.0...v0.11.0

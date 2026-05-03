@@ -2,48 +2,94 @@
 members  = [".", "cli"]
 resolver = "2"
 
+# --------------------------------------------------------------------------
+# Workspace-level package metadata — member crates inherit via
+# `field.workspace = true`
+# --------------------------------------------------------------------------
+[workspace.package]
+version      = "0.13.1"
+edition      = "2024"
+rust-version = "1.85"
+authors      = ["nabbisen"]
+license      = "Apache-2.0"
+repository   = "https://github.com/nabbisen/localcache-rs"
+
+# --------------------------------------------------------------------------
+# Workspace-level dependency versions — avoids repetition and drift between
+# the library and CLI crates.
+# --------------------------------------------------------------------------
+[workspace.dependencies]
+# core
+rusqlite   = { version = "0.39", features = ["bundled"] }
+serde      = { version = "1",    features = ["derive"] }
+bincode    = "1.3"
+blake3     = "1"
+thiserror  = "2"
+base64     = "0.22.1"
+# optional features
+tokio      = { version = "1",    features = ["rt"] }
+zstd       = "0.13"
+serde_json = "1"
+aes-gcm    = "0.10"
+tracing    = "0.1"
+# cli
+clap       = { version = "4",    features = ["derive"] }
+# dev / bench
+tempfile   = "3"
+tokio-test = { version = "1",    features = ["rt", "macros", "rt-multi-thread"] }
+criterion  = { version = "0.8",  features = ["html_reports"] }
+
+# ==========================================================================
+# Library crate
+# ==========================================================================
 [package]
 name        = "localcache"
-version     = "0.13.0"
-edition     = "2024"
-rust-version = "1.85"
-authors     = ["nabbisen"]
-license     = "Apache-2.0"
-description = "A Rust library for caching expensive computation results associated with local files"
-repository  = "https://github.com/nabbisen/localcache-rs"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+authors.workspace      = true
+license.workspace      = true
+repository.workspace   = true
+description = "Cache expensive computation results tied to local files — fast, simple, and SQLite-backed."
 keywords    = ["cache", "local-file", "sqlite", "embedding", "memoize"]
 categories  = ["caching", "filesystem"]
-exclude     = ["benches/", "target/", ".github/"]
+exclude     = ["benches/", "target/", ".github/", "docs/"]
 
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
+## Enables `AsyncCacheEngine` backed by `tokio::task::spawn_blocking`.
 async       = ["dep:tokio"]
+## Enables transparent zstd compression of stored payloads.
 compression = ["dep:zstd"]
+## Enables the `Json` codec variant (serde_json serialization) and payload
+## field queries in `QueryBuilder`.
 json        = ["dep:serde_json"]
+## Enables AES-256-GCM encryption of stored payloads.
 encryption  = ["dep:aes-gcm"]
-## Enable `tracing` instrumentation on key cache operations.
+## Enables `tracing` instrumentation on key cache operations (zero-cost when
+## disabled — all spans are compiled out).
 tracing     = ["dep:tracing"]
 
 [dependencies]
-rusqlite   = { version = "0.32", features = ["bundled"] }
-serde      = { version = "1",    features = ["derive"] }
-bincode    = "1.3"
-blake3     = "1"
-thiserror  = "2"
-base64     = "0.22"
-tokio      = { version = "1",    features = ["rt"],     optional = true }
-zstd       = { version = "0.13",                        optional = true }
-serde_json = { version = "1",                           optional = true }
-aes-gcm    = { version = "0.10",                        optional = true }
-tracing    = { version = "0.1",                         optional = true }
+rusqlite   = { workspace = true }
+serde      = { workspace = true }
+bincode    = { workspace = true }
+blake3     = { workspace = true }
+thiserror  = { workspace = true }
+base64     = { workspace = true }
+tokio      = { workspace = true, optional = true }
+zstd       = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+aes-gcm    = { workspace = true, optional = true }
+tracing    = { workspace = true, optional = true }
 
 [dev-dependencies]
-tempfile  = "3"
-tokio     = { version = "1", features = ["rt", "macros", "rt-multi-thread"] }
-criterion = { version = "0.5", features = ["html_reports"] }
+tempfile   = { workspace = true }
+tokio      = { workspace = true, features = ["rt", "macros", "rt-multi-thread"] }
+criterion  = { workspace = true }
 
 [[bench]]
 name              = "cache_bench"

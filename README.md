@@ -49,23 +49,23 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-localcache = "0.1"
+localcache = "0.13"
 serde = { version = "1", features = ["derive"] }
 ```
 
 Basic usage:
 
 ```rust
-use localcache::{CacheEngine, CacheOptions, ChangeDetectionMode};
+use localcache::{CacheEngine, ChangeDetectionMode};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let engine = CacheEngine::<Vec<f32>>::open(CacheOptions {
-        database_path: "cache.sqlite3".into(),
-        change_detection_mode: ChangeDetectionMode::MetadataThenFullHash,
-    })?;
+    let engine = CacheEngine::<Vec<f32>>::builder()
+        .database("cache.sqlite3")
+        .change_detection(ChangeDetectionMode::MetadataThenFullHash)
+        .build()?;
 
     let path = "sample.txt";
-    let embedding = vec![0.1, 0.2, 0.3];
+    let embedding = vec![0.1_f32, 0.2, 0.3];
 
     engine.set(path, &embedding)?;
 
@@ -79,26 +79,53 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ---
 
-## Features / Design Notes
+## Features
+
+| Cargo feature | Description |
+|---|---|
+| `async` | `AsyncCacheEngine` backed by `tokio::task::spawn_blocking` |
+| `compression` | Transparent `zstd` payload compression |
+| `json` | `Json` codec + payload field queries in `QueryBuilder` |
+| `encryption` | AES-256-GCM payload encryption |
+| `tracing` | `tracing` instrumentation on hot paths (zero-cost when disabled) |
+
+---
+
+## Design Highlights
 
 - **Zero-daemon** — just a library; no background processes.
 - **Single-file storage** — one SQLite database, easy to ship or delete.
 - **Pluggable change detection** — `MetadataOnly` (fast), `MetadataThenFullHash`
   (balanced), or `StrictFullHash` (exact).
-- **Any serialisable payload** — `T: Serialize + DeserializeOwned` via bincode.
+- **Any serialisable payload** — `T: Serialize + DeserializeOwned` via bincode or JSON.
 - **Atomic writes** — `set` uses a single SQLite transaction; partial failures
   leave no corrupt state.
-- **Cascade cleanup** — payload rows are deleted automatically when their parent
-  file row is removed.
+- **LRU eviction** — `max_entries` evicts the least recently accessed entries automatically.
+- **Thread-safe** — `ConnectionPool<T>` wraps the engine in `Arc<Mutex<…>>` for
+  multi-threaded use; `AsyncCacheEngine<T>` for async runtimes.
+- **Data portability** — `export_entries` / `import_entries` / `import_from` for
+  cross-database migration.
 
 ---
 
-## For more detail, see our full documentation
+## CLI Tool
 
-→ [`docs/src/`](docs/src/SUMMARY.md)
+The `localcache-cli` crate ships a `localcache` binary for database inspection:
 
-Key chapters:
+```sh
+cargo install localcache-cli
 
-- [Architecture](docs/src/architecture.md)
-- [Change Detection Modes](docs/src/change_detection.md)
-- [API Reference](docs/src/api.md)
+localcache -d cache.sqlite3 stats
+localcache -d cache.sqlite3 list --limit 20
+localcache -d cache.sqlite3 inspect /path/to/file.txt
+localcache -d cache.sqlite3 export > backup.jsonl
+localcache -d cache.sqlite3 scan ./docs --recursive --glob "*.{md,txt}"
+```
+
+---
+
+## Repository
+
+<https://github.com/nabbisen/localcache-rs>
+
+For documentation see [docs.rs/localcache](https://docs.rs/localcache).

@@ -1,11 +1,12 @@
 [package]
-name    = "localcache-cli"
-version = "0.13.0"
-edition = "2024"
-authors = ["nabbisen"]
-license = "Apache-2.0"
+name        = "localcache-cli"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+authors.workspace      = true
+license.workspace      = true
+repository.workspace   = true
 description = "CLI inspection and maintenance tool for localcache databases"
-repository  = "https://github.com/nabbisen/localcache-rs"
 
 [[bin]]
 name = "localcache"
@@ -13,5 +14,5 @@ path = "src/main.rs"
 
 [dependencies]
 localcache = { path = "..", features = ["compression", "json"] }
-clap       = { version = "4", features = ["derive"] }
-serde_json = "1"
+clap       = { workspace = true }
+serde_json = { workspace = true }
