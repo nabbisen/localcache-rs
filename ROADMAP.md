@@ -1,29 +1,40 @@
 # Roadmap
 
-## Phases 1–14 ✅  (see CHANGELOG for details)
+## Phases 1–15 ✅  (see CHANGELOG for details)
 
-## Phase 15 — Production Hardening & API Refinement (v0.15.x) ✅
+## Phase 16 — Documentation Overhaul (v0.16.x) ✅
 
-- [x] `metrics` Cargo feature — `metrics 0.24` counters and histograms on
-      `get` (total / hit / miss) and `set` (total / bytes); label: `namespace`
-- [x] `CacheEngine::namespace_list()` — list all distinct namespaces in the DB
-- [x] `CacheEngine::namespace_copy(source)` — bulk-copy across namespaces /
-      databases (alias of `import_from` with friendlier name)
-- [x] `CacheEngine::debounced_watcher(window)` → `CacheDebouncedWatcher<T>` —
-      OS events within `window` are merged, preventing floods from rapid writes
-- [x] `CacheDebouncedWatcher<T>` — new public type (`watching` feature)
-- [x] `notify-debouncer-mini 0.7` added to `watching` feature
-- [x] CLI `namespaces` subcommand — tabular listing of all namespaces + entry
-      counts in the target database
-- [x] `Makefile.toml` — `cargo-make` task runner with tasks for:
-      `check`, `test`, `bench`, `doc`, `pre-publish`, `publish-lib`,
-      `publish-cli`, `publish-all`, `release-check`
+- [x] `docs/book.toml` — updated repository URL, search, fold configuration
+- [x] `docs/src/SUMMARY.md` — restructured into User Guide + Reference +
+      Development sections with 14 chapters
+- [x] `introduction.md` — feature table, quick-links, value proposition
+- [x] `getting_started.md` — installation, first cache, `preload`, maintenance
+- [x] `features.md` — all 7 Cargo features with code examples
+- [x] `builder.md` — all `CacheEngineBuilder` options with examples
+- [x] `async.md` — `AsyncCacheEngine`, `ConnectionPool`, `shared_engine`,
+      SQLite concurrency model, decision table
+- [x] `querying.md` — `QueryBuilder` predicates, sorting, pagination,
+      `explain()`, namespace management
+- [x] `watching.md` — `CacheWatcher`, `CacheDebouncedWatcher`, platform table,
+      thread-ownership pattern
+- [x] `portability.md` — export/import, `import_from`, `preload`, glob patterns
+- [x] `cookbook.md` — 7 complete recipes (embedding pipeline, multi-threaded
+      server, reactive pipeline, versioned cache, encryption, TTL, metrics)
+- [x] `cli.md` — all 17 subcommands with usage examples
+- [x] `errors.md` — full error variant table, recovery patterns, `anyhow` example
+- [x] `change_detection.md` — all 4 modes, decision table, `explain()` usage
+- [x] `api.md` — complete type catalogue, `CacheOptions` fields, `ScanOptions`
+- [x] `architecture.md` — schema v4, encoding tags, write/read path diagrams,
+      LRU SQL, SQLite settings
+- [x] `migration.md` — bincode 1→2 upgrade guide, `payload_version` bump,
+      DB migration, builder migration, schema version history
+- [x] `changelog_summary.md` — phase-by-phase history from 0.1 to 0.15
+- [x] `roadmap.md` — completed phases table + future directions
 
 ## Future / Unscheduled
 
 - `async-std` / `smol` feature variants
 - Query index hints / explain plan
 - Read-only shared-memory DB mode
-- Recursive directory watching (watch whole subtree, `watching` feature)
-- `metrics` integration tests with `metrics-util` recorder
-- Structured logging to sink (e.g. `opentelemetry` spans)
+- Recursive directory watching (`watching` feature)
+- OpenTelemetry spans

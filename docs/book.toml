@@ -1,9 +1,17 @@
 [book]
-title       = "localcache — Documentation"
+title       = "localcache"
 authors     = ["nabbisen"]
 language    = "en"
 src         = "src"
 
 [output.html]
-git-repository-url = "https://github.com/nabbisen/localcache"
-edit-url-template  = "https://github.com/nabbisen/localcache/edit/main/docs/{path}"
+git-repository-url      = "https://github.com/nabbisen/localcache-rs"
+edit-url-template       = "https://github.com/nabbisen/localcache-rs/edit/main/docs/{path}"
+additional-css          = []
+no-section-label        = false
+fold.enable             = true
+fold.level              = 1
+
+[output.html.search]
+enable     = true
+limit-results = 20

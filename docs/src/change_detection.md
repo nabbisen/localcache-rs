@@ -1,60 +1,84 @@
 # Change Detection
 
-`localcache` supports four change-detection strategies, selected via
-`CacheOptions::change_detection_mode`.
+`localcache` uses file metadata and optional content hashing to decide
+whether a cached entry is still valid.
 
-## MetadataOnly
+## Modes
 
-Compares `mtime` (modification time) and `file_size` stored in the database
-against the current values from the filesystem.
+### `MetadataOnly`
 
-- **Fast** — two integer comparisons, no I/O beyond `stat`.
-- **Limitation** — can be fooled by a same-size overwrite that leaves mtime
-  unchanged (uncommon in practice but possible with certain copy tools).
+Compares `mtime` (last-modified timestamp) and `file_size`.
 
-Use this mode when throughput matters and your filesystem's mtime precision
-is reliable.
+- **Fastest** — no file reads after the initial `stat` call.
+- **Safe for most use cases** — false positives (unnecessary recomputation)
+  are rare; false negatives (stale cache served as fresh) require an
+  adversarial actor or a filesystem that lies about `mtime`.
 
-## MetadataThenFullHash
+```rust
+.change_detection(ChangeDetectionMode::MetadataOnly)
+```
 
-1. Check `mtime` and `file_size` first.
-2. If they match → **Fresh** (no hash needed).
-3. If they differ → compute a full BLAKE3 hash and compare with the stored
-   value.
-4. Hash matches → **Fresh**; hash differs → **Stale**.
+### `MetadataThenFullHash`
 
-This is the recommended general-purpose mode.  Most of the time the metadata
-check is sufficient; the hash is only computed when metadata has changed.
+Compares metadata first.  If metadata differs, computes a **full BLAKE3
+hash** of the file and compares it with the stored hash.
 
-## StrictFullHash
+- **Best overall trade-off** — only reads the file when metadata suggests
+  a change.
+- Use when you want to avoid unnecessary recomputation (e.g. a `touch`
+  command that updates `mtime` without changing content).
 
-Always computes a full BLAKE3 hash and compares it with the stored value,
-ignoring mtime and file_size entirely.
+```rust
+.change_detection(ChangeDetectionMode::MetadataThenFullHash)
+```
 
-Use this when you need content-addressed semantics, e.g. files may be
-regenerated with the same content but a new mtime.
+### `MetadataThenPartialHash`
 
-## MetadataThenPartialHash
+Like `MetadataThenFullHash` but hashes only the **head and tail** of the
+file (64 KiB each) using a `partial:` prefix on the stored hash.
 
-Defined for future use.  In v0.1 it falls back to `MetadataThenFullHash`.
-A future release will implement head+tail sampling to reduce I/O for large
-files.
+- **Good for large files** — catches most real-world changes (appends,
+  truncations, header rewrites) without reading the whole file.
+- May miss changes in the middle of very large files.
 
-## Hash computation
+```rust
+.change_detection(ChangeDetectionMode::MetadataThenPartialHash)
+```
 
-Hashes are computed with [BLAKE3](https://github.com/BLAKE3-team/BLAKE3) using
-a 64 KiB streaming reader, so very large files never need to be fully loaded
-into memory.  The digest is stored as a lowercase hex string.
+### `StrictFullHash`
 
-## What is stored
+Always computes a full BLAKE3 hash, regardless of metadata.
 
-| Mode | `hash` column |
-|------|--------------|
-| `MetadataOnly` | `NULL` |
-| `MetadataThenPartialHash` | full BLAKE3 hex |
-| `MetadataThenFullHash` | full BLAKE3 hex |
-| `StrictFullHash` | full BLAKE3 hex |
+- **Most reliable** — suitable for content-addressed workflows or when
+  `mtime` is unreliable (network filesystems, some containers).
+- Reads the entire file on every `get_if_fresh` / `check_status` call.
 
-If an entry was stored with `MetadataOnly` and you later switch to a
-hash-based mode, the entry will be treated as **Stale** (no stored hash to
-compare) until it is re-set.
+```rust
+.change_detection(ChangeDetectionMode::StrictFullHash)
+```
+
+## Choosing a mode
+
+| Scenario | Recommended mode |
+|---|---|
+| General purpose | `MetadataThenFullHash` |
+| Maximum speed; trusted filesystem | `MetadataOnly` |
+| Large files; partial-change detection acceptable | `MetadataThenPartialHash` |
+| Content-addressed; unreliable mtime | `StrictFullHash` |
+
+## Diagnosing mismatches
+
+Use `explain()` to see exactly why an entry is stale:
+
+```rust
+let diag = engine.explain("file.txt")?;
+if let Some(diff) = diag.metadata_diff {
+    println!("mtime changed:     {}", diff.mtime_changed);
+    println!("  stored:  {}", diff.stored_mtime);
+    println!("  current: {}", diff.current_mtime);
+    println!("file_size changed: {}", diff.size_changed);
+}
+if let Some(hash_match) = diag.hash_match {
+    println!("hash matches: {hash_match}");
+}
+```

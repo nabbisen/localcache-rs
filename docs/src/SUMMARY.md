@@ -4,9 +4,26 @@
 
 ---
 
+# User Guide
+
 - [Getting Started](./getting_started.md)
-- [Architecture](./architecture.md)
+- [Features](./features.md)
 - [Change Detection](./change_detection.md)
-- [API Reference](./api.md)
+- [Builder API](./builder.md)
+- [Async & Thread Safety](./async.md)
+- [Querying the Cache](./querying.md)
+- [File Watching](./watching.md)
+- [Data Portability](./portability.md)
+- [Cookbook](./cookbook.md)
+
+# Reference
+
+- [CLI Tool](./cli.md)
 - [Error Handling](./errors.md)
-- [Roadmap](./roadmap.md)
+- [API Overview](./api.md)
+- [Architecture](./architecture.md)
+
+# Development
+
+- [Migration Guide](./migration.md)
+- [Changelog](./changelog_summary.md)

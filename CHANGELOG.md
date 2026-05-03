@@ -11,6 +11,49 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.16.0] — 2026-05-04
+
+### Changed
+
+- **Documentation overhaul** — the `docs/` mdBook has been completely
+  rewritten to reflect the v0.15 API.  All chapters now contain working
+  code examples, accurate type names, and feature-flag annotations.
+
+  New chapters added:
+  * **Features** — per-feature guide with code examples for all 7 flags.
+  * **Builder API** — every `CacheEngineBuilder` method documented.
+  * **Async & Thread Safety** — `AsyncCacheEngine`, `ConnectionPool`,
+    `shared_engine`, SQLite concurrency model, and a decision table.
+  * **Querying the Cache** — `QueryBuilder` predicates, multi-column sort,
+    pagination, `explain()`, and namespace management.
+  * **File Watching** — `CacheWatcher`, `CacheDebouncedWatcher`, the
+    watcher lifetime contract, platform table, and a thread-ownership pattern.
+  * **Data Portability** — export/import, `import_from`, `preload()`,
+    and glob pattern reference.
+  * **Cookbook** — 7 complete recipes: embedding pipeline, multi-threaded
+    web server, reactive pipeline, versioned cache, encrypted cache,
+    TTL-based expiry, metrics with Prometheus.
+  * **CLI Tool** — all 17 subcommands with flags and output examples.
+  * **Migration Guide** — bincode 1→2 upgrade, `payload_version` bump,
+    DB migration, builder migration, schema version history.
+  * **Changelog Summary** — phase-by-phase history from 0.1 to 0.15.
+
+  Updated chapters:
+  * **Introduction** — feature comparison table, quick links.
+  * **Getting Started** — updated to use builder API, added `preload`.
+  * **Change Detection** — all 4 modes, decision table, `explain()` usage.
+  * **Architecture** — schema v4, encoding tags, write/read path diagrams.
+  * **Error Handling** — full variant table including all feature-gated errors.
+  * **API Overview** — complete type catalogue for v0.15.
+  * **Roadmap** — completed phases table.
+
+- `docs/book.toml` — repository URL updated to
+  `https://github.com/nabbisen/localcache-rs`; search and fold enabled.
+- `docs/src/SUMMARY.md` — restructured into **User Guide** / **Reference** /
+  **Development** sections.
+
+---
+
 ## [0.15.0] — 2026-05-04
 
 ### Added
@@ -234,7 +277,8 @@ Namespaces, batch ops, TTL, PRAGMAs, schema migration.
 ## [0.1.0] — 2025-05-02
 Initial release.
 
-[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/nabbisen/localcache-rs/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/nabbisen/localcache-rs/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/nabbisen/localcache-rs/compare/v0.13.2...v0.14.0
 [0.13.2]: https://github.com/nabbisen/localcache-rs/compare/v0.13.1...v0.13.2
