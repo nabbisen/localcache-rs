@@ -2,28 +2,26 @@
 
 ## Phase 1 — Foundation (v0.1.x) ✅
 
-Core functionality with synchronous API.
-
 - [x] SQLite-backed persistent cache
 - [x] `set` / `get` / `get_if_fresh` / `remove`
 - [x] `check_status` — `Fresh` / `Stale` / `Missing`
 - [x] `cleanup_missing_files` / `shrink_database`
-- [x] `MetadataOnly` change detection
-- [x] `MetadataThenFullHash` change detection (BLAKE3)
-- [x] `StrictFullHash` change detection
+- [x] `MetadataOnly` / `MetadataThenFullHash` / `StrictFullHash` change detection
 - [x] `MetadataThenPartialHash` (falls back to full hash in this phase)
 - [x] bincode serialisation for arbitrary `T: Serialize + DeserializeOwned`
 - [x] Atomic `set` via SQLite transactions
 - [x] `ON DELETE CASCADE` for payload cleanup
 - [x] Full integration test suite
 
-## Phase 2 — Ergonomics & Reliability (v0.2.x)
+## Phase 2 — Ergonomics & Reliability (v0.2.x) ✅
 
-- [ ] `batch_set` / `batch_get` API for processing many files at once
-- [ ] `remove` accepts paths that no longer exist on disk (by stored path string)
-- [ ] Configurable `journal_mode` / `synchronous` pragma
-- [ ] Optional `updated_at` expiry / TTL support
-- [ ] `cache_namespace` — multiple independent caches in a single DB
+- [x] `batch_set` / `batch_get` / `batch_get_fresh` API
+- [x] `remove` accepts paths that no longer exist on disk
+- [x] Configurable `journal_mode` / `synchronous` pragma (`JournalMode`, `SynchronousMode`)
+- [x] Optional `ttl` (time-to-live) for cache entries
+- [x] `cache_namespace` — multiple independent caches in a single DB
+- [x] Automatic schema migration v1 → v2
+- [x] `cleanup_expired` maintenance helper
 
 ## Phase 3 — Performance (v0.3.x)
 

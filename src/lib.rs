@@ -11,6 +11,7 @@
 //! let engine = CacheEngine::<Vec<f32>>::open(CacheOptions {
 //!     database_path: "cache.sqlite3".into(),
 //!     change_detection_mode: ChangeDetectionMode::MetadataThenFullHash,
+//!     ..CacheOptions::default()
 //! })?;
 //!
 //! let path = "sample.txt";
@@ -38,7 +39,7 @@ mod tests;
 // Public re-exports
 // ---------------------------------------------------------------------------
 
-pub use cache::engine::CacheEngine;
+pub use cache::engine::{BatchSetReport, CacheEngine};
 pub use cache::entry::{CacheEntry, CacheStatus, FileMetadata};
-pub use cache::options::{CacheOptions, ChangeDetectionMode};
+pub use cache::options::{CacheOptions, ChangeDetectionMode, JournalMode, SynchronousMode};
 pub use error::LocalFileCacheError;
