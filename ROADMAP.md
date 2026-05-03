@@ -10,19 +10,21 @@ Namespaces, batch ops, TTL, configurable PRAGMAs, schema migration, 26 tests.
 True partial hash, streaming bincode, read-only mode, in-memory backend, 39 tests.
 
 ## Phase 4 — Async & Ecosystem (v0.4.x) ✅
+`AsyncCacheEngine`, zstd compression, `scan_dir`, payload schema versioning, 56 tests.
 
-- [x] `async` feature — `AsyncCacheEngine<T>` via `tokio::task::spawn_blocking`
-- [x] `compression` feature — zstd payload compression (`payloads.encoding` column)
-- [x] `scan_dir(dir, recursive)` — directory scan helper on sync and async engines
-- [x] Payload schema versioning — `payload_version` in `CacheOptions` and DB schema
-- [x] Schema v3 migration (v2 → v3 via `ALTER TABLE ADD COLUMN`)
+## Phase 5 — Polish & Observability (v0.5.x) ✅
+
+- [x] `json` feature — `serde_json` codec; `"json"` / `"json-zstd"` encoding tags
+- [x] LRU/max-entries eviction — `CacheOptions::max_entries`; oldest-first deletion on `set`
+- [x] `scan_dir_filtered` — `ScanOptions` with `extensions` filter and `max_depth`
+- [x] `purge_stale_versions` — delete all entries whose version ≠ current
+- [x] `entry_count` / `entry_count_by_version` — observability helpers
+- [x] `Codec` enum exported as public API
 
 ## Future / Unscheduled
 
 - Encryption at rest
-- LRU / max-entry eviction
 - File-watching integration
-- `serde_json` alternative codec feature
 - `async-std` / `smol` feature variants
-- Batch schema version migration helper
-- `scan_dir` with glob/extension filters
+- `scan_dir` with glob patterns
+- LRU based on last-read time (requires `last_accessed_at` tracking)

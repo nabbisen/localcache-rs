@@ -8,7 +8,9 @@ use rusqlite::{Connection, OpenFlags};
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::cache::entry::{CacheEntry, CacheStatus};
-use crate::cache::options::{CacheOptions, ChangeDetectionMode, is_memory_path};
+use crate::cache::options::{
+    CacheOptions, ChangeDetectionMode, Codec, ScanOptions, is_memory_path,
+};
 use crate::db::{repository, schema};
 use crate::detection::hash::{compute_full_hash, compute_partial_hash};
 use crate::detection::metadata::collect_metadata;
@@ -50,8 +52,7 @@ pub struct BatchSetReport {
 ///
 /// ## Async support
 ///
-/// Enable the `async` Cargo feature to access [`crate::AsyncCacheEngine`],
-/// which wraps this engine in a `tokio::task::spawn_blocking` adapter.
+/// Enable the `async` Cargo feature to access [`crate::AsyncCacheEngine`].
 ///
 /// # Example
 ///
@@ -74,11 +75,13 @@ pub struct BatchSetReport {
 pub struct CacheEngine<T> {
     pub(crate) conn: Connection,
     pub(crate) mode: ChangeDetectionMode,
+    pub(crate) codec: Codec,
     pub(crate) namespace: String,
     pub(crate) ttl: Option<Duration>,
     pub(crate) read_only: bool,
     pub(crate) payload_version: u32,
     pub(crate) compress: bool,
+    pub(crate) max_entries: Option<usize>,
     _phantom: PhantomData<T>,
 }
 
@@ -132,11 +135,13 @@ where
         Ok(Self {
             conn,
             mode: options.change_detection_mode,
+            codec: options.codec,
             namespace: options.namespace,
             ttl: options.ttl,
             read_only: options.read_only,
             payload_version: options.payload_version,
             compress,
+            max_entries: options.max_entries,
             _phantom: PhantomData,
         })
     }
@@ -172,8 +177,7 @@ where
     /// Return the cached entry for `path` only if it is still fresh.
     ///
     /// Returns `Ok(None)` when the file or entry is missing, the entry is
-    /// stale, the TTL has elapsed, or the stored payload version does not
-    /// match [`CacheOptions::payload_version`].
+    /// stale, the TTL has elapsed, or the payload version does not match.
     pub fn get_if_fresh<P>(&self, path: P) -> Result<Option<CacheEntry<T>>, LocalFileCacheError>
     where
         P: AsRef<Path>,
@@ -252,7 +256,7 @@ where
         let path_str = path_to_str(&canonical)?;
         let mut metadata = collect_metadata(&canonical)?;
         metadata.hash = compute_hash_for_mode(&canonical, self.mode)?;
-        let (bytes, encoding) = encode_payload(payload, self.compress)?;
+        let (bytes, encoding) = encode_payload(payload, self.compress, self.codec)?;
         repository::upsert(
             &self.conn,
             &self.namespace,
@@ -262,6 +266,7 @@ where
             encoding,
             self.payload_version,
         )?;
+        self.enforce_max_entries()?;
         Ok(())
     }
 
@@ -309,7 +314,7 @@ where
                     continue;
                 }
             }
-            let (bytes, encoding) = match encode_payload(payload, self.compress) {
+            let (bytes, encoding) = match encode_payload(payload, self.compress, self.codec) {
                 Ok(r) => r,
                 Err(e) => {
                     report.failed.push((canonical.clone(), e));
@@ -333,6 +338,7 @@ where
             report.succeeded += 1;
         }
         tx.commit()?;
+        self.enforce_max_entries()?;
         Ok(report)
     }
 
@@ -340,8 +346,7 @@ where
     // Removal
     // ------------------------------------------------------------------
 
-    /// Remove the cache entry for `path`.  Works even when the file no longer
-    /// exists on disk.  Returns `true` if an entry was deleted.
+    /// Remove the cache entry for `path`.  Works even when the file is gone.
     pub fn remove<P>(&self, path: P) -> Result<bool, LocalFileCacheError>
     where
         P: AsRef<Path>,
@@ -374,9 +379,6 @@ where
     // ------------------------------------------------------------------
 
     /// Check the freshness of the cache entry for `path`.
-    ///
-    /// Returns [`CacheStatus::Stale`] when the entry exists but the payload
-    /// version does not match [`CacheOptions::payload_version`].
     pub fn check_status<P>(&self, path: P) -> Result<CacheStatus, LocalFileCacheError>
     where
         P: AsRef<Path>,
@@ -405,14 +407,30 @@ where
 
     /// Scan `dir` and return the [`CacheStatus`] of every regular file found.
     ///
-    /// Each tuple is `(canonical_path, status)`.  Files not in the cache have
-    /// status [`CacheStatus::Missing`].
-    ///
     /// Set `recursive` to `true` to descend into subdirectories.
     pub fn scan_dir<P: AsRef<Path>>(
         &self,
         dir: P,
         recursive: bool,
+    ) -> Result<Vec<(PathBuf, CacheStatus)>, LocalFileCacheError> {
+        self.scan_dir_filtered(
+            dir,
+            ScanOptions {
+                recursive,
+                ..ScanOptions::default()
+            },
+        )
+    }
+
+    /// Scan `dir` with fine-grained filtering via [`ScanOptions`].
+    ///
+    /// Unlike [`scan_dir`](Self::scan_dir), this method supports:
+    /// * Limiting depth via [`ScanOptions::max_depth`].
+    /// * Restricting by file extension via [`ScanOptions::extensions`].
+    pub fn scan_dir_filtered<P: AsRef<Path>>(
+        &self,
+        dir: P,
+        options: ScanOptions,
     ) -> Result<Vec<(PathBuf, CacheStatus)>, LocalFileCacheError> {
         let dir = dir.as_ref();
         if !dir.is_dir() {
@@ -421,7 +439,7 @@ where
                 format!("not a directory: {}", dir.display()),
             )));
         }
-        let files = walk_dir(dir, recursive)?;
+        let files = walk_dir_filtered(dir, &options, 0)?;
         let mut results = Vec::with_capacity(files.len());
         for file in files {
             let status = self.check_status(&file)?;
@@ -449,8 +467,6 @@ where
     }
 
     /// Delete entries in the current namespace that have exceeded the TTL.
-    ///
-    /// Returns `0` if no TTL is configured.
     pub fn cleanup_expired(&self) -> Result<usize, LocalFileCacheError> {
         self.guard_write()?;
         let Some(ttl) = self.ttl else {
@@ -467,11 +483,39 @@ where
         Ok(removed)
     }
 
+    /// Delete all entries in the current namespace whose
+    /// `payload_version != self.payload_version`.
+    ///
+    /// Use this after bumping [`CacheOptions::payload_version`] to free the
+    /// disk space occupied by old-format entries.  Returns the number of
+    /// entries deleted.
+    pub fn purge_stale_versions(&self) -> Result<usize, LocalFileCacheError> {
+        self.guard_write()?;
+        repository::delete_by_other_version(&self.conn, &self.namespace, self.payload_version)
+    }
+
     /// Reclaim disk space via SQLite `VACUUM`.
     pub fn shrink_database(&self) -> Result<(), LocalFileCacheError> {
         self.guard_write()?;
         self.conn.execute_batch("VACUUM;")?;
         Ok(())
+    }
+
+    // ------------------------------------------------------------------
+    // Observability
+    // ------------------------------------------------------------------
+
+    /// Count the total number of entries in the current namespace.
+    pub fn entry_count(&self) -> Result<usize, LocalFileCacheError> {
+        repository::count_in_namespace(&self.conn, &self.namespace)
+    }
+
+    /// Count entries in the current namespace grouped by `payload_version`.
+    ///
+    /// Returns a `Vec<(version, count)>` sorted by version ascending.
+    /// Useful for diagnosing migration completeness.
+    pub fn entry_count_by_version(&self) -> Result<Vec<(u32, usize)>, LocalFileCacheError> {
+        repository::count_by_version(&self.conn, &self.namespace)
     }
 
     // ------------------------------------------------------------------
@@ -486,10 +530,21 @@ where
             Ok(())
         }
     }
+
+    fn enforce_max_entries(&self) -> Result<(), LocalFileCacheError> {
+        let Some(max) = self.max_entries else {
+            return Ok(());
+        };
+        let count = repository::count_in_namespace(&self.conn, &self.namespace)?;
+        if count > max {
+            repository::delete_oldest_n(&self.conn, &self.namespace, count - max)?;
+        }
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
-// Free helpers
+// Free helpers (pub(crate) so async_engine can reuse them)
 // ---------------------------------------------------------------------------
 
 pub(crate) fn path_to_str(path: &Path) -> Result<&str, LocalFileCacheError> {
@@ -520,20 +575,41 @@ pub(crate) fn is_expired(updated_at: i64, ttl: Option<Duration>) -> bool {
     now.saturating_sub(updated_at) as u64 >= ttl.as_secs()
 }
 
-/// Recursively (or non-recursively) collect all regular files under `dir`.
-fn walk_dir(dir: &Path, recursive: bool) -> Result<Vec<PathBuf>, LocalFileCacheError> {
+/// Walk `dir`, optionally recursively, applying `ScanOptions` filters.
+fn walk_dir_filtered(
+    dir: &Path,
+    opts: &ScanOptions,
+    current_depth: usize,
+) -> Result<Vec<PathBuf>, LocalFileCacheError> {
     let mut files = Vec::new();
-    let mut dirs = vec![dir.to_path_buf()];
-    while let Some(d) = dirs.pop() {
-        for entry in std::fs::read_dir(&d)? {
-            let entry = entry?;
-            let ft = entry.file_type()?;
-            if ft.is_file() {
-                files.push(entry.path());
-            } else if recursive && ft.is_dir() {
-                dirs.push(entry.path());
+
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let ft = entry.file_type()?;
+        let path = entry.path();
+
+        if ft.is_file() {
+            // Extension filter (case-insensitive, without leading dot).
+            if !opts.extensions.is_empty() {
+                let ext = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("")
+                    .to_lowercase();
+                if !opts.extensions.iter().any(|e| e.to_lowercase() == ext) {
+                    continue;
+                }
+            }
+            files.push(path);
+        } else if ft.is_dir() {
+            let can_descend =
+                opts.recursive && opts.max_depth.is_none_or(|max| current_depth < max);
+            if can_descend {
+                let sub = walk_dir_filtered(&path, opts, current_depth + 1)?;
+                files.extend(sub);
             }
         }
     }
+
     Ok(files)
 }

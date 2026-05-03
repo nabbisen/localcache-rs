@@ -13,17 +13,14 @@ use crate::error::LocalFileCacheError;
 // Row types
 // ---------------------------------------------------------------------------
 
-/// A row from the `files` table (payload content not included).
 pub(crate) struct FileRow {
     pub id: i64,
     pub path: String,
     pub metadata: FileMetadata,
     pub updated_at: i64,
-    /// Payload schema version stored when this entry was last written.
     pub payload_version: u32,
 }
 
-/// Payload content plus its encoding tag.
 pub(crate) struct PayloadRow {
     pub content: Vec<u8>,
     pub encoding: String,
@@ -33,7 +30,6 @@ pub(crate) struct PayloadRow {
 // Single-row queries
 // ---------------------------------------------------------------------------
 
-/// Find the `files` row for `(namespace, path)`.
 pub(crate) fn find_file(
     conn: &Connection,
     namespace: &str,
@@ -62,7 +58,6 @@ pub(crate) fn find_file(
     Ok(row)
 }
 
-/// Load the payload content and encoding for `file_id`.
 pub(crate) fn load_payload(
     conn: &Connection,
     file_id: i64,
@@ -84,7 +79,6 @@ pub(crate) fn load_payload(
 // Writes
 // ---------------------------------------------------------------------------
 
-/// Upsert a `files` row and its `payloads` row in a single transaction.
 pub(crate) fn upsert(
     conn: &Connection,
     namespace: &str,
@@ -108,7 +102,6 @@ pub(crate) fn upsert(
     Ok(())
 }
 
-/// Upsert inside a caller-supplied transaction (used by batch operations).
 pub(crate) fn upsert_in_tx(
     tx: &Transaction,
     namespace: &str,
@@ -163,7 +156,6 @@ pub(crate) fn upsert_in_tx(
 // Deletes
 // ---------------------------------------------------------------------------
 
-/// Delete the row for `(namespace, path)`.  Returns `true` if deleted.
 pub(crate) fn delete_by_path(
     conn: &Connection,
     namespace: &str,
@@ -176,7 +168,6 @@ pub(crate) fn delete_by_path(
     Ok(n > 0)
 }
 
-/// Delete a row by stored path string (used by maintenance helpers).
 pub(crate) fn delete_path(
     conn: &Connection,
     namespace: &str,
@@ -189,11 +180,47 @@ pub(crate) fn delete_path(
     Ok(())
 }
 
+/// Delete entries in `namespace` whose `payload_version != current_version`.
+///
+/// Returns the number of entries deleted.
+pub(crate) fn delete_by_other_version(
+    conn: &Connection,
+    namespace: &str,
+    current_version: u32,
+) -> Result<usize, LocalFileCacheError> {
+    let n = conn.execute(
+        "DELETE FROM files WHERE namespace = ?1 AND payload_version != ?2",
+        params![namespace, current_version as i64],
+    )?;
+    Ok(n)
+}
+
+/// Delete the `n` oldest entries (by `updated_at`) in `namespace`.
+///
+/// Returns the number of entries actually deleted.
+pub(crate) fn delete_oldest_n(
+    conn: &Connection,
+    namespace: &str,
+    n: usize,
+) -> Result<usize, LocalFileCacheError> {
+    let deleted = conn.execute(
+        "DELETE FROM files
+         WHERE namespace = ?1
+           AND id IN (
+               SELECT id FROM files
+               WHERE namespace = ?1
+               ORDER BY updated_at ASC
+               LIMIT ?2
+           )",
+        params![namespace, n as i64],
+    )?;
+    Ok(deleted)
+}
+
 // ---------------------------------------------------------------------------
-// Scans
+// Scans / aggregates
 // ---------------------------------------------------------------------------
 
-/// Return `(id, path, updated_at)` for all rows in `namespace`.
 pub(crate) fn all_file_rows_in_namespace(
     conn: &Connection,
     namespace: &str,
@@ -212,7 +239,6 @@ pub(crate) fn all_file_rows_in_namespace(
     Ok(rows?)
 }
 
-/// Return all stored paths in `namespace`.
 pub(crate) fn all_paths_in_namespace(
     conn: &Connection,
     namespace: &str,
@@ -222,11 +248,45 @@ pub(crate) fn all_paths_in_namespace(
     Ok(paths?)
 }
 
+/// Count the total number of entries in `namespace`.
+pub(crate) fn count_in_namespace(
+    conn: &Connection,
+    namespace: &str,
+) -> Result<usize, LocalFileCacheError> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM files WHERE namespace = ?1",
+        params![namespace],
+        |r| r.get(0),
+    )?;
+    Ok(n as usize)
+}
+
+/// Count entries in `namespace` grouped by `payload_version`.
+///
+/// Returns a list of `(version, count)` pairs sorted by version ascending.
+pub(crate) fn count_by_version(
+    conn: &Connection,
+    namespace: &str,
+) -> Result<Vec<(u32, usize)>, LocalFileCacheError> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT payload_version, COUNT(*)
+         FROM files
+         WHERE namespace = ?1
+         GROUP BY payload_version
+         ORDER BY payload_version ASC",
+    )?;
+    let rows: Result<Vec<_>, _> = stmt
+        .query_map(params![namespace], |r| {
+            Ok((r.get::<_, i64>(0)? as u32, r.get::<_, i64>(1)? as usize))
+        })?
+        .collect();
+    Ok(rows?)
+}
+
 // ---------------------------------------------------------------------------
-// Utilities
+// Utility
 // ---------------------------------------------------------------------------
 
-/// Current Unix timestamp in seconds.
 pub(crate) fn now_secs() -> i64 {
     UNIX_EPOCH
         .elapsed()
