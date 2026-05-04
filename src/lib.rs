@@ -28,9 +28,6 @@ mod path;
 mod pool;
 mod serialization;
 
-#[cfg(test)]
-mod tests;
-
 #[cfg(feature = "async")]
 pub use cache::async_engine::AsyncCacheEngine;
 pub use cache::builder::CacheEngineBuilder;

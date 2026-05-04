@@ -11,6 +11,39 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.16.1] — 2026-05-04
+
+### Changed
+
+- `src/tests.rs` (4 722 lines) split into 8 thematic integration-test files
+  under `tests/` alongside `tests/common/mod.rs` for shared helpers.
+  Each file is an independent test binary; individual suites can be run with
+  e.g. `cargo test --test core`.
+
+  | File | Theme | Tests |
+  |---|---|---|
+  | `tests/core.rs` | Basic ops, namespaces, TTL | 26 |
+  | `tests/storage.rs` | Hashing, scan, schema migration | 30 |
+  | `tests/codec_lru.rs` | JSON codec, LRU, glob, encryption | 31 |
+  | `tests/builder_ops.rs` | Builder, stats, brace expansion, on_evict | 24 |
+  | `tests/portability.rs` | Export / import | 8 |
+  | `tests/query.rs` | QueryBuilder, ordering, touch, indexes | 30 |
+  | `tests/pool_observe.rs` | ConnectionPool, explain, tracing | 20 |
+  | `tests/watching.rs` | Preload, watcher, debounce, metrics, namespace | 19 |
+
+  Total: **188** integration tests + **15** doc-tests (unchanged).
+
+- Two `pub(crate)` internal references removed from the old `src/tests.rs`
+  before moving to `tests/` (required for top-level test binaries):
+  * `crate::detection::hash::PARTIAL_PREFIX` → literal `"partial:"`
+  * `crate::serialization::serialize_bincode` →
+    `bincode::serde::encode_to_vec(..., bincode::config::legacy())`
+
+- Unused-import warnings eliminated across all source files and new test
+  files; all feature combinations are now warning-free.
+
+---
+
 ## [0.16.0] — 2026-05-04
 
 ### Changed
@@ -277,7 +310,8 @@ Namespaces, batch ops, TTL, PRAGMAs, schema migration.
 ## [0.1.0] — 2025-05-02
 Initial release.
 
-[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/v0.16.1...HEAD
+[0.16.1]: https://github.com/nabbisen/localcache-rs/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/nabbisen/localcache-rs/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/nabbisen/localcache-rs/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/nabbisen/localcache-rs/compare/v0.13.2...v0.14.0

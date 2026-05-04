@@ -62,6 +62,7 @@ pub struct BatchSetReport {
 /// ```
 pub struct CacheEngine<T> {
     pub(crate) conn: Connection,
+    #[cfg(feature = "watching")]
     pub(crate) database_path: std::path::PathBuf,
     pub(crate) mode: ChangeDetectionMode,
     pub(crate) codec: Codec,
@@ -141,6 +142,7 @@ where
 
         Ok(Self {
             conn,
+            #[cfg(feature = "watching")]
             database_path: options.database_path.clone(),
             mode: options.change_detection_mode,
             codec: options.codec,

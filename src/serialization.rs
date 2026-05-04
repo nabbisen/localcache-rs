@@ -14,6 +14,7 @@
 //! | `"json-aes256gcm"`      | json    | —        | AES-256   |
 //! | `"json-zstd-aes256gcm"` | json    | zstd     | AES-256   |
 
+#[cfg(feature = "compression")]
 use std::io::Cursor;
 
 use serde::{Serialize, de::DeserializeOwned};
