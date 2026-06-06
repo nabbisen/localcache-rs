@@ -3,6 +3,16 @@
 //! The encoding pipeline is: **codec → compress → encrypt**.
 //! The encoding tag stored in the database reflects all active layers:
 //!
+//! # Wire-format stability
+//!
+//! The `Bincode` codec path **always** uses `bincode::config::legacy()`.
+//! This is a permanent commitment: the exact byte sequence produced today
+//! must be decodable by every past and future `0.x`/`1.x` release without
+//! migration.  **Do not change to `config::standard()`** — doing so would
+//! silently corrupt every existing user database with no compile-time error.
+//! Any future format change requires a schema-version migration (see
+//! `src/db/schema.rs`) and a headline CHANGELOG entry.
+//!
 //! | Tag                     | Codec   | Compress | Encrypt   |
 //! |-------------------------|---------|----------|-----------|
 //! | `"raw"`                 | bincode | —        | —         |

@@ -4,7 +4,7 @@
 
 ```toml
 [dependencies]
-localcache = "0.15"
+localcache = "0.19"
 serde = { version = "1", features = ["derive"] }
 ```
 
@@ -44,13 +44,17 @@ engine.set("document.txt", &embedding)?;
 | Detect file changes automatically | ✅ metadata + BLAKE3 hash |
 | Works offline, no services | ✅ single SQLite file |
 | Thread-safe sharing | ✅ `ConnectionPool<T>` |
-| Async runtimes (Tokio) | ✅ `AsyncCacheEngine<T>` |
-| React to file changes | ✅ `CacheWatcher<T>` (OS events) |
+| Concurrent read-heavy workloads | ✅ `ReadPool<T>` (N read-only connections) |
+| Async runtimes (Tokio / async-std / smol) | ✅ `AsyncCacheEngine<T>` |
+| React to file changes | ✅ `CacheWatcher<T>` (OS events, per-file or per-directory) |
 | Bulk-cache a directory | ✅ `engine.preload(dir, opts, ...)` |
 | Encrypt payloads at rest | ✅ AES-256-GCM |
 | Compress payloads | ✅ zstd |
-| Query by payload content | ✅ `QueryBuilder` |
+| Query by path or payload content | ✅ `QueryBuilder` — path, glob, directory scope, payload predicates |
+| Distributed tracing | ✅ `opentelemetry` feature (bridges `tracing` spans to OTel) |
 | Production observability | ✅ `tracing` + `metrics` features |
+| Read-only shared-cache mode | ✅ `shared_cache()` builder option |
+| Wire-format stability guarantee | ✅ `Bincode` codec layout documented and test-enforced |
 
 ## Quick links
 

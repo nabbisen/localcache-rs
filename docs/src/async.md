@@ -1,10 +1,15 @@
 # Async & Thread Safety
 
-## `AsyncCacheEngine<T>` (tokio)
+# Async & Thread Safety
 
-Requires the `async` feature.  Every blocking operation is wrapped in
-`tokio::task::spawn_blocking`, ensuring the async executor thread is never
-blocked by SQLite I/O.
+## `AsyncCacheEngine<T>`
+
+Available with the `async` (Tokio), `async-std`, or `smol` Cargo features.
+Every blocking operation runs on a `spawn_blocking`-equivalent from the
+active runtime, ensuring the async executor thread is never blocked by
+SQLite I/O.  The default and most-documented backend is Tokio — see
+[Alternative async runtimes](#alternative-async-runtimes-v0170) below for
+the others.
 
 ```rust
 use localcache::{AsyncCacheEngine, CacheOptions};
@@ -69,6 +74,51 @@ for h in handles { h.join().unwrap(); }
 
 `ConnectionPool<T>` is `Clone` — all clones share the same engine.
 
+## `ReadPool<T>` (concurrent read-only)
+
+For **read-heavy** workloads where a separate writer engine handles all
+writes (e.g. a gallery loader or similarity search pipeline), `ReadPool`
+holds N independent read-only connections.  All N slots can be used
+concurrently — SQLite WAL mode allows unlimited simultaneous readers.
+
+```rust
+use localcache::{CacheEngine, ReadPool, CacheOptions};
+
+// Writer (separate thread / process owns this):
+let writer: CacheEngine<Vec<f32>> = CacheEngine::builder()
+    .database("cache.sqlite3")
+    .build()?;
+
+// Read-only pool shared by worker threads:
+let pool: ReadPool<Vec<f32>> = CacheEngine::builder()
+    .database("cache.sqlite3")
+    .build_read_pool(4)?;   // 4 independent read-only connections
+
+// Clone is cheap (Arc clone — same slots):
+let pool2 = pool.clone();
+std::thread::spawn(move || {
+    let entry = pool2.get_if_fresh("file.txt")?;
+    Ok::<_, localcache::LocalFileCacheError>(entry)
+});
+```
+
+`ReadPool` exposes the full read-side API: `get`, `get_if_fresh`, `batch_get`,
+`check_status`, `contains`, `keys`, `export_entries`, `query_run`, and more.
+**Write methods are absent from the type** — read-onlyness is a compile-time
+property, not a runtime `Err(ReadOnly)`.
+
+### Shared-cache backend (lower memory)
+
+To share the SQLite page cache across slots (lower per-slot memory, at the
+cost of shared-cache table locks):
+
+```rust
+let pool: ReadPool<Vec<f32>> = ReadPool::open(
+    CacheOptions { database_path: "cache.sqlite3".into(), shared_cache: true, ..Default::default() },
+    8,
+)?;
+```
+
 ### `shared_engine` helper
 
 For code that needs direct `Arc<Mutex<CacheEngine<T>>>` access:
@@ -94,26 +144,17 @@ default, which allows one writer and multiple concurrent readers.
 - Multiple `CacheEngine` instances can be opened on the **same file**
   simultaneously (each with its own connection) — SQLite handles locking.
 
-## Choosing the right type
-
-| Scenario | Recommended type |
-|---|---|
-| Single-threaded / simple scripts | `CacheEngine<T>` |
-| Async (Tokio) | `AsyncCacheEngine<T>` |
-| Sync multi-threaded | `ConnectionPool<T>` |
-| Manual Arc<Mutex<…>> control | `shared_engine()` |
-
-## Alternative async runtimes (v0.17.0)
+## Alternative async runtimes
 
 `AsyncCacheEngine` is no longer tied to Tokio.  Enable one of the
 alternative runtime features instead:
 
 ```toml
 # async-std backend
-localcache = { version = "0.17", features = ["async-std"] }
+localcache = { version = "0.19", features = ["async-std"] }
 
 # smol backend
-localcache = { version = "0.17", features = ["smol"] }
+localcache = { version = "0.19", features = ["smol"] }
 ```
 
 The public API of `AsyncCacheEngine` is identical regardless of which
@@ -142,5 +183,6 @@ async fn main() -> Result<(), localcache::LocalFileCacheError> {
 | Async (Tokio) | `AsyncCacheEngine<T>` with `async` feature |
 | Async (async-std) | `AsyncCacheEngine<T>` with `async-std` feature |
 | Async (smol) | `AsyncCacheEngine<T>` with `smol` feature |
-| Sync multi-threaded | `ConnectionPool<T>` |
+| Sync multi-threaded — mixed reads and writes | `ConnectionPool<T>` |
+| Sync multi-threaded — read-heavy, separate writer | `ReadPool<T>` (N concurrent connections) |
 | Manual Arc<Mutex<…>> control | `shared_engine()` |

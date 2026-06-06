@@ -103,3 +103,41 @@ from any version back to v0.1 are migrated transparently.
 | 2 | 0.2 | Added `namespace` column |
 | 3 | 0.4 | Added `payload_version`, `encoding` |
 | 4 | 0.6 | Added `last_accessed_at` + LRU index |
+
+## Wire-format stability guarantee (v0.18.0+)
+
+The `Bincode` codec (the default, and the only non-JSON codec) uses
+`bincode::config::legacy()` throughout.  This is a **permanent, documented
+commitment**:
+
+> Payloads written by any `localcache` 0.x release are readable by every
+> other 0.x release and any future 1.x release, without schema migration.
+
+### What this means for your application
+
+**You do not need to bump `payload_version` when upgrading `localcache`.**
+The `payload_version` field is yours — increment it only when *your* payload
+struct or embedding pipeline changes, not when the crate version changes.
+
+| Trigger | Bump `payload_version`? |
+|---|---|
+| localcache version upgrade | **No** |
+| Your struct gains / removes a field | **Yes** |
+| You change your embedding model | **Yes** |
+| Codec switched from Bincode → Json | **Yes** (different bytes) |
+
+### What could break this guarantee
+
+A deliberate, headline CHANGELOG item that introduces a schema-level
+migration (e.g. `schema.rs` version bump) — like the 0.13.2 bincode 1→2
+upgrade which used `config::legacy()` expressly *to preserve* this guarantee.
+That event would be announced in the CHANGELOG, documented with migration
+tooling, and backed by updated compatibility tests.
+
+### How the guarantee is enforced
+
+`tests/compat.rs` opens the committed golden fixture
+(`tests/fixtures/compat-v0_18.sqlite3`, written by v0.18.0) on every CI run
+and asserts that all payloads decode to their expected bit-exact values.  A
+change to the encoding path that breaks this test is caught before it reaches
+any user database.

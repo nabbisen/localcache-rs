@@ -1194,6 +1194,25 @@ where
     // Builder entrypoint
     // ------------------------------------------------------------------
 
+    /// Remove entries whose stored paths no longer exist on disk.
+    ///
+    /// Returns the number of entries deleted.
+    ///
+    /// # Path semantics
+    ///
+    /// Stored paths are **canonical absolute paths** recorded at `set` time
+    /// (via `Path::canonicalize()`).  This method iterates those stored
+    /// strings and calls `Path::exists()` on each one **without
+    /// re-canonicalizing**.
+    ///
+    /// Consequence on **case-insensitive filesystems** (Windows, default
+    /// macOS): a file renamed *only by case* still satisfies `exists()` and
+    /// its entry is therefore **preserved** — the correct behaviour on such
+    /// systems (the original canonical path still resolves to the file).
+    ///
+    /// If you need to track case-only renames explicitly, use
+    /// [`check_status`][CacheEngine::check_status] per entry to compare
+    /// stored vs current metadata.
     pub fn cleanup_missing_files(&self) -> Result<usize, LocalFileCacheError> {
         self.guard_write()?;
         let paths = repository::all_paths_in_namespace(&self.conn, &self.namespace)?;

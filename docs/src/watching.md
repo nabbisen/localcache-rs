@@ -57,6 +57,55 @@ watcher.watch("new_file.txt")?;
 watcher.unwatch("old_file.txt")?;
 ```
 
+## Recursive directory watching
+
+Instead of registering every file individually, watch an entire directory
+subtree.  Only files that have a corresponding cache entry trigger
+invalidation — uncached files are silently ignored by the callback.
+
+```rust
+let mut watcher = engine.watcher()?;
+
+// All files under /data/docs and its subdirectories:
+watcher.watch_dir("/data/docs")?;
+
+// Stop watching a subtree:
+watcher.unwatch_dir("/data/old")?;
+```
+
+`CacheDebouncedWatcher` exposes the same `watch_dir` / `unwatch_dir` pair.
+
+### Builder flag: `watch_dirs(true)`
+
+When set on the builder, `watcher()` and `debounced_watcher()` automatically
+register each cached path's **parent directory** rather than individual files:
+
+```rust
+let engine = CacheEngine::<Vec<f32>>::builder()
+    .database("cache.sqlite3")
+    .watch_dirs(true)          // one OS watch per directory
+    .build()?;
+
+// After preload(), all directories in the cache are registered recursively.
+engine.preload("/data", &ScanOptions { recursive: true, ..Default::default() }, |p| {
+    Ok(compute(&p)?)
+})?;
+let watcher = engine.watcher()?;  // auto-registers parent dirs
+```
+
+This reduces O(n) per-file OS registrations to O(d) per-directory registrations,
+where d is the number of distinct parent directories.
+
+### Coexistence
+
+Recursive directory registrations and per-file registrations can coexist on
+the same watcher:
+
+```rust
+watcher.watch("specific_file.txt")?;   // per-file
+watcher.watch_dir("/data/bulk")?;       // whole subtree
+```
+
 ## Debounced watcher
 
 Editors and build tools sometimes write a file many times per second.

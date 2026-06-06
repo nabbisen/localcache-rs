@@ -98,12 +98,72 @@ let engine = CacheEngine::<Vec<f32>>::builder()
 Opens the database in read-only mode.  Write operations (`set`, `remove`,
 etc.) return `LocalFileCacheError::ReadOnly`.
 
+### `shared_cache()`
+
+Opens in read-only **shared-cache** mode (RFC 0004): uses a SQLite `file:`
+URI with `mode=ro&cache=shared` and enforces `PRAGMA query_only = ON`.
+Multiple engines opened on the same file within one process share the
+SQLite page cache, reducing memory usage.
+
+For `":memory:"`, opens a named shared in-memory database in read-write
+mode — both engines see the same data.  Primarily a testing convenience.
+
+```rust
+// Writer + shared-cache reader within one process.
+let writer = CacheEngine::<Vec<f32>>::builder().database("c.sqlite3").build()?;
+let reader = CacheEngine::<Vec<f32>>::builder()
+    .database("c.sqlite3")
+    .shared_cache()   // read-only, shared page cache
+    .build()?;
+```
+
+### `watch_dirs(enable: bool)` *(watching feature)*
+
+When `true`, `watcher()` and `debounced_watcher()` register each cached
+path's **parent directory** recursively (one OS watch per directory) instead
+of one watch per file.  Events for uncached files in the watched subtrees
+are filtered automatically.
+
+**Default**: `false` (per-file registration).
+
+```rust
+let engine = CacheEngine::<Vec<f32>>::builder()
+    .database("cache.sqlite3")
+    .watch_dirs(true)
+    .build()?;
+let watcher = engine.watcher()?;  // registers directories, not individual files
+```
+
 ### Feature-gated options
 
 | Method | Feature | Description |
 |---|---|---|
 | `.compress()` | `compression` | Enable zstd payload compression |
 | `.encryption_key(key)` | `encryption` | AES-256-GCM key (32 bytes) |
+| `.watch_dirs(bool)` | `watching` | Directory-level recursive watching |
+
+## Terminal methods
+
+### `build()`
+
+Consumes the builder and opens a [`CacheEngine<T>`].
+
+### `build_read_pool(size)`
+
+Consumes the builder and opens a read-only [`ReadPool<T>`] of `size`
+concurrent connections.  All builder options are forwarded to each slot.
+`read_only` is forced `true`.
+
+```rust
+use localcache::CacheEngine;
+
+let pool = CacheEngine::<Vec<f32>>::builder()
+    .database("cache.sqlite3")
+    .namespace("embeddings")
+    .build_read_pool(4)?;   // 4 concurrent read-only connections
+
+let results = pool.query_run(|q| q.path_in_dir("/data", true))?;
+```
 
 ## `CacheOptions` alternative
 

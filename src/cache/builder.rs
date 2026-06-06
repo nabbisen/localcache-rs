@@ -226,4 +226,26 @@ where
         engine.evict_callback = self.evict_callback;
         Ok(engine)
     }
+
+    /// Consume the builder and open a read-only [`ReadPool`] of `size`
+    /// connections.
+    ///
+    /// The `read_only` flag is forced `true`; all other options (namespace,
+    /// change detection, codec, `shared_cache`, …) are forwarded to each
+    /// slot.  See [`ReadPool`][crate::ReadPool] for details.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use localcache::CacheEngine;
+    ///
+    /// let pool = CacheEngine::<Vec<f32>>::builder()
+    ///     .database("cache.sqlite3")
+    ///     .namespace("embeddings")
+    ///     .build_read_pool(4)?;  // 4 concurrent read-only connections
+    /// # Ok::<(), localcache::LocalFileCacheError>(())
+    /// ```
+    pub fn build_read_pool(self, size: usize) -> Result<crate::ReadPool<T>, LocalFileCacheError> {
+        crate::ReadPool::open(self.opts, size)
+    }
 }

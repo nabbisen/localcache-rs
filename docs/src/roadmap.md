@@ -2,7 +2,7 @@
 
 See the live
 [ROADMAP.md](https://github.com/nabbisen/localcache-rs/blob/main/ROADMAP.md)
-on GitHub for the current backlog.
+on GitHub for the full backlog with implementation notes.
 
 ## Completed phases
 
@@ -23,12 +23,14 @@ on GitHub for the current backlog.
 | 13 | 0.13 | Observability — `tracing`, `explain()`, DX |
 | 14 | 0.14 | File watching — `CacheWatcher`, `preload()` |
 | 15 | 0.15 | Production hardening — `metrics`, debounce, namespaces |
-| 16 | 0.16 | Documentation overhaul |
+| 16 | 0.16 | Documentation overhaul — 18-chapter mdBook |
+| 17 | 0.17 | RFC backlog — watching dirs, index hints, OTel, shared cache, async-std/smol |
+| 18 | 0.18 | Directory-scoped query predicates — `path_in_dir`, `path_glob` |
+| 19 | 0.19 | Read-only pool + compatibility guarantees — `ReadPool<T>`, golden fixture |
 
 ## Future directions
 
-- `async-std` / `smol` feature variants
-- Query index hints / explain plan
-- Read-only shared-memory DB mode
-- Recursive directory watching
-- OpenTelemetry spans
+- Performance tuning for very large namespaces (> 1M entries)
+- Cross-process shared-cache via named shared memory (beyond RFC 0004 scope)
+- `#[async_test]` proc-macro wrapper for unified async test authoring across
+  runtime backends (deferred from RFC 0005)

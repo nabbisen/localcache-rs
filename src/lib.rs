@@ -26,6 +26,7 @@ mod detection;
 mod error;
 mod path;
 mod pool;
+mod read_pool;
 mod serialization;
 
 #[cfg(any(feature = "async", feature = "async-std", feature = "smol"))]
@@ -42,6 +43,7 @@ pub use cache::options::{
 pub use cache::query::{QueryBuilder, SortOrder};
 pub use error::LocalFileCacheError;
 pub use pool::{CacheOptionsExt, ConnectionPool, SharedEngine, shared_engine};
+pub use read_pool::ReadPool;
 
 #[cfg(feature = "watching")]
 pub use cache::entry::{InvalidationReason, WatchEvent};

@@ -61,6 +61,17 @@ Five pending RFCs implemented in a single release:
 - [x] Shared `build_path_sql` helper + `params_from_iter` in `repository.rs`
 - [x] RFC 0006 authored, implemented, and moved to `rfcs/done/`
 
+## Phase 19 — Read-only Pool and Compatibility Guarantees (v0.19.0) ✅
+
+- [x] **RFC 0007** — `ReadPool<T>`: N-slot read-only pool, `Clone+Send+Sync`,
+      round-robin checkout, independent/shared-cache backends,
+      full read-side API including `query_run`/`query_dry_run`
+- [x] **RFC 0008** — Compatibility guarantees:
+      wire-format stability documented + enforced by golden fixture
+      (`tests/fixtures/compat-v0_18.sqlite3`); path-semantics contract
+      documented in code and docs; 9 regression tests
+- [x] Release tarball structure changed to `localcache-vX.Y.Z/(files)`
+
 ## Future / Unscheduled
 
 *(all items from the previous Future section shipped in v0.17.0)*

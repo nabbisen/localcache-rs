@@ -16,7 +16,7 @@ All `localcache` operations return `Result<T, LocalFileCacheError>`.
 | `UnknownEncoding(String)` | Stored encoding tag not recognised | Wrong feature enabled for decoding |
 | `PayloadVersionMismatch { stored, expected }` | Version tag mismatch | Call `purge_stale_versions()` |
 | `EncryptionError(String)` *(encryption)* | Wrong key or corrupt data | Verify encryption key |
-| `AsyncTaskPanicked` *(async)* | `spawn_blocking` task panicked | Check payload type and encoding |
+| `AsyncTaskPanicked` *(async / async-std / smol)* | `spawn_blocking` task panicked | Check payload type and encoding |
 
 ## Common patterns
 

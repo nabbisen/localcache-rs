@@ -11,6 +11,66 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.19.0] — 2026-06-06
+
+### Added — RFC 0007: Read-only Connection Pool (`ReadPool<T>`)
+
+- New `ReadPool<T>` type in `src/read_pool.rs` — a cloneable, `Clone + Send + Sync`
+  pool of N independent read-only [`CacheEngine`] connections.
+- Checkout strategy: round-robin start, `try_lock` scan across all slots,
+  blocking fallback on the start slot — no lock-ordering deadlock.
+- **Read-side API only** (write methods are absent from the type):
+  `get`, `get_if_fresh`, `batch_get`, `batch_get_fresh`, `check_status`,
+  `check_status_batch`, `contains`, `explain`, `keys`, `list_entries`,
+  `entry_count`, `cache_stats`, `export_entries`, `scan_dir`,
+  `scan_dir_filtered`, `query_run`, `query_dry_run`, `size`.
+- `CacheEngineBuilder::build_read_pool(size)` — fluent pool construction.
+- Two connection backends controlled by `CacheOptions::shared_cache`:
+  - **independent** (default) — each slot opens with plain `read_only` flags;
+    fully independent page caches; maximum WAL read parallelism.
+  - **shared-cache** — RFC 0004 mode; shared page cache across slots;
+    lower memory on large pools.
+- `:memory:` databases and `size == 0` are rejected at construction with a
+  clear `UnsupportedFeature` error.
+- `ReadPool` re-exported from `localcache::ReadPool`.
+
+### Added — RFC 0008: Compatibility Guarantees
+
+- **Wire-format stability guarantee** formally documented and test-enforced:
+  - Documented in `Codec::Bincode` doc comment, `src/serialization.rs`
+    module doc, and a new section in `docs/src/migration.md`.
+  - Golden fixture database committed: `tests/fixtures/compat-v0_18.sqlite3`
+    (written by v0.18.0, Delete journal mode, < 32 KiB).
+  - `tests/compat.rs` opens the fixture on every CI run and asserts
+    bit-exact payload decodes (`compat_plain_bincode_*`,
+    `compat_compressed_*`, `compat_plain_and_compressed_coexist_in_same_db`).
+  - `examples/gen_compat_fixture.rs` — the committed, auditable one-off
+    generator; marked **do not run routinely**.
+- **Path semantics** documented and tested:
+  - New "Path handling" section in `docs/src/api.md`: canonicalization
+    contract, deleted-file raw-path fallback, `cleanup_missing_files`
+    semantics, Windows case-insensitivity behaviour.
+  - `src/path.rs` module doc extended with the full path-handling contract.
+  - `cleanup_missing_files` doc comment added with case-insensitive
+    filesystem note.
+  - New regression tests: `path_relative_and_absolute_resolve_to_same_entry`,
+    `deleted_file_entry_reachable_by_raw_path_fallback`,
+    `cleanup_missing_files_removes_exactly_absent_entries`,
+    `cleanup_missing_files_leaves_all_present_entries_intact`,
+    `symlink_resolves_to_target_entry` (`#[cfg(unix)]`).
+
+### Changed
+
+- **Release tarball structure** changed from `localcache/(files)` to
+  `localcache-vX.Y.Z/(files)`:
+  - Archive name now uses a `v` prefix: `localcache-v0.19.0.tar.gz`.
+  - Extracted top-level directory matches the archive version:
+    `localcache-v0.19.0/`.
+- RFC 0007 and RFC 0008 moved from `rfcs/proposed/` to `rfcs/done/`,
+  Status updated to `Implemented (v0.19.0)`.
+
+---
+
 ## [0.18.0] — 2026-06-06
 
 ### Added — RFC 0006: Directory-scoped Query Predicates
@@ -473,6 +533,7 @@ Namespaces, batch ops, TTL, PRAGMAs, schema migration.
 Initial release.
 
 [Unreleased]: https://github.com/nabbisen/localcache-rs/compare/v0.16.2...HEAD
+[0.19.0]: https://github.com/nabbisen/localcache-rs/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/nabbisen/localcache-rs/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/nabbisen/localcache-rs/compare/v0.16.2...v0.17.0
 [0.16.2]: https://github.com/nabbisen/localcache-rs/compare/v0.16.1...v0.16.2

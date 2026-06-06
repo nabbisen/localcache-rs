@@ -184,3 +184,34 @@ script = [
 [tasks.release-check]
 description = "Full pre-release checklist"
 dependencies = ["version-check", "changelog-check", "pre-publish"]
+
+# ---------------------------------------------------------------------------
+# Archive (release tarball)
+#
+# Produces: localcache-vX.Y.Z.tar.gz
+# Structure: localcache-vX.Y.Z/(files)   ← versioned top-level directory
+# Excludes:  target/  benches/
+#
+# Naming convention adopted from v0.19.0:
+#   • Archive filename: localcache-vX.Y.Z.tar.gz  (v prefix)
+#   • Top-level directory inside the archive: localcache-vX.Y.Z/
+# ---------------------------------------------------------------------------
+
+[tasks.archive]
+description = "Create a versioned release tarball (localcache-vX.Y.Z.tar.gz)"
+script = [
+    '''
+    VERSION=$(cargo metadata --no-deps --format-version 1 | python3 -c "import sys,json; pkgs=json.load(sys.stdin)[\"packages\"]; print(next(p[\"version\"] for p in pkgs if p[\"name\"]==\"localcache\"))")
+    NAME="localcache-v${VERSION}"
+    ARCHIVE="${NAME}.tar.gz"
+    echo "Creating ${ARCHIVE} ..."
+    cd ..
+    tar \
+      --transform "s|^localcache|${NAME}|" \
+      --exclude="localcache/target" \
+      --exclude="localcache/benches" \
+      -czf "${ARCHIVE}" \
+      localcache/
+    echo "Done: ${ARCHIVE} ($(du -sh ${ARCHIVE} | cut -f1))"
+    '''
+]

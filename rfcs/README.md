@@ -50,6 +50,8 @@ The "Background" section is optional in both templates.
 | [0004](./done/0004-shared-memory-db.md) | Read-only Shared-memory DB Mode | v0.17.0 |
 | [0005](./done/0005-async-std-smol.md) | async-std / smol Feature Variants | v0.17.0 |
 | [0006](./done/0006-directory-scoped-query-predicates.md) | Directory-scoped Query Predicates | v0.18.0 |
+| [0007](./done/0007-read-only-connection-pool.md) | Read-only Connection Pool (`ReadPool<T>`) | v0.19.0 |
+| [0008](./done/0008-compatibility-guarantees.md) | Compatibility Guarantees: Payload Wire Format and Path Semantics | v0.19.0 |
 
 ### Archive
 

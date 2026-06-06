@@ -29,6 +29,19 @@ pub enum ChangeDetectionMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Codec {
     /// Binary encoding via `bincode` — compact and fast.  Default.
+    ///
+    /// # Wire-format stability guarantee
+    ///
+    /// Payloads written with this codec use `bincode::config::legacy()`,
+    /// which is byte-compatible with every `localcache` release from 0.1
+    /// onwards.  This guarantee holds for **all 0.x and future 1.x**
+    /// releases: the wire format will only change behind a headline
+    /// CHANGELOG migration that transparently rewrites existing payloads.
+    ///
+    /// **Consequence for applications:** a `localcache` upgrade **never**
+    /// requires bumping `payload_version`.  The `payload_version` field is
+    /// yours to increment when *your* payload struct or pipeline changes,
+    /// not when the crate version changes.
     #[default]
     Bincode,
 

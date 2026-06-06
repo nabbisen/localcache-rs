@@ -68,7 +68,17 @@ let results = engine.query()
     .run()?;
 ```
 
-### Available predicates
+### Path filters *(always available)*
+
+| Method | Description |
+|---|---|
+| `.path_like(pattern)` | SQL `LIKE` pattern on stored path (`%` = any sequence, `_` = one char) |
+| `.path_in_dir(dir, recursive)` | Exact directory scoping — no over-fetch, metacharacter-safe |
+| `.path_glob(pattern)` | Glob on stored path: `*`, `?`, `{a,b}` alternation |
+| `.index_hint(name)` | Nominate a SQLite index for the path-listing scan |
+| `.dry_run()` | Return `EXPLAIN QUERY PLAN` output without loading payloads |
+
+### Payload predicates *(require `json` feature)*
 
 | Method | Description |
 |---|---|
@@ -77,9 +87,6 @@ let results = engine.query()
 | `.field_lt(path, n)` | Numeric field < threshold |
 | `.field_contains(path, s)` | String field contains substring |
 | `.payload_contains(s)` | Full payload (as JSON string) contains substring |
-| `.path_like(pattern)` | SQL `LIKE` pattern on stored path |
-
-### Sorting
 
 ```rust
 // Single sort key.
