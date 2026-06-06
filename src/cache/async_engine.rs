@@ -260,18 +260,15 @@ where
     /// # Example
     ///
     /// ```no_run
-    /// # use localcache::{AsyncCacheEngine, CacheOptions, Codec};
-    /// # use serde::{Serialize, Deserialize};
-    /// # #[derive(Serialize, Deserialize)] struct Doc { score: f64 }
+    /// # use localcache::{AsyncCacheEngine, CacheOptions};
     /// # #[tokio::main] async fn main() -> Result<(), localcache::LocalFileCacheError> {
-    /// let engine: AsyncCacheEngine<Doc> = AsyncCacheEngine::open(CacheOptions {
+    /// let engine: AsyncCacheEngine<Vec<f32>> = AsyncCacheEngine::open(CacheOptions {
     ///     database_path: ":memory:".into(),
-    ///     codec: Codec::Json,
     ///     ..CacheOptions::default()
     /// }).await?;
     ///
-    /// let results: Vec<localcache::CacheEntry<Doc>> =
-    ///     engine.query_run(|q| q.field_gt("score", 0.9)).await?;
+    /// let results: Vec<localcache::CacheEntry<Vec<f32>>> =
+    ///     engine.query_run(|q| q.path_like("%.txt")).await?;
     /// # Ok(()) }
     /// ```
     pub async fn query_run<F, U>(
@@ -311,6 +308,46 @@ where
         .await
     }
 
+    /// Async version of [`crate::CacheEngine::query`] + [`crate::QueryBuilder::dry_run`].
+    ///
+    /// Returns the SQLite `EXPLAIN QUERY PLAN` output for the configured
+    /// query without loading any payloads.
+    ///
+    /// ```no_run
+    /// # use localcache::{AsyncCacheEngine, CacheOptions};
+    /// # #[tokio::main] async fn main() -> Result<(), localcache::LocalFileCacheError> {
+    /// let engine = AsyncCacheEngine::<Vec<f32>>::open(CacheOptions {
+    ///     database_path: ":memory:".into(),
+    ///     ..CacheOptions::default()
+    /// }).await?;
+    /// let plan = engine.query_dry_run(|q| q.path_like("%.txt")).await?;
+    /// println!("{plan}");
+    /// # Ok(()) }
+    /// ```
+    pub async fn query_dry_run<F>(&self, build: F) -> Result<String, LocalFileCacheError>
+    where
+        F: FnOnce(
+                crate::cache::query::QueryBuilder<'_, T>,
+            ) -> crate::cache::query::QueryBuilder<'_, T>
+            + Send
+            + 'static,
+        T: Send + 'static,
+    {
+        let inner = Arc::clone(&self.inner);
+        spawn(move || {
+            let guard = inner.lock().unwrap();
+            // SAFETY: same transmute pattern as `query_run` — we hold the
+            // Mutex guard for the full duration of the closure, guaranteeing
+            // the engine outlives the borrow.
+            let engine_ref: &crate::cache::engine::CacheEngine<T> =
+                unsafe { &*(&*guard as *const crate::cache::engine::CacheEngine<_>) };
+            let q = engine_ref.query();
+            let q = build(q);
+            q.dry_run()
+        })
+        .await
+    }
+
     /// Async version of [`CacheEngine::create_path_index`].
     pub async fn create_path_index(&self, name: String) -> Result<String, LocalFileCacheError> {
         let inner = Arc::clone(&self.inner);
@@ -335,7 +372,5 @@ where
     F: FnOnce() -> Result<R, LocalFileCacheError> + Send + 'static,
     R: Send + 'static,
 {
-    tokio::task::spawn_blocking(f)
-        .await
-        .map_err(|_| LocalFileCacheError::AsyncTaskPanicked)?
+    crate::cache::runtime::spawn_blocking(f).await
 }

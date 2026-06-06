@@ -2,7 +2,7 @@
 
 | Field    | Value |
 |----------|-------|
-| Status   | Proposed |
+| Status   | Implemented (v0.17.0) |
 | Feature  | *(core, no feature flag)* |
 | Touches  | `src/cache/engine.rs`, `src/cache/options.rs`, `src/cache/builder.rs` |
 
@@ -170,3 +170,22 @@ defence in depth for read-only shared connections.
 The `file:` URI may expose the database path in SQLite error messages.
 This is not a new concern — `Connection::open` already includes the path
 in its error messages.
+
+## Implementation notes (v0.17.0)
+
+### `:memory:` + `shared_cache` — read-write, not read-only
+
+The RFC example shows a plain `:memory:` writer alongside a
+`shared_cache()` reader, but `shared_cache()` as specified implies
+`read_only = true`.  A read-only fresh in-memory database would be
+permanently empty and therefore useless.
+
+**Resolution:** when `shared_cache` is combined with `:memory:`, the
+engine opens `file::memory:?cache=shared` in **read-write** mode and
+does **not** force `read_only`.  All other `shared_cache` semantics
+(page-cache sharing, `PRAGMA query_only = ON`) remain.  Both engines
+must use `.shared_cache()` to share the named in-memory database.
+
+The `CacheEngineBuilder::shared_cache()` builder method therefore does
+not set `opts.read_only`; `CacheEngine::open()` computes the effective
+read-only flag at connection time based on whether the path is `:memory:`.

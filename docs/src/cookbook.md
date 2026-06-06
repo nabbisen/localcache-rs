@@ -224,3 +224,85 @@ let engine = CacheEngine::<Vec<f32>>::builder()
     .database("cache.sqlite3")
     .build()?;
 ```
+
+## Recipe 8 — Distributed tracing with OpenTelemetry
+
+Enable the `opentelemetry` feature to export `localcache` spans to any
+OTel-compatible backend:
+
+```toml
+[dependencies]
+localcache          = { version = "0.17", features = ["opentelemetry"] }
+opentelemetry       = { version = "0.32", features = ["trace"] }
+tracing-opentelemetry = "0.33"
+tracing-subscriber  = { version = "0.3", features = ["registry"] }
+opentelemetry_sdk   = { version = "0.32", features = ["rt-tokio"] }
+opentelemetry-stdout = { version = "0.32" }
+```
+
+```rust
+use opentelemetry_sdk::trace::SdkTracerProvider;
+use opentelemetry::global;
+use tracing_subscriber::{layer::SubscriberExt, Registry};
+use tracing_opentelemetry::OpenTelemetryLayer;
+
+fn init_tracing() {
+    let exporter = opentelemetry_stdout::SpanExporter::default();
+    let provider = SdkTracerProvider::builder()
+        .with_simple_exporter(exporter)
+        .build();
+    global::set_tracer_provider(provider.clone());
+
+    let tracer = provider.tracer("localcache-app");
+    let otel_layer = OpenTelemetryLayer::new(tracer);
+    let subscriber = Registry::default().with(otel_layer);
+    tracing::subscriber::set_global_default(subscriber).unwrap();
+}
+
+// Then use the engine normally — spans export automatically:
+//   localcache::get  { path = "…", namespace = "embeddings" }
+//   localcache::set  { path = "…", namespace = "embeddings", bytes = 4096 }
+```
+
+`localcache` never calls OTel APIs directly; it only emits `tracing` spans.
+The `opentelemetry` feature simply ensures compatible dependency versions
+are in scope.
+
+## Recipe 9 — Read-only shared-cache for worker fleets
+
+One writer + many readers in the same process (e.g. a thread pool):
+
+```rust
+// Writer: normal read-write engine.
+let writer: CacheEngine<Vec<f32>> = CacheEngine::builder()
+    .database("shared_cache.sqlite3")
+    .build()?;
+writer.set("embedding.bin", &embedding)?;
+
+// Readers: lightweight shared-cache handles (share the SQLite page cache).
+let reader: CacheEngine<Vec<f32>> = CacheEngine::builder()
+    .database("shared_cache.sqlite3")
+    .shared_cache()   // read-only, PRAGMA query_only = ON
+    .build()?;
+
+let entry = reader.get("embedding.bin")?;
+// reader.set(…) → Err(LocalFileCacheError::ReadOnly)
+```
+
+For in-process pipelines where you need both engines to see the same
+in-memory data without a file:
+
+```rust
+// Both engines open the same named shared in-memory database.
+let e1: CacheEngine<Vec<f32>> = CacheEngine::builder()
+    .database(":memory:")
+    .shared_cache()
+    .build()?;
+let e2: CacheEngine<Vec<f32>> = CacheEngine::builder()
+    .database(":memory:")
+    .shared_cache()
+    .build()?;
+
+e1.set("key.bin", &payload)?;
+assert!(e2.get("key.bin")?.is_some()); // e2 sees e1's data
+```

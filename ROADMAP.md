@@ -31,10 +31,32 @@
 - [x] `changelog_summary.md` — phase-by-phase history from 0.1 to 0.15
 - [x] `roadmap.md` — completed phases table + future directions
 
+## Phase 17 — RFC Backlog Clearance (v0.17.0) ✅
+
+Five pending RFCs implemented in a single release:
+
+- [x] **RFC 0001** — Recursive directory watching: `watch_dir` / `unwatch_dir`
+      on both watcher types; `watch_dirs(bool)` builder flag; `contains()`
+      membership filter in callbacks
+- [x] **RFC 0002** — Query index hints & explain plan: `QueryBuilder::index_hint`,
+      `QueryBuilder::dry_run`, `AsyncCacheEngine::query_dry_run`
+- [x] **RFC 0003** — OpenTelemetry spans: `opentelemetry` feature
+      (opentelemetry 0.32 + tracing-opentelemetry 0.33); `namespace` field
+      added to all tracing spans; `check_status` promoted to `debug_span!`
+- [x] **RFC 0004** — Read-only shared-cache mode: `CacheOptions::shared_cache`,
+      `CacheEngineBuilder::shared_cache()`; SQLite URI + `query_only` ON;
+      `:memory:` shared in-process variant
+- [x] **RFC 0005** — async-std / smol runtime variants: `async-std` and `smol`
+      features; `src/cache/runtime.rs` `SpawnBlocking` trait; precedence-based
+      dispatch (Tokio > async-std > smol) for additive feature compatibility
+- [x] RFC 000 lifecycle policy adopted: `rfcs/` restructured into
+      `proposed/` / `done/` / `archive/` folders
+
 ## Future / Unscheduled
 
-- `async-std` / `smol` feature variants
-- Query index hints / explain plan
-- Read-only shared-memory DB mode
-- Recursive directory watching (`watching` feature)
-- OpenTelemetry spans
+*(all items from the previous Future section shipped in v0.17.0)*
+
+- Performance tuning for very large namespaces (> 1M entries)
+- Cross-process shared-cache via named shared memory (beyond RFC 0004 scope)
+- `#[async_test]` proc-macro wrapper for unified async test authoring across
+  runtime backends (deferred from RFC 0005)

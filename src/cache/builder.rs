@@ -142,6 +142,66 @@ where
         self
     }
 
+    /// Open in read-only **shared-cache** mode (see
+    /// [`CacheOptions::shared_cache`]).
+    ///
+    /// Engines opened with this option on the same database file within one
+    /// process share the SQLite page cache.  Implies read-only for
+    /// file-backed databases; write methods return
+    /// [`LocalFileCacheError::ReadOnly`].
+    ///
+    /// With `":memory:"`, opens a named shared in-memory database in
+    /// read-write mode instead — all engines opened this way within the
+    /// process share the same data.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use localcache::CacheEngine;
+    ///
+    /// let reader = CacheEngine::<Vec<f32>>::builder()
+    ///     .database("cache.sqlite3")
+    ///     .shared_cache()
+    ///     .build()?;
+    /// # Ok::<(), localcache::LocalFileCacheError>(())
+    /// ```
+    pub fn shared_cache(mut self) -> Self {
+        self.opts.shared_cache = true;
+        self
+    }
+
+    /// Pre-register every cached path's **parent directory** for recursive
+    /// watching when [`CacheEngine::watcher`] /
+    /// [`CacheEngine::debounced_watcher`] is called, instead of registering
+    /// each file individually.
+    ///
+    /// Directory watching covers files cached after the watcher starts and
+    /// reduces O(n) per-file registrations to one OS watch per directory.
+    /// Events for uncached files in the watched subtrees are filtered out by
+    /// the watcher callback.
+    ///
+    /// Defaults to `false` (per-file registration).
+    ///
+    /// Requires the `watching` Cargo feature.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use localcache::CacheEngine;
+    ///
+    /// let engine = CacheEngine::<Vec<f32>>::builder()
+    ///     .database("cache.sqlite3")
+    ///     .watch_dirs(true)
+    ///     .build()?;
+    /// let watcher = engine.watcher()?; // registers directories recursively
+    /// # Ok::<(), localcache::LocalFileCacheError>(())
+    /// ```
+    #[cfg(feature = "watching")]
+    pub fn watch_dirs(mut self, enable: bool) -> Self {
+        self.opts.watch_dirs = enable;
+        self
+    }
+
     /// Enable zstd compression of stored payloads.
     ///
     /// Requires the `compression` Cargo feature.

@@ -612,20 +612,27 @@ pub(crate) fn keys(
     conn: &Connection,
     namespace: &str,
     pattern: Option<&str>,
+    index_hint: Option<&str>,
 ) -> Result<Vec<std::path::PathBuf>, LocalFileCacheError> {
-    let (sql, params_vec): (&str, Vec<String>) = if pattern.is_some() {
+    // Build "files" table reference — append INDEXED BY clause when requested.
+    let table = match index_hint {
+        Some(idx) => format!("files INDEXED BY {idx}"),
+        None => "files".to_owned(),
+    };
+
+    let (sql, params_vec): (String, Vec<String>) = if let Some(pat) = pattern {
         (
-            "SELECT path FROM files WHERE namespace = ?1 AND path LIKE ?2 ORDER BY path",
-            vec![namespace.to_owned(), pattern.unwrap().to_owned()],
+            format!("SELECT path FROM {table} WHERE namespace = ?1 AND path LIKE ?2 ORDER BY path"),
+            vec![namespace.to_owned(), pat.to_owned()],
         )
     } else {
         (
-            "SELECT path FROM files WHERE namespace = ?1 ORDER BY path",
+            format!("SELECT path FROM {table} WHERE namespace = ?1 ORDER BY path"),
             vec![namespace.to_owned()],
         )
     };
 
-    let mut stmt = conn.prepare(sql)?;
+    let mut stmt = conn.prepare(&sql)?;
     let paths: Result<Vec<_>, _> = match params_vec.len() {
         1 => stmt
             .query_map(params![params_vec[0]], |r| {
@@ -639,6 +646,46 @@ pub(crate) fn keys(
             .collect(),
     };
     Ok(paths?)
+}
+
+/// Run `EXPLAIN QUERY PLAN <sql>` and return the human-readable plan as a
+/// newline-joined string, one detail line per step.
+pub(crate) fn explain_query(
+    conn: &Connection,
+    namespace: &str,
+    pattern: Option<&str>,
+    index_hint: Option<&str>,
+) -> Result<String, LocalFileCacheError> {
+    let table = match index_hint {
+        Some(idx) => format!("files INDEXED BY {idx}"),
+        None => "files".to_owned(),
+    };
+
+    let (sql, params_vec): (String, Vec<String>) = if let Some(pat) = pattern {
+        (
+            format!("SELECT path FROM {table} WHERE namespace = ?1 AND path LIKE ?2 ORDER BY path"),
+            vec![namespace.to_owned(), pat.to_owned()],
+        )
+    } else {
+        (
+            format!("SELECT path FROM {table} WHERE namespace = ?1 ORDER BY path"),
+            vec![namespace.to_owned()],
+        )
+    };
+
+    let explain_sql = format!("EXPLAIN QUERY PLAN {sql}");
+    let mut stmt = conn.prepare(&explain_sql)?;
+    let rows: Result<Vec<String>, _> = match params_vec.len() {
+        1 => stmt
+            .query_map(params![params_vec[0]], |row| row.get::<_, String>(3))?
+            .collect(),
+        _ => stmt
+            .query_map(params![params_vec[0], params_vec[1]], |row| {
+                row.get::<_, String>(3)
+            })?
+            .collect(),
+    };
+    Ok(rows?.join("\n"))
 }
 
 // ---------------------------------------------------------------------------

@@ -5,7 +5,7 @@ only for what you use.
 
 ```toml
 [dependencies]
-localcache = { version = "0.15", features = ["async", "compression", "json"] }
+localcache = { version = "0.17", features = ["async", "compression", "json"] }
 ```
 
 ## Feature reference
@@ -14,12 +14,20 @@ localcache = { version = "0.15", features = ["async", "compression", "json"] }
 |---|---|---|
 | *(default)* | Core cache — bincode payloads, BLAKE3, SQLite | `CacheEngine<T>`, `ConnectionPool<T>` |
 | `async` | Tokio-based async wrapper | `AsyncCacheEngine<T>` |
+| `async-std` | async-std async wrapper | `AsyncCacheEngine<T>` |
+| `smol` | smol async wrapper | `AsyncCacheEngine<T>` |
 | `compression` | zstd payload compression | `CacheOptions::compress_payloads` |
 | `json` | JSON codec + `QueryBuilder` predicates | `Codec::Json`, `engine.query()` |
 | `encryption` | AES-256-GCM payload encryption | `CacheEngineBuilder::encryption_key()` |
-| `tracing` | `tracing` spans on hot paths | automatic; zero-cost when disabled |
+| `tracing` | `tracing` spans on hot paths (with `namespace` field) | automatic; zero-cost when disabled |
+| `opentelemetry` | OTel bridge via `tracing-opentelemetry` (implies `tracing`) | caller installs `OpenTelemetryLayer` |
 | `watching` | OS file-system events for reactive invalidation | `CacheWatcher<T>`, `CacheDebouncedWatcher<T>` |
 | `metrics` | `metrics` counters and histograms | automatic; zero-cost when disabled |
+
+> **Async runtime priority:** when more than one async feature is enabled
+> simultaneously, the active backend is chosen by priority:
+> `async` (Tokio) > `async-std` > `smol`.  Features remain additive for
+> `--all-features` compatibility.
 
 ## async
 
@@ -99,12 +107,43 @@ Key rotation is supported via `engine.rotate_encryption_key(&new_key)`.
 ## tracing
 
 When enabled, `get`, `set`, and `check_status` emit `tracing::debug_span!`
-events with path, hit/miss status, byte counts, and staleness reasons.
+events with path, namespace, hit/miss status, byte counts, and staleness reasons.
 Compatible with any `tracing` subscriber (e.g. `tracing-subscriber`,
 `tokio-console`).
 
 No code changes are required; all spans are compiled out when the feature
 is disabled.
+
+## opentelemetry
+
+Bridges the existing `tracing` instrumentation to any OpenTelemetry-compatible
+backend (Jaeger, Honeycomb, OTLP, stdout, …) via
+[`tracing-opentelemetry`](https://crates.io/crates/tracing-opentelemetry).
+
+Implies `tracing`.  No new span sites are added — the existing spans become
+exportable automatically once the caller installs an `OpenTelemetryLayer`:
+
+```rust
+use tracing_subscriber::{layer::SubscriberExt, Registry};
+use tracing_opentelemetry::OpenTelemetryLayer;
+
+let tracer = /* configure your OTLP / Jaeger / stdout exporter */;
+let subscriber = Registry::default().with(OpenTelemetryLayer::new(tracer));
+tracing::subscriber::set_global_default(subscriber).unwrap();
+
+// localcache spans (get / set / check_status) now appear in your traces:
+let engine = CacheEngine::<Vec<f32>>::builder()
+    .database("cache.sqlite3")
+    .build()?;
+engine.set("file.txt", &payload)?;  // → OTel span emitted
+```
+
+`localcache` itself never calls any OTel API — exporter setup is always the
+application's responsibility.
+
+> **Path data in spans:** `path` span attributes contain filesystem paths.
+> If your exporter sends traces to a remote collector, redact sensitive paths
+> at the exporter layer.
 
 ## watching
 
@@ -127,6 +166,31 @@ For rapid write scenarios, use `debounced_watcher`:
 use std::time::Duration;
 let watcher = engine.debounced_watcher(Duration::from_millis(300))?;
 ```
+
+### Recursive directory watching (v0.17.0)
+
+Instead of one OS watch per cached file, you can watch an entire directory
+subtree.  Events for files *not* in the cache are filtered out automatically.
+
+```rust
+// Option 1: watch a directory explicitly after creating the watcher
+let mut watcher = engine.watcher()?;
+watcher.watch_dir("/data/documents")?;
+
+// Option 2: builder flag — watcher() auto-registers parent directories
+let engine = CacheEngine::<Vec<f32>>::builder()
+    .database("cache.sqlite3")
+    .watch_dirs(true)    // one OS watch per directory, not per file
+    .build()?;
+let watcher = engine.watcher()?;
+
+// To stop watching a subtree:
+watcher.unwatch_dir("/data/old")?;
+```
+
+Both `CacheWatcher` and `CacheDebouncedWatcher` expose `watch_dir` /
+`unwatch_dir`.  Recursive and per-file registrations can coexist on the
+same watcher.
 
 ## metrics
 

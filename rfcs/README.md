@@ -1,11 +1,10 @@
 # RFCs
 
-This directory contains design specifications for planned features.
-Each file covers one roadmap theme and serves as both the external API
-design and the internal implementation guide for the developer picking
-up the work.
+This directory contains design specifications for `localcache`.
+The lifecycle of RFC files (folder layout, states, numbering, status fields,
+cross-references) is governed by **[RFC 000](./done/000-rfc-lifecycle-policy.md)**.
 
-## Template
+## Templates
 
 **Lightweight** (small / unambiguous scope):
 
@@ -13,7 +12,7 @@ up the work.
 # RFC NNNN — Title
 | Field | Value |
 |-------|-------|
-| Status | Proposed / Accepted / Implemented |
+| Status | Proposed |
 | Feature | cargo feature name or *(core)* |
 | Touches | affected source files |
 
@@ -35,17 +34,26 @@ up the work.
 ## Open questions
 ```
 
-The "Background" section is optional in both templates; include it when
-historical context materially helps the implementor.
+The "Background" section is optional in both templates.
 
 ---
 
 ## Index
 
-| RFC | Title | Status |
-|-----|-------|--------|
-| [0001](./0001-recursive-directory-watching.md) | Recursive Directory Watching | Proposed |
-| [0002](./0002-query-index-hints.md) | Query Index Hints and Explain Plan | Proposed |
-| [0003](./0003-opentelemetry-spans.md) | OpenTelemetry Spans | Proposed |
-| [0004](./0004-shared-memory-db.md) | Read-only Shared-memory DB Mode | Proposed |
-| [0005](./0005-async-std-smol.md) | async-std / smol Feature Variants | Proposed |
+### Implemented
+
+| RFC | Title | Shipped in |
+|-----|-------|------------|
+| [0001](./done/0001-recursive-directory-watching.md) | Recursive Directory Watching | v0.17.0 |
+| [0002](./done/0002-query-index-hints.md) | Query Index Hints and Explain Plan | v0.17.0 |
+| [0003](./done/0003-opentelemetry-spans.md) | OpenTelemetry Spans | v0.17.0 |
+| [0004](./done/0004-shared-memory-db.md) | Read-only Shared-memory DB Mode | v0.17.0 |
+| [0005](./done/0005-async-std-smol.md) | async-std / smol Feature Variants | v0.17.0 |
+
+### Archive
+
+*(none yet)*
+
+### Proposed
+
+*(none — all pending RFCs shipped in v0.17.0)*

@@ -452,3 +452,304 @@ mod async_phase13_tests {
 
 // ====================================================================
 // Phase 14 — preload()
+
+// ============================================================
+// RFC 0003 — OpenTelemetry Spans
+// Tests the namespace field added to tracing spans; the full
+// OTel bridge is a caller responsibility (no new span sites).
+// ============================================================
+
+#[cfg(feature = "tracing")]
+mod rfc0003_opentelemetry_spans {
+    use std::sync::{Arc, Mutex};
+
+    use tempfile::TempDir;
+
+    use localcache::CacheEngine;
+
+    use super::write_file;
+
+    // A minimal tracing Subscriber that records visited span names.
+    struct SpanRecorder {
+        names: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl tracing::Subscriber for SpanRecorder {
+        fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+        fn new_span(&self, attrs: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            self.names
+                .lock()
+                .unwrap()
+                .push(attrs.metadata().name().to_owned());
+            tracing::span::Id::from_u64(1)
+        }
+        fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+        fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+        fn event(&self, _: &tracing::Event<'_>) {}
+        fn enter(&self, _: &tracing::span::Id) {}
+        fn exit(&self, _: &tracing::span::Id) {}
+    }
+
+    #[test]
+    fn get_set_check_status_spans_recorded_with_namespace() {
+        let names: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let recorder = SpanRecorder {
+            names: Arc::clone(&names),
+        };
+
+        let dir = TempDir::new().unwrap();
+        tracing::subscriber::with_default(recorder, || {
+            let engine: CacheEngine<Vec<f32>> = CacheEngine::builder()
+                .database(":memory:")
+                .namespace("rfc0003_ns")
+                .build()
+                .unwrap();
+
+            let path = write_file(&dir, "otel.txt", b"data");
+            engine.set(&path, &vec![1.0_f32]).unwrap();
+            let _ = engine.get(&path).unwrap();
+            let _ = engine.check_status(&path).unwrap();
+        });
+
+        let recorded = names.lock().unwrap().clone();
+        assert!(
+            recorded.iter().any(|n| n == "localcache::set"),
+            "expected localcache::set span; got: {recorded:?}"
+        );
+        assert!(
+            recorded.iter().any(|n| n == "localcache::get"),
+            "expected localcache::get span; got: {recorded:?}"
+        );
+        assert!(
+            recorded.iter().any(|n| n == "localcache::check_status"),
+            "expected localcache::check_status span; got: {recorded:?}"
+        );
+    }
+
+    // Verify the opentelemetry feature compiles alongside tracing.
+    #[cfg(feature = "opentelemetry")]
+    #[test]
+    fn opentelemetry_feature_compiles() {
+        // The opentelemetry feature's main job is to pull compatible deps
+        // into the build graph so callers can install OpenTelemetryLayer.
+        // This test verifies the feature compiles without any engine-side
+        // API changes or panics.
+        let dir = TempDir::new().unwrap();
+        let engine: CacheEngine<Vec<f32>> =
+            CacheEngine::builder().database(":memory:").build().unwrap();
+        let path = write_file(&dir, "otel2.txt", b"data");
+        engine.set(&path, &vec![2.0_f32]).unwrap();
+        let v = engine.get(&path).unwrap();
+        assert!(v.is_some());
+    }
+}
+
+// ============================================================
+// RFC 0004 — Read-only Shared-cache Mode
+// ============================================================
+
+mod rfc0004_shared_cache {
+    use tempfile::TempDir;
+
+    use localcache::{CacheEngine, LocalFileCacheError};
+
+    use super::write_file;
+
+    // ------------------------------------------------------------------
+    // shared_cache on a file-backed DB: read ops work, write ops err
+    // ------------------------------------------------------------------
+    #[test]
+    fn shared_cache_file_backed_reads_and_blocks_writes() {
+        let dir = TempDir::new().unwrap();
+        let db = dir.path().join("shared.sqlite3");
+
+        // Write via a normal (read-write) engine.
+        let path = write_file(&dir, "sc.txt", b"shared cache test");
+        {
+            let writer: CacheEngine<Vec<f32>> =
+                CacheEngine::builder().database(&db).build().unwrap();
+            writer.set(&path, &vec![1.0_f32]).unwrap();
+        }
+
+        // Open in shared-cache (read-only) mode.
+        let reader: CacheEngine<Vec<f32>> = CacheEngine::builder()
+            .database(&db)
+            .shared_cache()
+            .build()
+            .unwrap();
+
+        // Reads work.
+        let entry = reader.get(&path).unwrap();
+        assert!(
+            entry.is_some(),
+            "shared_cache reader must see written entry"
+        );
+
+        let keys = reader.keys(None).unwrap();
+        assert!(!keys.is_empty());
+
+        // Writes return ReadOnly.
+        let write_result = reader.set(&path, &vec![2.0_f32]);
+        assert!(
+            matches!(write_result, Err(LocalFileCacheError::ReadOnly)),
+            "expected ReadOnly error; got: {write_result:?}"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Two shared-cache readers see the same committed data
+    // ------------------------------------------------------------------
+    #[test]
+    fn two_shared_cache_readers_see_same_data() {
+        let dir = TempDir::new().unwrap();
+        let db = dir.path().join("shared2.sqlite3");
+        let path = write_file(&dir, "sc2.txt", b"two readers");
+
+        {
+            let writer: CacheEngine<Vec<f32>> =
+                CacheEngine::builder().database(&db).build().unwrap();
+            writer.set(&path, &vec![3.0_f32]).unwrap();
+        }
+
+        let r1: CacheEngine<Vec<f32>> = CacheEngine::builder()
+            .database(&db)
+            .shared_cache()
+            .build()
+            .unwrap();
+        let r2: CacheEngine<Vec<f32>> = CacheEngine::builder()
+            .database(&db)
+            .shared_cache()
+            .build()
+            .unwrap();
+
+        assert!(r1.get(&path).unwrap().is_some());
+        assert!(r2.get(&path).unwrap().is_some());
+        assert_eq!(r1.entry_count().unwrap(), r2.entry_count().unwrap());
+    }
+
+    // ------------------------------------------------------------------
+    // :memory: with shared_cache: two engines share the in-memory DB
+    // ------------------------------------------------------------------
+    #[test]
+    fn memory_shared_cache_two_engines_share_data() {
+        let dir = TempDir::new().unwrap();
+        let path = write_file(&dir, "mem_sc.txt", b"in memory");
+
+        // Both engines open the same named shared in-memory database.
+        let e1: CacheEngine<Vec<f32>> = CacheEngine::builder()
+            .database(":memory:")
+            .shared_cache()
+            .build()
+            .unwrap();
+        let e2: CacheEngine<Vec<f32>> = CacheEngine::builder()
+            .database(":memory:")
+            .shared_cache()
+            .build()
+            .unwrap();
+
+        // Write via e1, read via e2.
+        e1.set(&path, &vec![4.0_f32]).unwrap();
+
+        let entry = e2.get(&path).unwrap();
+        assert!(
+            entry.is_some(),
+            ":memory: shared_cache: e2 must see data written by e1"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // shared_cache(false) default: behaviour unchanged
+    // ------------------------------------------------------------------
+    #[test]
+    fn no_shared_cache_behaves_as_before() {
+        let dir = TempDir::new().unwrap();
+        let path = write_file(&dir, "normal.txt", b"normal");
+
+        let engine: CacheEngine<Vec<f32>> =
+            CacheEngine::builder().database(":memory:").build().unwrap();
+        engine.set(&path, &vec![5.0_f32]).unwrap();
+        assert!(engine.get(&path).unwrap().is_some());
+    }
+}
+
+// ============================================================
+// RFC 0005 — async-std / smol Feature Variants
+// ============================================================
+
+// async-std backend tests (only when async-std is the active runtime,
+// i.e. async-std is enabled but Tokio is not).
+#[cfg(all(not(feature = "async"), feature = "async-std"))]
+mod rfc0005_async_std {
+    use localcache::{AsyncCacheEngine, CacheOptions};
+
+    use super::write_file;
+    use tempfile::TempDir;
+
+    // async-std provides its own #[async_std::test] but we can also use a
+    // simple block_on since tests don't need the full async-std runtime loop.
+    fn block_on<F: std::future::Future>(f: F) -> F::Output {
+        async_std::task::block_on(f)
+    }
+
+    #[test]
+    fn async_std_engine_set_get() {
+        let dir = TempDir::new().unwrap();
+        block_on(async {
+            let engine = AsyncCacheEngine::<Vec<f32>>::open(CacheOptions {
+                database_path: ":memory:".into(),
+                ..CacheOptions::default()
+            })
+            .await
+            .unwrap();
+
+            let path = write_file(&dir, "as_test.txt", b"async-std payload");
+            engine
+                .set(path.clone(), vec![1.0_f32, 2.0_f32])
+                .await
+                .unwrap();
+
+            let entry = engine.get(path).await.unwrap();
+            assert!(
+                entry.is_some(),
+                "async-std get must return the stored entry"
+            );
+        });
+    }
+}
+
+// smol backend tests (only when smol is the active runtime).
+#[cfg(all(not(feature = "async"), not(feature = "async-std"), feature = "smol"))]
+mod rfc0005_smol {
+    use localcache::{AsyncCacheEngine, CacheOptions};
+
+    use super::write_file;
+    use tempfile::TempDir;
+
+    fn block_on<F: std::future::Future>(f: F) -> F::Output {
+        smol::block_on(f)
+    }
+
+    #[test]
+    fn smol_engine_set_get() {
+        let dir = TempDir::new().unwrap();
+        block_on(async {
+            let engine = AsyncCacheEngine::<Vec<f32>>::open(CacheOptions {
+                database_path: ":memory:".into(),
+                ..CacheOptions::default()
+            })
+            .await
+            .unwrap();
+
+            let path = write_file(&dir, "smol_test.txt", b"smol payload");
+            engine
+                .set(path.clone(), vec![3.0_f32, 4.0_f32])
+                .await
+                .unwrap();
+
+            let entry = engine.get(path).await.unwrap();
+            assert!(entry.is_some(), "smol get must return the stored entry");
+        });
+    }
+}

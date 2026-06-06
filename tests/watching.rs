@@ -543,3 +543,235 @@ mod debounce_tests {
         drop(watcher);
     }
 }
+
+// ============================================================
+// RFC 0001 — Recursive Directory Watching
+// ============================================================
+
+#[cfg(feature = "watching")]
+mod rfc0001_recursive_dir_watching {
+    use std::fs;
+    use std::io::Write as _;
+    use std::time::Duration;
+
+    use tempfile::TempDir;
+
+    use localcache::CacheEngine;
+
+    fn make_file_engine(dir: &TempDir) -> CacheEngine<Vec<f32>> {
+        CacheEngine::builder()
+            .database(dir.path().join("rfc0001.sqlite3"))
+            .build()
+            .unwrap()
+    }
+
+    fn write_and_flush(path: &std::path::Path, content: &[u8]) {
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path)
+            .unwrap();
+        f.write_all(content).unwrap();
+        f.flush().unwrap();
+    }
+
+    // ------------------------------------------------------------------
+    // watch_dir emits events for pre-cached files
+    // ------------------------------------------------------------------
+    #[test]
+    fn watch_dir_emits_event_for_cached_file() {
+        let dir = TempDir::new().unwrap();
+        let engine = make_file_engine(&dir);
+
+        let path = dir.path().join("a.txt");
+        write_and_flush(&path, b"v1");
+        engine.set(&path, &vec![1.0_f32]).unwrap();
+
+        let mut watcher = engine.watcher().unwrap();
+        watcher.watch_dir(dir.path()).unwrap();
+
+        std::thread::sleep(Duration::from_millis(50));
+        write_and_flush(&path, b"v2 modified");
+
+        let ev = watcher.events().recv_timeout(Duration::from_secs(4));
+        assert!(ev.is_ok(), "expected invalidation event");
+        assert_eq!(ev.unwrap().path, path);
+    }
+
+    // ------------------------------------------------------------------
+    // watch_dir does NOT emit events for uncached files
+    // ------------------------------------------------------------------
+    #[test]
+    fn watch_dir_ignores_uncached_files() {
+        let dir = TempDir::new().unwrap();
+        let engine = make_file_engine(&dir);
+
+        let cached = dir.path().join("cached.txt");
+        let uncached = dir.path().join("uncached.txt");
+        write_and_flush(&cached, b"cached");
+        write_and_flush(&uncached, b"uncached");
+        engine.set(&cached, &vec![1.0_f32]).unwrap();
+        // `uncached` intentionally NOT stored in the engine.
+
+        let mut watcher = engine.watcher().unwrap();
+        watcher.watch_dir(dir.path()).unwrap();
+
+        std::thread::sleep(Duration::from_millis(50));
+        // Modify uncached file only.
+        write_and_flush(&uncached, b"changed uncached");
+        // Give the OS a moment to fire any event.
+        std::thread::sleep(Duration::from_millis(200));
+
+        // Watcher must produce no event (channel empty).
+        assert!(
+            watcher
+                .events()
+                .recv_timeout(Duration::from_millis(400))
+                .is_err(),
+            "unexpected event for uncached file"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // unwatch_dir stops events for that subtree
+    // ------------------------------------------------------------------
+    #[test]
+    fn unwatch_dir_stops_events() {
+        let dir = TempDir::new().unwrap();
+        let engine = make_file_engine(&dir);
+
+        let path = dir.path().join("b.txt");
+        write_and_flush(&path, b"v1");
+        engine.set(&path, &vec![2.0_f32]).unwrap();
+
+        let mut watcher = engine.watcher().unwrap();
+        watcher.watch_dir(dir.path()).unwrap();
+        watcher.unwatch_dir(dir.path()).unwrap();
+
+        std::thread::sleep(Duration::from_millis(50));
+        write_and_flush(&path, b"v2 should not arrive");
+        std::thread::sleep(Duration::from_millis(200));
+
+        // Channel should be empty after unwatch.
+        assert!(
+            watcher
+                .events()
+                .recv_timeout(Duration::from_millis(400))
+                .is_err(),
+            "event received after unwatch_dir"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // watch_dir and per-file watch coexist
+    // ------------------------------------------------------------------
+    #[test]
+    fn recursive_and_per_file_registrations_coexist() {
+        let dir = TempDir::new().unwrap();
+        let sub = dir.path().join("sub");
+        fs::create_dir(&sub).unwrap();
+        let engine = make_file_engine(&dir);
+
+        let file_in_root = dir.path().join("root.txt");
+        let file_in_sub = sub.join("nested.txt");
+        write_and_flush(&file_in_root, b"root");
+        write_and_flush(&file_in_sub, b"nested");
+        engine.set(&file_in_root, &vec![1.0_f32]).unwrap();
+        engine.set(&file_in_sub, &vec![2.0_f32]).unwrap();
+
+        let mut watcher = engine.watcher().unwrap();
+        // Per-file registration for root file.
+        watcher.watch(&file_in_root).unwrap();
+        // Directory registration for sub.
+        watcher.watch_dir(&sub).unwrap();
+
+        std::thread::sleep(Duration::from_millis(50));
+        write_and_flush(&file_in_sub, b"nested changed");
+
+        let ev = watcher.events().recv_timeout(Duration::from_secs(4));
+        assert!(ev.is_ok(), "expected event for nested file");
+        assert_eq!(ev.unwrap().path, file_in_sub);
+    }
+
+    // ------------------------------------------------------------------
+    // watch_dirs builder option: watcher auto-registers parent directories
+    // ------------------------------------------------------------------
+    #[test]
+    fn watch_dirs_builder_registers_directories() {
+        let dir = TempDir::new().unwrap();
+        let engine = CacheEngine::<Vec<f32>>::builder()
+            .database(dir.path().join("wdirs.sqlite3"))
+            .watch_dirs(true)
+            .build()
+            .unwrap();
+
+        let path = dir.path().join("wd.txt");
+        write_and_flush(&path, b"v1");
+        engine.set(&path, &vec![3.0_f32]).unwrap();
+
+        // watcher() uses the stored watch_dirs flag — auto-registers parent dir.
+        let watcher = engine.watcher().unwrap();
+
+        std::thread::sleep(Duration::from_millis(50));
+        write_and_flush(&path, b"v2 changed");
+
+        let ev = watcher.events().recv_timeout(Duration::from_secs(4));
+        assert!(
+            ev.is_ok(),
+            "watch_dirs builder: expected invalidation event"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Debounced watch_dir / unwatch_dir
+    // ------------------------------------------------------------------
+    #[test]
+    fn debounced_watch_dir_emits_event() {
+        let dir = TempDir::new().unwrap();
+        let engine = make_file_engine(&dir);
+
+        let path = dir.path().join("deb_dir.txt");
+        write_and_flush(&path, b"v1");
+        engine.set(&path, &vec![4.0_f32]).unwrap();
+
+        let mut watcher = engine
+            .debounced_watcher(Duration::from_millis(150))
+            .unwrap();
+        watcher.watch_dir(dir.path()).unwrap();
+
+        std::thread::sleep(Duration::from_millis(50));
+        write_and_flush(&path, b"v2");
+
+        let ev = watcher.events().recv_timeout(Duration::from_secs(4));
+        assert!(ev.is_ok(), "debounced watch_dir: expected event");
+    }
+
+    #[test]
+    fn debounced_unwatch_dir_stops_events() {
+        let dir = TempDir::new().unwrap();
+        let engine = make_file_engine(&dir);
+
+        let path = dir.path().join("deb_unwatch.txt");
+        write_and_flush(&path, b"v1");
+        engine.set(&path, &vec![5.0_f32]).unwrap();
+
+        let mut watcher = engine
+            .debounced_watcher(Duration::from_millis(100))
+            .unwrap();
+        watcher.watch_dir(dir.path()).unwrap();
+        watcher.unwatch_dir(dir.path()).unwrap();
+
+        std::thread::sleep(Duration::from_millis(50));
+        write_and_flush(&path, b"v2 should not arrive");
+        std::thread::sleep(Duration::from_millis(200));
+
+        assert!(
+            watcher
+                .events()
+                .recv_timeout(Duration::from_millis(400))
+                .is_err(),
+            "debounced: event received after unwatch_dir"
+        );
+    }
+}

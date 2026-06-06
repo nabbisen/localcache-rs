@@ -2,7 +2,7 @@
 
 | Field    | Value |
 |----------|-------|
-| Status   | Proposed |
+| Status   | Implemented (v0.17.0) |
 | Feature  | `async-std` (new), `smol` (new) |
 | Touches  | `Cargo.toml`, `src/cache/async_engine.rs` (refactor), new `src/cache/runtime.rs` |
 | Depends on | existing `async` feature (Tokio) |
@@ -232,3 +232,36 @@ features:
 3. **`watching` + non-Tokio runtimes**: `CacheWatcher` uses only `std`
    threads and `mpsc` channels — no async runtime dependency.  Compatible
    as-is.
+
+## Implementation notes (v0.17.0)
+
+### Precedence-based dispatch instead of `compile_error!`
+
+The RFC specified that enabling more than one async-runtime feature
+simultaneously should be a compile error.  This conflicts with two hard
+project requirements:
+
+- **`--all-features` quality gate** — `cargo clippy --all-features` and
+  `cargo test --all-features` must succeed; mutual-exclusion
+  `compile_error!` would break every CI run that uses `--all-features`.
+- **`docs.rs` build** — `[package.metadata.docs.rs] all-features = true`
+  means docs.rs enables all features simultaneously; a `compile_error!`
+  would produce a broken documentation page.
+
+Cargo's feature model requires features to be **additive**.
+
+**Resolution:** when multiple runtime features are enabled, a single
+backend is selected by fixed priority order (Tokio > async-std > smol)
+via `#[cfg]` guards in `src/cache/runtime.rs`.  The `RFC_0005_PRIORITY`
+comment in that module documents the order explicitly.  Callers who need
+a specific runtime should enable only that feature.
+
+### `smol::unblock` confirmed in smol 2.x
+
+Open question 1 from the RFC: `smol::unblock` is available directly in
+smol 2.0.x without the `blocking` crate.  Confirmed via probe build.
+
+### async-std `spawn_blocking` stable in 1.13
+
+Open question 2: `async_std::task::spawn_blocking` is stable in
+async-std 1.13 (the `unstable` feature is no longer required).

@@ -141,6 +141,8 @@ pub struct QueryBuilder<'e, T> {
     pub(crate) limit: Option<usize>,
     pub(crate) offset: usize,
     pub(crate) path_like: Option<String>,
+    /// Nominates a specific SQLite index for the `files` table scan.
+    pub(crate) index_hint: Option<String>,
     /// Multiple sort keys applied in order (primary, secondary, …).
     pub(crate) order_by: Vec<OrderBy>,
 }
@@ -157,6 +159,61 @@ where
     pub fn path_like(mut self, pattern: impl Into<String>) -> Self {
         self.path_like = Some(pattern.into());
         self
+    }
+
+    /// Suggest a specific SQLite index for the `files` table scan.
+    ///
+    /// Generates `INDEXED BY <name>` in the path-listing SQL.  If the
+    /// named index does not exist, [`QueryBuilder::run`] returns
+    /// `Err(`[`LocalFileCacheError::Database`]`)`.
+    ///
+    /// Use [`CacheEngine::list_path_indexes`] to discover available
+    /// user-created indexes.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use localcache::CacheEngine;
+    /// # let engine = CacheEngine::<Vec<f32>>::builder().database(":memory:").build()?;
+    /// let results = engine.query()
+    ///     .path_like("%/docs/%")
+    ///     .index_hint("lc_user_my_idx")
+    ///     .run()?;
+    /// # Ok::<(), localcache::LocalFileCacheError>(())
+    /// ```
+    pub fn index_hint(mut self, index_name: impl Into<String>) -> Self {
+        self.index_hint = Some(index_name.into());
+        self
+    }
+
+    /// Return the SQLite query plan without executing the query.
+    ///
+    /// Runs `EXPLAIN QUERY PLAN` on the path-listing SQL (with any
+    /// configured [`index_hint`](QueryBuilder::index_hint) and
+    /// [`path_like`](QueryBuilder::path_like) applied) and returns the
+    /// human-readable plan, one line per step.
+    ///
+    /// No payloads are loaded and no cache entries are read.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use localcache::CacheEngine;
+    /// # let engine = CacheEngine::<Vec<f32>>::builder().database(":memory:").build()?;
+    /// let plan = engine.query()
+    ///     .path_like("%/docs/%")
+    ///     .dry_run()?;
+    /// println!("{plan}");
+    /// # Ok::<(), localcache::LocalFileCacheError>(())
+    /// ```
+    pub fn dry_run(self) -> Result<String, LocalFileCacheError> {
+        use crate::db::repository;
+        repository::explain_query(
+            &self.engine.conn,
+            &self.engine.namespace,
+            self.path_like.as_deref(),
+            self.index_hint.as_deref(),
+        )
     }
 
     // ------------------------------------------------------------------
@@ -354,7 +411,12 @@ where
 {
     use crate::db::repository;
 
-    let paths = repository::keys(&q.engine.conn, &q.engine.namespace, q.path_like.as_deref())?;
+    let paths = repository::keys(
+        &q.engine.conn,
+        &q.engine.namespace,
+        q.path_like.as_deref(),
+        q.index_hint.as_deref(),
+    )?;
 
     // Tuple: (entry, json_value_or_null, last_accessed_at)
     #[cfg(feature = "json")]

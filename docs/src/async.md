@@ -102,3 +102,45 @@ default, which allows one writer and multiple concurrent readers.
 | Async (Tokio) | `AsyncCacheEngine<T>` |
 | Sync multi-threaded | `ConnectionPool<T>` |
 | Manual Arc<Mutex<…>> control | `shared_engine()` |
+
+## Alternative async runtimes (v0.17.0)
+
+`AsyncCacheEngine` is no longer tied to Tokio.  Enable one of the
+alternative runtime features instead:
+
+```toml
+# async-std backend
+localcache = { version = "0.17", features = ["async-std"] }
+
+# smol backend
+localcache = { version = "0.17", features = ["smol"] }
+```
+
+The public API of `AsyncCacheEngine` is identical regardless of which
+runtime is active.  When multiple runtime features are enabled, the
+active backend is selected by priority: **Tokio (`async`) > async-std > smol**.
+
+```rust
+// async-std example
+#[async_std::main]
+async fn main() -> Result<(), localcache::LocalFileCacheError> {
+    let engine = AsyncCacheEngine::<Vec<f32>>::open(CacheOptions {
+        database_path: "cache.sqlite3".into(),
+        ..CacheOptions::default()
+    }).await?;
+
+    engine.set("file.txt".into(), vec![0.1_f32]).await?;
+    Ok(())
+}
+```
+
+### Decision table (updated)
+
+| Scenario | Recommended |
+|---|---|
+| Single-threaded / simple scripts | `CacheEngine<T>` |
+| Async (Tokio) | `AsyncCacheEngine<T>` with `async` feature |
+| Async (async-std) | `AsyncCacheEngine<T>` with `async-std` feature |
+| Async (smol) | `AsyncCacheEngine<T>` with `smol` feature |
+| Sync multi-threaded | `ConnectionPool<T>` |
+| Manual Arc<Mutex<…>> control | `shared_engine()` |

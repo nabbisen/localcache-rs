@@ -2,7 +2,7 @@
 
 | Field    | Value |
 |----------|-------|
-| Status   | Proposed |
+| Status   | Implemented (v0.17.0) |
 | Feature  | *(core, no feature flag)* |
 | Touches  | `src/cache/query.rs`, `src/db/repository.rs`, `src/cache/engine.rs` |
 

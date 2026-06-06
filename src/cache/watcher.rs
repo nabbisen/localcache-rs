@@ -83,6 +83,7 @@ where
     pub(crate) fn new_with_paths(
         engine: Arc<Mutex<CacheEngine<T>>>,
         paths: Vec<PathBuf>,
+        watch_dirs: bool,
     ) -> Result<Self, LocalFileCacheError> {
         // Use a synchronous channel with a generous buffer so the notify
         // callback is never blocked.
@@ -121,6 +122,17 @@ where
                 };
                 if let Ok(eng) = inner_cb.engine.lock() {
                     for path in &ev.paths {
+                        // With recursive directory watching, OS events arrive
+                        // for *all* files in the tree, including files that
+                        // were never cached.  Only invalidate (and emit an
+                        // event for) paths that actually have a cache entry.
+                        // `contains()` is a single indexed SELECT — cheap —
+                        // and falls back to a raw-path lookup for files that
+                        // no longer exist on disk, so Remove events still
+                        // match their stored entry.
+                        if !eng.contains(path).unwrap_or(false) {
+                            continue;
+                        }
                         let _ = eng.remove(path);
                         let _ = inner_cb.tx.try_send(WatchEvent {
                             path: path.clone(),
@@ -135,10 +147,20 @@ where
                 ))
             })?;
 
-        // Pre-register all currently cached paths (provided by caller).
-        for path in &paths {
-            if path.exists() {
-                let _ = os_watcher.watch(path, RecursiveMode::NonRecursive);
+        // Pre-register all currently cached paths (provided by caller):
+        // either each file individually (default) or each unique parent
+        // directory recursively (`watch_dirs = true`).
+        if watch_dirs {
+            for dir in unique_parent_dirs(&paths) {
+                if dir.exists() {
+                    let _ = os_watcher.watch(&dir, RecursiveMode::Recursive);
+                }
+            }
+        } else {
+            for path in &paths {
+                if path.exists() {
+                    let _ = os_watcher.watch(path, RecursiveMode::NonRecursive);
+                }
             }
         }
 
@@ -180,6 +202,47 @@ where
             LocalFileCacheError::UnsupportedFeature(format!(
                 "unwatch failed for '{}': {e}",
                 path.as_ref().display()
+            ))
+        })
+    }
+
+    /// Watch all files under `dir` **recursively**.
+    ///
+    /// Any OS event for a file under `dir` that has a corresponding cache
+    /// entry triggers invalidation; files without a cache entry are silently
+    /// ignored by the callback.  This covers files cached *after* the call,
+    /// as long as they live under `dir`.
+    ///
+    /// Recursive and per-file registrations can coexist on the same watcher.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use localcache::CacheEngine;
+    /// # let engine = CacheEngine::<Vec<f32>>::builder()
+    /// #     .database("cache.sqlite3")
+    /// #     .build()?;
+    /// let mut watcher = engine.watcher()?;
+    /// watcher.watch_dir("/data/documents")?;
+    /// # Ok::<(), localcache::LocalFileCacheError>(())
+    /// ```
+    pub fn watch_dir<P: AsRef<Path>>(&mut self, dir: P) -> Result<(), LocalFileCacheError> {
+        self._os_watcher
+            .watch(dir.as_ref(), RecursiveMode::Recursive)
+            .map_err(|e| {
+                LocalFileCacheError::UnsupportedFeature(format!(
+                    "watch_dir failed for '{}': {e}",
+                    dir.as_ref().display()
+                ))
+            })
+    }
+
+    /// Stop watching the directory `dir` (and its subtree).
+    pub fn unwatch_dir<P: AsRef<Path>>(&mut self, dir: P) -> Result<(), LocalFileCacheError> {
+        self._os_watcher.unwatch(dir.as_ref()).map_err(|e| {
+            LocalFileCacheError::UnsupportedFeature(format!(
+                "unwatch_dir failed for '{}': {e}",
+                dir.as_ref().display()
             ))
         })
     }
@@ -254,6 +317,7 @@ where
         payload_version: u32,
         paths: Vec<PathBuf>,
         window: std::time::Duration,
+        watch_dirs: bool,
     ) -> Result<Self, LocalFileCacheError> {
         use std::sync::{Arc, Mutex, mpsc};
 
@@ -289,6 +353,11 @@ where
                         // no remove variant; treat all as FileModified.
                         let reason = InvalidationReason::FileModified;
                         if let Ok(eng) = inner_cb.lock() {
+                            // Recursive directory watching delivers events
+                            // for uncached files too — filter them out.
+                            if !eng.contains(&path).unwrap_or(false) {
+                                continue;
+                            }
                             let _ = eng.remove(&path);
                         }
                         let _ = tx.try_send(WatchEvent { path, reason });
@@ -302,12 +371,21 @@ where
             ))
         })?;
 
-        // Register all pre-existing cached paths.
+        // Register all pre-existing cached paths — per file (default) or per
+        // unique parent directory, recursively (`watch_dirs = true`).
         {
             let mut deb = debouncer;
-            for path in &paths {
-                if path.exists() {
-                    let _ = deb.watcher().watch(path, RecursiveMode::NonRecursive);
+            if watch_dirs {
+                for dir in unique_parent_dirs(&paths) {
+                    if dir.exists() {
+                        let _ = deb.watcher().watch(&dir, RecursiveMode::Recursive);
+                    }
+                }
+            } else {
+                for path in &paths {
+                    if path.exists() {
+                        let _ = deb.watcher().watch(path, RecursiveMode::NonRecursive);
+                    }
                 }
             }
             Ok(Self {
@@ -324,4 +402,46 @@ where
     pub fn events(&self) -> &std::sync::mpsc::Receiver<WatchEvent> {
         &self.rx
     }
+
+    /// Watch all files under `dir` **recursively** (debounced).
+    ///
+    /// See [`CacheWatcher::watch_dir`] — identical semantics with debounced
+    /// event delivery.
+    pub fn watch_dir<P: AsRef<Path>>(&mut self, dir: P) -> Result<(), LocalFileCacheError> {
+        self._debouncer
+            .watcher()
+            .watch(dir.as_ref(), RecursiveMode::Recursive)
+            .map_err(|e| {
+                LocalFileCacheError::UnsupportedFeature(format!(
+                    "watch_dir failed for '{}': {e}",
+                    dir.as_ref().display()
+                ))
+            })
+    }
+
+    /// Stop watching the directory `dir` (and its subtree).
+    pub fn unwatch_dir<P: AsRef<Path>>(&mut self, dir: P) -> Result<(), LocalFileCacheError> {
+        self._debouncer
+            .watcher()
+            .unwatch(dir.as_ref())
+            .map_err(|e| {
+                LocalFileCacheError::UnsupportedFeature(format!(
+                    "unwatch_dir failed for '{}': {e}",
+                    dir.as_ref().display()
+                ))
+            })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+
+/// Collect the unique parent directories of `paths`, deepest path untouched.
+///
+/// Used by the `watch_dirs` registration mode: instead of one OS watch per
+/// file, one **recursive** OS watch per distinct parent directory.
+fn unique_parent_dirs(paths: &[PathBuf]) -> Vec<PathBuf> {
+    let set: std::collections::HashSet<&Path> = paths.iter().filter_map(|p| p.parent()).collect();
+    set.into_iter().map(Path::to_path_buf).collect()
 }

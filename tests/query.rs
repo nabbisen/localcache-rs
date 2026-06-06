@@ -5,6 +5,7 @@ use common::write_file;
 
 use tempfile::TempDir;
 
+#[allow(unused_imports)]
 use localcache::{CacheEngine, CacheOptions};
 
 #[cfg(feature = "async")]
@@ -746,3 +747,158 @@ mod async_phase11_tests {
 
 // ====================================================================
 // Phase 12 —
+
+// ============================================================
+// RFC 0002 — Query Index Hints and Explain Plan
+// ============================================================
+
+mod rfc0002_index_hints {
+    use tempfile::TempDir;
+
+    use localcache::CacheEngine;
+
+    fn populated_engine(dir: &TempDir) -> CacheEngine<Vec<f32>> {
+        let engine = CacheEngine::<Vec<f32>>::builder()
+            .database(":memory:")
+            .build()
+            .unwrap();
+        for i in 0..10u32 {
+            let path = dir.path().join(format!("doc{i:02}.txt"));
+            std::fs::write(&path, format!("content {i}")).unwrap();
+            engine.set(&path, &vec![i as f32]).unwrap();
+        }
+        engine
+    }
+
+    // ------------------------------------------------------------------
+    // dry_run returns a non-empty plan string
+    // ------------------------------------------------------------------
+    #[test]
+    fn dry_run_returns_plan() {
+        let dir = TempDir::new().unwrap();
+        let engine = populated_engine(&dir);
+
+        let plan = engine.query().dry_run().unwrap();
+        assert!(!plan.is_empty(), "dry_run must return a non-empty plan");
+        // SQLite's EXPLAIN QUERY PLAN output always mentions the table.
+        let plan_lower = plan.to_lowercase();
+        assert!(
+            plan_lower.contains("scan") || plan_lower.contains("search"),
+            "plan should contain SCAN or SEARCH: {plan}"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // dry_run with path_like
+    // ------------------------------------------------------------------
+    #[test]
+    fn dry_run_with_path_like() {
+        let dir = TempDir::new().unwrap();
+        let engine = populated_engine(&dir);
+
+        let plan = engine.query().path_like("%.txt").dry_run().unwrap();
+        assert!(!plan.is_empty());
+    }
+
+    // ------------------------------------------------------------------
+    // dry_run does not load any entries
+    // ------------------------------------------------------------------
+    #[test]
+    fn dry_run_does_not_load_payloads() {
+        let dir = TempDir::new().unwrap();
+        let engine = populated_engine(&dir);
+
+        let count_before = engine.entry_count().unwrap();
+        let _plan = engine.query().path_like("%.txt").dry_run().unwrap();
+        let count_after = engine.entry_count().unwrap();
+
+        assert_eq!(
+            count_before, count_after,
+            "dry_run must not modify the cache"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // index_hint with valid index — query returns correct results
+    // ------------------------------------------------------------------
+    #[test]
+    fn index_hint_valid_index_returns_results() {
+        let dir = TempDir::new().unwrap();
+        let engine = populated_engine(&dir);
+
+        let idx_full = engine.create_path_index("rfc0002test").unwrap();
+        assert_eq!(idx_full, "lc_user_rfc0002test");
+
+        let results = engine
+            .query()
+            .path_like("%.txt")
+            .index_hint(&idx_full)
+            .run()
+            .unwrap();
+
+        assert_eq!(results.len(), 10, "should return all 10 entries with hint");
+        engine.drop_path_index("rfc0002test").unwrap();
+    }
+
+    // ------------------------------------------------------------------
+    // index_hint with invalid index — run() returns a Database error
+    // ------------------------------------------------------------------
+    #[test]
+    fn index_hint_invalid_index_returns_error() {
+        let dir = TempDir::new().unwrap();
+        let engine = populated_engine(&dir);
+
+        let result = engine.query().index_hint("nonexistent_index_xyz").run();
+
+        assert!(
+            result.is_err(),
+            "expected error for invalid index hint: {result:?}"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // dry_run with index_hint — plan mentions the index
+    // ------------------------------------------------------------------
+    #[test]
+    fn dry_run_with_index_hint_mentions_index() {
+        let dir = TempDir::new().unwrap();
+        let engine = populated_engine(&dir);
+
+        let idx_full = engine.create_path_index("dryrunidx").unwrap();
+        let plan = engine
+            .query()
+            .path_like("%.txt")
+            .index_hint(&idx_full)
+            .dry_run()
+            .unwrap();
+
+        assert!(
+            plan.contains(&idx_full),
+            "dry_run plan should mention the hinted index; got: {plan}"
+        );
+        engine.drop_path_index("dryrunidx").unwrap();
+    }
+
+    // ------------------------------------------------------------------
+    // async query_dry_run wrapper
+    // ------------------------------------------------------------------
+    #[cfg(feature = "async")]
+    #[tokio::test]
+    async fn async_query_dry_run() {
+        use localcache::{AsyncCacheEngine, CacheOptions};
+
+        let engine = AsyncCacheEngine::<Vec<f32>>::open(CacheOptions {
+            database_path: ":memory:".into(),
+            ..CacheOptions::default()
+        })
+        .await
+        .unwrap();
+
+        let plan = engine
+            .query_dry_run(|q| q.path_like("%.txt"))
+            .await
+            .unwrap();
+
+        assert!(!plan.is_empty(), "async dry_run must return a plan");
+    }
+}

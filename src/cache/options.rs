@@ -180,6 +180,43 @@ pub struct CacheOptions {
     /// Requires the `compression` Cargo feature.
     #[cfg(feature = "compression")]
     pub compress_payloads: bool,
+
+    /// Register each cached path's **parent directory** for recursive
+    /// watching (instead of registering every file individually) when
+    /// [`crate::CacheEngine::watcher`] or
+    /// [`crate::CacheEngine::debounced_watcher`] is called.
+    ///
+    /// With directory watching, OS events arrive for *all* files in the
+    /// watched subtrees; the watcher callback filters them so that only
+    /// files with a corresponding cache entry trigger invalidation.
+    /// Files cached *after* the watcher starts are covered automatically
+    /// as long as they live under an already-watched directory.
+    ///
+    /// Defaults to `false` (per-file registration, the pre-0.17 behaviour).
+    ///
+    /// Requires the `watching` Cargo feature.
+    #[cfg(feature = "watching")]
+    pub watch_dirs: bool,
+
+    /// Open the database in read-only **shared-cache** mode using a SQLite
+    /// `file:` URI (`mode=ro&cache=shared`).
+    ///
+    /// Multiple [`crate::CacheEngine`] instances opened with this option on
+    /// the same `database_path` within the same process share the SQLite
+    /// page cache, reducing memory usage and read-lock overhead.
+    /// `PRAGMA query_only = ON` is additionally enforced on the connection
+    /// as defence in depth.
+    ///
+    /// For file-backed databases this implies `read_only = true`; write
+    /// methods return [`crate::LocalFileCacheError::ReadOnly`].
+    ///
+    /// As a special case, `":memory:"` combined with `shared_cache` opens a
+    /// **named shared in-memory database**
+    /// (`file::memory:?cache=shared`) in read-*write* mode — a read-only
+    /// fresh in-memory database would be permanently empty and therefore
+    /// useless.  All engines opened this way within one process share the
+    /// same in-memory data; this is primarily a testing convenience.
+    pub shared_cache: bool,
 }
 
 impl Default for CacheOptions {
@@ -199,6 +236,9 @@ impl Default for CacheOptions {
             encryption_key: None,
             #[cfg(feature = "compression")]
             compress_payloads: false,
+            #[cfg(feature = "watching")]
+            watch_dirs: false,
+            shared_cache: false,
         }
     }
 }

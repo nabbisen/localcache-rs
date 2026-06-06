@@ -20,11 +20,18 @@ jobs:
         features:
           - ""
           - "async"
+          - "async-std"
+          - "smol"
           - "compression"
           - "json"
           - "encryption"
           - "tracing"
-          - "async,compression,json,encryption,tracing"
+          - "watching"
+          - "metrics"
+          - "opentelemetry"
+          - "async,compression,json,encryption,tracing,watching,metrics,opentelemetry"
+          - "async-std,compression,json,encryption,tracing,watching,metrics"
+          - "smol,compression,json,encryption,tracing,watching,metrics"
 
     steps:
       - uses: actions/checkout@v6

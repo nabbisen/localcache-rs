@@ -64,6 +64,8 @@ pub struct CacheEngine<T> {
     pub(crate) conn: Connection,
     #[cfg(feature = "watching")]
     pub(crate) database_path: std::path::PathBuf,
+    #[cfg(feature = "watching")]
+    pub(crate) watch_dirs: bool,
     pub(crate) mode: ChangeDetectionMode,
     pub(crate) codec: Codec,
     pub(crate) namespace: String,
@@ -91,9 +93,45 @@ where
     pub fn open(options: CacheOptions) -> Result<Self, LocalFileCacheError> {
         let is_memory = is_memory_path(&options.database_path);
 
-        let conn = if is_memory {
+        // `shared_cache` on a file-backed database implies read-only.
+        // On `:memory:` it opens a named shared in-memory database in
+        // read-write mode instead (a read-only fresh in-memory database
+        // would be permanently empty).
+        let read_only = options.read_only || (options.shared_cache && !is_memory);
+
+        let conn = if options.shared_cache {
+            if is_memory {
+                // Named shared in-memory database: every connection opened
+                // with this URI within the process sees the same data.
+                Connection::open_with_flags(
+                    "file::memory:?cache=shared",
+                    OpenFlags::SQLITE_OPEN_URI
+                        | OpenFlags::SQLITE_OPEN_READ_WRITE
+                        | OpenFlags::SQLITE_OPEN_CREATE
+                        | OpenFlags::SQLITE_OPEN_SHARED_CACHE,
+                )?
+            } else {
+                let path_str = options.database_path.to_str().ok_or_else(|| {
+                    LocalFileCacheError::InvalidPath {
+                        path: options.database_path.clone(),
+                    }
+                })?;
+                let uri = format!("file:{}?mode=ro&cache=shared", uri_encode_path(path_str));
+                let conn = Connection::open_with_flags(
+                    uri,
+                    OpenFlags::SQLITE_OPEN_URI
+                        | OpenFlags::SQLITE_OPEN_READ_ONLY
+                        | OpenFlags::SQLITE_OPEN_SHARED_CACHE
+                        | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+                )?;
+                // Defence in depth: refuse writes at the SQLite level too,
+                // even if `guard_write` were to malfunction.
+                conn.execute_batch("PRAGMA query_only = ON;")?;
+                conn
+            }
+        } else if is_memory {
             Connection::open_in_memory()?
-        } else if options.read_only {
+        } else if read_only {
             Connection::open_with_flags(
                 &options.database_path,
                 OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -102,7 +140,7 @@ where
             Connection::open(&options.database_path)?
         };
 
-        if is_memory || !options.read_only {
+        if is_memory || !read_only {
             if !is_memory {
                 conn.execute_batch(&format!(
                     "PRAGMA journal_mode = {}; PRAGMA synchronous = {};",
@@ -144,11 +182,13 @@ where
             conn,
             #[cfg(feature = "watching")]
             database_path: options.database_path.clone(),
+            #[cfg(feature = "watching")]
+            watch_dirs: options.watch_dirs,
             mode: options.change_detection_mode,
             codec: options.codec,
             namespace: options.namespace,
             ttl: options.ttl,
-            read_only: options.read_only,
+            read_only,
             payload_version: options.payload_version,
             compress,
             max_entries: options.max_entries,
@@ -173,7 +213,7 @@ where
     {
         #[cfg(feature = "tracing")]
         let _span =
-            tracing::debug_span!("localcache::get", path = %path.as_ref().display()).entered();
+            tracing::debug_span!("localcache::get", path = %path.as_ref().display(), namespace = %self.namespace).entered();
 
         #[cfg(feature = "metrics")]
         metrics::counter!("localcache.get.total",
@@ -294,7 +334,7 @@ where
     {
         #[cfg(feature = "tracing")]
         let _span =
-            tracing::debug_span!("localcache::set", path = %path.as_ref().display()).entered();
+            tracing::debug_span!("localcache::set", path = %path.as_ref().display(), namespace = %self.namespace).entered();
 
         self.guard_write()?;
         let canonical = normalize_path(path.as_ref())?;
@@ -436,11 +476,19 @@ where
     where
         P: AsRef<Path>,
     {
+        #[cfg(feature = "tracing")]
+        let _span = tracing::debug_span!(
+            "localcache::check_status",
+            path = %path.as_ref().display(),
+            namespace = %self.namespace,
+        )
+        .entered();
+
         let canonical = match normalize_path(path.as_ref()) {
             Ok(p) => p,
             Err(LocalFileCacheError::FileNotFound { .. }) => {
                 #[cfg(feature = "tracing")]
-                tracing::debug!(path = %path.as_ref().display(), status = "Missing", "check_status");
+                tracing::debug!(status = "Missing");
                 return Ok(CacheStatus::Missing);
             }
             Err(e) => return Err(e),
@@ -448,28 +496,27 @@ where
         let path_str = path_to_str(&canonical)?;
         let Some(row) = repository::find_file(&self.conn, &self.namespace, path_str)? else {
             #[cfg(feature = "tracing")]
-            tracing::debug!(path = %canonical.display(), status = "Missing", "check_status");
+            tracing::debug!(status = "Missing");
             return Ok(CacheStatus::Missing);
         };
         if is_expired(row.updated_at, self.ttl) {
             #[cfg(feature = "tracing")]
-            tracing::debug!(path = %canonical.display(), status = "Stale", reason = "ttl_expired", "check_status");
+            tracing::debug!(status = "Stale", reason = "ttl_expired");
             return Ok(CacheStatus::Stale);
         }
         if self.payload_version > 0 && row.payload_version != self.payload_version {
             #[cfg(feature = "tracing")]
             tracing::debug!(
-                path = %canonical.display(), status = "Stale",
+                status = "Stale",
                 reason = "version_mismatch",
                 stored = row.payload_version,
                 expected = self.payload_version,
-                "check_status"
             );
             return Ok(CacheStatus::Stale);
         }
         let status = detect_change(&canonical, &row.metadata, self.mode)?;
         #[cfg(feature = "tracing")]
-        tracing::debug!(path = %canonical.display(), status = ?status, "check_status");
+        tracing::debug!(status = ?status);
         Ok(status)
     }
 
@@ -975,7 +1022,7 @@ where
         )?));
         // Pre-load paths from *this* engine so the watcher knows what to watch.
         let paths = self.keys(None)?;
-        crate::cache::watcher::CacheWatcher::new_with_paths(inner, paths)
+        crate::cache::watcher::CacheWatcher::new_with_paths(inner, paths, self.watch_dirs)
     }
 
     // ------------------------------------------------------------------
@@ -1139,6 +1186,7 @@ where
             self.payload_version,
             paths,
             window,
+            self.watch_dirs,
         )
     }
 
@@ -1227,7 +1275,7 @@ where
         &self,
         path_like: Option<&str>,
     ) -> Result<Vec<std::path::PathBuf>, LocalFileCacheError> {
-        repository::keys(&self.conn, &self.namespace, path_like)
+        repository::keys(&self.conn, &self.namespace, path_like, None)
     }
 
     // ------------------------------------------------------------------
@@ -1252,6 +1300,7 @@ where
             limit: None,
             offset: 0,
             path_like: None,
+            index_hint: None,
             order_by: Vec::new(),
         }
     }
@@ -1418,6 +1467,26 @@ pub(crate) fn is_expired(updated_at: i64, ttl: Option<Duration>) -> bool {
     };
     let now = repository::now_secs();
     now.saturating_sub(updated_at) as u64 >= ttl.as_secs()
+}
+
+/// Percent-encode the characters that are significant inside a SQLite
+/// `file:` URI path component: `%`, `#`, `?`, and space.
+///
+/// SQLite decodes `%XX` escapes in URI filenames, so a literal `%` must be
+/// escaped first; `#` and `?` would otherwise terminate the path component.
+/// No external dependency is required for this small, fixed set.
+fn uri_encode_path(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    for c in path.chars() {
+        match c {
+            '%' => out.push_str("%25"),
+            '#' => out.push_str("%23"),
+            '?' => out.push_str("%3F"),
+            ' ' => out.push_str("%20"),
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------

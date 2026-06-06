@@ -49,8 +49,11 @@ pub enum LocalFileCacheError {
     #[error("encryption error: {0}")]
     EncryptionError(String),
 
-    /// An async task spawned via `tokio::task::spawn_blocking` panicked.
-    #[cfg(feature = "async")]
+    /// An async task spawned via `spawn_blocking` panicked.
+    ///
+    /// Applies to the Tokio (`async`), async-std (`async-std`), and smol
+    /// (`smol`) runtime backends.
+    #[cfg(any(feature = "async", feature = "async-std", feature = "smol"))]
     #[error("async blocking task panicked")]
     AsyncTaskPanicked,
 }

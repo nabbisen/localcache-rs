@@ -11,6 +11,106 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.17.0] — 2026-06-06
+
+### Added — RFC 0001: Recursive Directory Watching (`watching` feature)
+
+- `CacheWatcher::watch_dir(dir)` / `unwatch_dir(dir)` — register an
+  entire directory subtree for recursive watching with a single OS watch.
+- `CacheDebouncedWatcher::watch_dir(dir)` / `unwatch_dir(dir)` — same
+  for the debounced variant.
+- `CacheEngineBuilder::watch_dirs(bool)` — opt-in builder flag; when
+  `true`, `watcher()` / `debounced_watcher()` auto-register each cached
+  path's **parent directory** recursively instead of one OS watch per file.
+- Both watcher callbacks now apply a `contains()` membership filter before
+  emitting events, ensuring uncached files in watched subtrees are silently
+  ignored.
+- `CacheOptions::watch_dirs: bool` field (default `false`).
+
+### Added — RFC 0002: Query Index Hints and Explain Plan
+
+- `QueryBuilder::index_hint(name)` — injects `INDEXED BY <name>` into
+  the path-listing SQL; returns `Err(Database(_))` on an invalid name.
+- `QueryBuilder::dry_run()` → `Result<String>` — runs
+  `EXPLAIN QUERY PLAN` on the query SQL and returns the plan; no payloads
+  are loaded.
+- `AsyncCacheEngine::query_dry_run(|q| …)` — async wrapper for
+  `dry_run()`.
+- `repository::explain_query()` internal function.
+
+### Added — RFC 0003: OpenTelemetry Spans
+
+- New `opentelemetry` Cargo feature (`["tracing", "dep:opentelemetry",
+  "dep:tracing-opentelemetry"]`).  Pulls in compatible
+  `opentelemetry 0.32` + `tracing-opentelemetry 0.33` so callers can
+  install `OpenTelemetryLayer` without a version mismatch.  No span sites
+  are added; the library emits zero OTel API calls itself.
+- **`namespace` field** added to all three existing `tracing` spans
+  (`localcache::get`, `localcache::set`, `localcache::check_status`).
+  Gated only on `#[cfg(feature = "tracing")]` — improves plain tracing
+  output too.
+- `check_status` upgraded from inline `debug!` events to a proper
+  `debug_span!`, consistent with `get` and `set`.
+
+### Added — RFC 0004: Read-only Shared-cache Mode
+
+- `CacheOptions::shared_cache: bool` field (default `false`).
+- `CacheEngineBuilder::shared_cache()` builder method.
+- When enabled on a **file-backed** database, opens via SQLite `file:` URI
+  (`mode=ro&cache=shared`) with `PRAGMA query_only = ON`; implies
+  `read_only = true`.
+- When enabled on **`:memory:`**, opens `file::memory:?cache=shared` in
+  read-write mode — multiple engines in the same process share the named
+  in-memory database (useful for testing and in-process pipelines).
+- `uri_encode_path()` internal helper (escapes `%`, `#`, `?`, space in
+  SQLite URI path components; no extra dependency).
+
+### Added — RFC 0005: async-std / smol Feature Variants
+
+- New `async-std` Cargo feature — enables `AsyncCacheEngine` backed by
+  `async_std::task::spawn_blocking` (async-std 1.13).
+- New `smol` Cargo feature — enables `AsyncCacheEngine` backed by
+  `smol::unblock` (smol 2.x).
+- New `src/cache/runtime.rs` — `SpawnBlocking` trait with
+  `TokioRuntime`, `AsyncStdRuntime`, and `SmolRuntime` impls; public
+  `spawn_blocking` dispatch function.
+- When multiple runtime features are enabled, priority order is
+  **Tokio (`async`) > async-std > smol** — features remain additive,
+  keeping `--all-features` and docs.rs working.
+- `AsyncTaskPanicked` error variant now covers all three runtime features.
+- `AsyncCacheEngine` and `runtime` module gating extended from
+  `#[cfg(feature = "async")]` to
+  `#[cfg(any(feature = "async", feature = "async-std", feature = "smol"))]`.
+
+### Changed
+
+- **RFC folder structure** — adopted the RFC 000 lifecycle policy.
+  All five RFCs moved from the flat `rfcs/` root to `rfcs/done/`; Status
+  fields updated to `Implemented (v0.17.0)`.  `rfcs/proposed/` and
+  `rfcs/archive/` folders created.  `rfcs/README.md` rewritten as a
+  proper lifecycle index.
+- `rfcs/done/000-rfc-lifecycle-policy.md` added (self-applying: the
+  policy document lives in `done/` because it is implemented).
+- **CI matrix** extended with `watching`, `metrics`, `async-std`, `smol`,
+  and `opentelemetry` feature combinations.
+- **`[[example]]` targets** declared with `required-features` to prevent
+  build failures when optional features are absent:
+  - `document_pipeline` requires `json,compression`
+  - `embedding_cache` requires `json`
+  - `connection_pool` requires `async`
+- Pre-existing unused-import warnings in `tests/query.rs` and
+  `tests/portability.rs` suppressed with `#[allow(unused_imports)]`.
+
+### Fixed
+
+- `repository::keys()` and `repository::explain_query()` — replaced
+  `if pattern.is_some() { … pattern.unwrap() … }` with `if let Some(pat)`
+  (clippy `clippy::unwrap_used` → clean).
+- Redundant raw-pointer cast in `async_engine::query_dry_run` removed
+  (clippy `unnecessary_cast` → clean).
+
+---
+
 ## [0.16.2] — 2026-05-05
 
 ### Added
@@ -332,6 +432,7 @@ Namespaces, batch ops, TTL, PRAGMAs, schema migration.
 Initial release.
 
 [Unreleased]: https://github.com/nabbisen/localcache-rs/compare/v0.16.2...HEAD
+[0.17.0]: https://github.com/nabbisen/localcache-rs/compare/v0.16.2...v0.17.0
 [0.16.2]: https://github.com/nabbisen/localcache-rs/compare/v0.16.1...v0.16.2
 [0.16.1]: https://github.com/nabbisen/localcache-rs/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/nabbisen/localcache-rs/compare/v0.15.0...v0.16.0

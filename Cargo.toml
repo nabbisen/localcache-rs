@@ -7,7 +7,7 @@ resolver = "2"
 # `field.workspace = true`
 # --------------------------------------------------------------------------
 [workspace.package]
-version      = "0.16.2"
+version      = "0.17.0"
 edition      = "2024"
 rust-version = "1.85"
 authors      = ["nabbisen"]
@@ -34,6 +34,12 @@ aes-gcm    = "0.10"
 tracing    = "0.1"
 notify                  = "8"
 notify-debouncer-mini   = "0.7"
+# opentelemetry bridge (RFC 0003)
+opentelemetry          = { version = "0.32", default-features = false, features = ["trace"] }
+tracing-opentelemetry  = { version = "0.33", default-features = false }
+# alternative async runtimes (RFC 0005)
+async-std              = { version = "1.13", features = ["attributes"] }
+smol                   = "2"
 # cli
 clap       = { version = "4",    features = ["derive"] }
 # dev / bench
@@ -64,6 +70,17 @@ rustdoc-args = ["--cfg", "docsrs"]
 [features]
 ## Enables `AsyncCacheEngine` backed by `tokio::task::spawn_blocking`.
 async       = ["dep:tokio"]
+
+## Enables `AsyncCacheEngine` backed by `async_std::task::spawn_blocking`.
+## When multiple async runtime features are enabled simultaneously,
+## Tokio (`async`) takes priority, then `async-std`, then `smol`.
+## Features are kept additive so that `--all-features` and `docs.rs` continue
+## to build without conflict.
+async-std   = ["dep:async-std"]
+
+## Enables `AsyncCacheEngine` backed by `smol::unblock`.
+## See `async-std` for the priority note.
+smol        = ["dep:smol"]
 ## Enables transparent zstd compression of stored payloads.
 compression = ["dep:zstd"]
 ## Enables the `Json` codec variant (serde_json serialization) and payload
@@ -82,6 +99,14 @@ watching    = ["dep:notify", "dep:notify-debouncer-mini"]
 ## `get`, `set`, and cache hit/miss events.
 metrics     = ["dep:metrics"]
 
+## Bridges the existing `tracing` spans to an OpenTelemetry-compatible
+## backend via `tracing-opentelemetry`.  Implies the `tracing` feature.
+## No span sites are added — the existing `tracing` spans become exportable
+## to any OTel-compatible backend (Jaeger, OTLP, stdout, etc.).
+## The caller is responsible for installing the `OpenTelemetryLayer`
+## subscriber; see the cookbook for a complete example.
+opentelemetry = ["tracing", "dep:opentelemetry", "dep:tracing-opentelemetry"]
+
 [dependencies]
 rusqlite   = { workspace = true }
 serde      = { workspace = true }
@@ -90,6 +115,8 @@ blake3     = { workspace = true }
 thiserror  = { workspace = true }
 base64     = { workspace = true }
 tokio      = { workspace = true, optional = true }
+async-std  = { workspace = true, optional = true }
+smol       = { workspace = true, optional = true }
 zstd       = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 aes-gcm    = { workspace = true, optional = true }
@@ -97,6 +124,8 @@ tracing    = { workspace = true, optional = true }
 notify                  = { workspace = true, optional = true }
 notify-debouncer-mini   = { workspace = true, optional = true }
 metrics                 = { version = "0.24",  optional = true }
+opentelemetry          = { workspace = true, optional = true }
+tracing-opentelemetry  = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile   = { workspace = true }
@@ -107,3 +136,15 @@ criterion  = { workspace = true }
 name              = "cache_bench"
 harness           = false
 required-features = ["json"]
+
+[[example]]
+name              = "document_pipeline"
+required-features = ["json", "compression"]
+
+[[example]]
+name              = "embedding_cache"
+required-features = ["json"]
+
+[[example]]
+name              = "connection_pool"
+required-features = ["async"]

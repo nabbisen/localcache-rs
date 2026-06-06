@@ -141,3 +141,44 @@ let dst_engine = CacheEngine::<T>::builder()
     .build()?;
 let copied = dst_engine.namespace_copy(&src_engine)?;
 ```
+
+## Index hints (v0.17.0)
+
+For large namespaces (100k+ entries) where `create_path_index` has been
+used, tell the query planner which index to prefer:
+
+```rust
+// Create a user index once:
+let idx = engine.create_path_index("docs_idx")?;  // → "lc_user_docs_idx"
+
+// Use it in a query:
+let results = engine.query()
+    .path_like("%/docs/%")
+    .index_hint(&idx)     // INDEXED BY lc_user_docs_idx
+    .run()?;
+```
+
+An invalid index name causes `run()` to return `Err(Database(_))`.
+
+## Explain plan / dry_run (v0.17.0)
+
+Inspect the SQLite query plan before running a query — useful for
+performance diagnostics and test assertions:
+
+```rust
+let plan = engine.query()
+    .path_like("%/docs/%")
+    .index_hint("lc_user_docs_idx")
+    .dry_run()?;
+// → "SEARCH files USING INDEX lc_user_docs_idx ..."
+println!("{plan}");
+```
+
+`dry_run()` runs `EXPLAIN QUERY PLAN` on the path-listing SQL only — no
+payloads are loaded, and the cache is not modified.
+
+With `AsyncCacheEngine`:
+
+```rust
+let plan = engine.query_dry_run(|q| q.path_like("%/docs/%")).await?;
+```

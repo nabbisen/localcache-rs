@@ -28,7 +28,7 @@ mod path;
 mod pool;
 mod serialization;
 
-#[cfg(feature = "async")]
+#[cfg(any(feature = "async", feature = "async-std", feature = "smol"))]
 pub use cache::async_engine::AsyncCacheEngine;
 pub use cache::builder::CacheEngineBuilder;
 pub use cache::engine::{BatchSetReport, CacheEngine};

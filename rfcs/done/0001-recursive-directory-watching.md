@@ -2,7 +2,7 @@
 
 | Field    | Value |
 |----------|-------|
-| Status   | Proposed |
+| Status   | Implemented (v0.17.0) |
 | Feature  | `watching` |
 | Touches  | `src/cache/watcher.rs`, `src/cache/engine.rs` |
 
@@ -143,3 +143,22 @@ option defaults to `false`.  Callers opt in explicitly.
   the number of unique parent directories is much smaller than the number
   of cached paths (e.g., > 100 paths sharing < 10 directories)?  Likely
   too magical — keep explicit opt-in.
+
+## Implementation notes (v0.17.0)
+
+### `contains()` filter applied universally
+
+The RFC shows the `contains()` filter only in the recursive-mode
+callback.  In the implementation the filter is applied to **both** modes
+(per-file and recursive).  This is strictly more correct: it prevents
+spurious events if a path is unwatched from the cache but its OS watch
+was not removed, and makes the two modes behave identically with respect
+to the guarantee "only cached paths emit events."
+
+### Open questions resolved
+
+The only open question — whether to auto-enable `watch_dirs` based on a
+path/directory ratio heuristic — was resolved as: **no automatic heuristic;
+keep explicit opt-in**.  Automatic mode-switching would be surprising and
+is hard to test deterministically.  The builder `watch_dirs(true)` option
+provides opt-in with zero magic.

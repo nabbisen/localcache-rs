@@ -8,6 +8,7 @@ use std::fs;
 use base64::Engine as _;
 use tempfile::TempDir;
 
+#[allow(unused_imports)]
 use localcache::{CacheEngine, CacheOptions, ScanOptions};
 
 #[test]

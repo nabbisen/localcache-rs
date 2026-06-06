@@ -2,7 +2,7 @@
 
 | Field    | Value |
 |----------|-------|
-| Status   | Proposed |
+| Status   | Implemented (v0.17.0) |
 | Feature  | `opentelemetry` (new, additive) |
 | Touches  | `Cargo.toml`, `src/cache/engine.rs`, `src/cache/async_engine.rs` |
 | Depends on | existing `tracing` feature |
