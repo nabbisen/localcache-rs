@@ -11,6 +11,27 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.16.2] — 2026-05-05
+
+### Added
+
+- **`rfcs/` directory** — implementation-ready design specifications for
+  planned features, written in English to match the rest of `docs/`.
+
+  | RFC | Title | Template |
+  |-----|-------|----------|
+  | [0001](rfcs/0001-recursive-directory-watching.md) | Recursive Directory Watching | Lightweight |
+  | [0002](rfcs/0002-query-index-hints.md) | Query Index Hints and Explain Plan | Full |
+  | [0003](rfcs/0003-opentelemetry-spans.md) | OpenTelemetry Spans | Full |
+  | [0004](rfcs/0004-shared-memory-db.md) | Read-only Shared-memory DB Mode | Full |
+  | [0005](rfcs/0005-async-std-smol.md) | async-std / smol Feature Variants | Full |
+
+  Each RFC covers: summary, motivation, public API surface, internal
+  design with code sketches, test plan, and (where applicable) security
+  considerations and open questions.
+
+---
+
 ## [0.16.1] — 2026-05-04
 
 ### Changed
@@ -310,7 +331,8 @@ Namespaces, batch ops, TTL, PRAGMAs, schema migration.
 ## [0.1.0] — 2025-05-02
 Initial release.
 
-[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/v0.16.1...HEAD
+[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/v0.16.2...HEAD
+[0.16.2]: https://github.com/nabbisen/localcache-rs/compare/v0.16.1...v0.16.2
 [0.16.1]: https://github.com/nabbisen/localcache-rs/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/nabbisen/localcache-rs/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/nabbisen/localcache-rs/compare/v0.14.0...v0.15.0
