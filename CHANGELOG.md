@@ -11,6 +11,75 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.20.0] — 2026-06-06
+
+### Fixed — mtime nanosecond precision (schema v5)
+
+**Bug:** a file overwritten within the same second it was cached, with
+byte-identical length, was invisible to all `MetadataOnly` and
+`MetadataThenHash` detection modes.  The engine returned `Fresh` (or
+served the old payload) instead of `Stale`.
+
+**Root cause:** `mtime` was stored as `modified().as_secs() as i64` —
+whole-second precision.  If a file is overwritten within the same
+clock second and the size does not change, both the mtime (seconds) and
+the file size are identical to the stored values, so the metadata
+comparison reports "nothing changed".
+
+**Fix:** `mtime` is now stored and compared as
+`modified().as_nanos() as i64` — nanosecond precision.  A same-second
+overwrite advances the filesystem's nanosecond counter on every modern
+OS/filesystem (Linux ext4 / tmpfs / btrfs, macOS APFS, Windows NTFS
+all support sub-second mtime), closing the blind window entirely.
+
+The value fits in an `i64` for all dates through 2262 (`i64::MAX ≈
+9.2 × 10¹⁸ ns`).
+
+### Migration — schema v4 → v5
+
+`CacheEngine::open()` (and `initialize()`) automatically migrates
+existing databases from schema v4 (seconds) to v5 (nanoseconds) by
+running:
+
+```sql
+UPDATE files SET mtime = mtime * 1000000000;
+```
+
+**First-access behaviour after migration** (one-time per entry):
+
+| Detection mode | First access after upgrade |
+|---|---|
+| `MetadataThenPartialHash` / `MetadataThenFullHash` | One extra hash to re-validate; payload served from cache |
+| `MetadataOnly` | Reports `Stale`; caller recomputes once |
+| `StrictFullHash` | Always hashes; unaffected |
+
+After the first `set()` on the upgraded binary, entries are stored with
+nanosecond mtime and detection is exact.
+
+### Changed
+
+- `FileMetadata::mtime`: doc comment updated — field is now **nanoseconds**
+  since the Unix epoch (was seconds).
+- `MetadataDiff::stored_mtime` / `current_mtime`: same unit change.
+- `docs/src/migration.md` schema history table updated with v5.
+- Schema version constant: `CURRENT_VERSION` = 5.
+
+### Tests
+
+Five new regression tests in `tests/storage.rs`:
+
+- `metadata_only_detects_same_second_same_size_overwrite`
+- `metadata_then_partial_hash_detects_same_second_same_size_overwrite`
+- `metadata_then_full_hash_detects_same_second_same_size_overwrite` *(the exact reported scenario)*
+- `schema_v4_migrates_to_v5_and_entries_are_accessible`
+- `fresh_database_is_schema_v5`
+
+The first three skip gracefully on filesystems with whole-second mtime
+resolution (via a pre-condition check) to avoid CI flakiness on exotic
+environments, while confirming the fix on the standard Linux / macOS CI.
+
+---
+
 ## [0.19.1] — 2026-06-06
 
 ### Security / Maintenance
@@ -584,6 +653,7 @@ Namespaces, batch ops, TTL, PRAGMAs, schema migration.
 Initial release.
 
 [Unreleased]: https://github.com/nabbisen/localcache-rs/compare/v0.16.2...HEAD
+[0.20.0]: https://github.com/nabbisen/localcache-rs/compare/v0.19.1...v0.20.0
 [0.19.1]: https://github.com/nabbisen/localcache-rs/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/nabbisen/localcache-rs/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/nabbisen/localcache-rs/compare/v0.17.0...v0.18.0

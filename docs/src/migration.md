@@ -103,6 +103,7 @@ from any version back to v0.1 are migrated transparently.
 | 2 | 0.2 | Added `namespace` column |
 | 3 | 0.4 | Added `payload_version`, `encoding` |
 | 4 | 0.6 | Added `last_accessed_at` + LRU index |
+| 5 | 0.20 | `mtime` precision: whole seconds → **nanoseconds** |
 
 ## Wire-format stability guarantee (v0.18.0+)
 

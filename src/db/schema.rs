@@ -7,12 +7,13 @@
 //! | 2            | v0.2 — namespace column                                  |
 //! | 3            | v0.4 — `files.payload_version`, `payloads.encoding`      |
 //! | 4            | v0.6 — `files.last_accessed_at`                          |
+//! | 5            | v0.20 — `files.mtime` precision: seconds → nanoseconds   |
 
 use rusqlite::Connection;
 
 use crate::error::LocalFileCacheError;
 
-const CURRENT_VERSION: u32 = 4;
+const CURRENT_VERSION: u32 = 5;
 
 /// Apply the current schema to `conn`, running any necessary migrations.
 pub(crate) fn initialize(conn: &Connection) -> Result<(), LocalFileCacheError> {
@@ -24,12 +25,18 @@ pub(crate) fn initialize(conn: &Connection) -> Result<(), LocalFileCacheError> {
             migrate_v1_to_v2(conn)?;
             migrate_v2_to_v3(conn)?;
             migrate_v3_to_v4(conn)?;
+            migrate_v4_to_v5(conn)?;
         }
         2 => {
             migrate_v2_to_v3(conn)?;
             migrate_v3_to_v4(conn)?;
+            migrate_v4_to_v5(conn)?;
         }
-        3 => migrate_v3_to_v4(conn)?,
+        3 => {
+            migrate_v3_to_v4(conn)?;
+            migrate_v4_to_v5(conn)?;
+        }
+        4 => migrate_v4_to_v5(conn)?,
         CURRENT_VERSION => {}
         v => {
             return Err(LocalFileCacheError::UnsupportedFeature(format!(
@@ -141,6 +148,38 @@ fn migrate_v3_to_v4(conn: &Connection) -> Result<(), LocalFileCacheError> {
             ON files(namespace, last_accessed_at, updated_at);
         ",
     )?;
-    set_user_version(conn, CURRENT_VERSION)?;
+    set_user_version(conn, 4)?;
+    Ok(())
+}
+
+/// Convert `files.mtime` from whole-second precision to nanosecond precision.
+///
+/// Prior to v5, `mtime` stored `modified().as_secs()`.  From v5 onwards it
+/// stores `modified().as_nanos()`.  Multiplying existing values by
+/// `1_000_000_000` converts them to nanoseconds.
+///
+/// # Migration note for users of v0.19 and earlier
+///
+/// On first open after this upgrade, every existing entry's `mtime` is
+/// multiplied by 10⁹.  The converted value (e.g. `1718000000000000000 ns`)
+/// will differ from the file's actual sub-second mtime (`1718000000500000000 ns`)
+/// for files whose mtime is not exactly on a second boundary.
+///
+/// - Under `MetadataOnly` or `MetadataThenHash`: this appears as a one-time
+///   "stale" per entry on first access after upgrade.  `MetadataThenHash`
+///   modes re-hash and serve the cached payload (one extra hash per entry);
+///   `MetadataOnly` returns `Stale` and lets the caller recompute.
+/// - The effect is a single cold-start pass per entry — after the first
+///   `set()` call on the new binary the entry is stored with ns precision
+///   and detection is exact from that point forward.
+fn migrate_v4_to_v5(conn: &Connection) -> Result<(), LocalFileCacheError> {
+    conn.execute_batch(
+        "
+        BEGIN;
+        UPDATE files SET mtime = mtime * 1000000000;
+        COMMIT;
+        ",
+    )?;
+    set_user_version(conn, 5)?;
     Ok(())
 }

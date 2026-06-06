@@ -145,6 +145,9 @@ pub struct Diagnosis {
 }
 
 /// Metadata difference between the cached and on-disk file.
+///
+/// Both `stored_mtime` and `current_mtime` are **nanoseconds** since the
+/// Unix epoch (schema v5+, introduced in v0.20.0).
 #[derive(Debug, Clone)]
 pub struct MetadataDiff {
     pub stored_mtime: i64,

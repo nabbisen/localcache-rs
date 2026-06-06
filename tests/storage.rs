@@ -5,6 +5,7 @@ use common::write_file;
 
 use std::fs;
 
+#[allow(unused_imports)]
 use localcache::{CacheEngine, CacheOptions, CacheStatus, ChangeDetectionMode};
 use tempfile::TempDir;
 
@@ -734,3 +735,183 @@ mod compression_tests {
 // ====================================================================
 // Phase 5 — JSON codec
 // ====================================================================
+
+// ============================================================
+// Regression: mtime nanosecond precision (schema v5, v0.20.0)
+//
+// A file overwritten within the same second it was cached, with the
+// same byte length but different content, MUST be detected as stale.
+//
+// Before the fix, mtime was stored as whole seconds.  A same-second /
+// same-size overwrite was invisible to MetadataOnly and
+// MetadataThenHash: the metadata comparison saw (mtime unchanged,
+// size unchanged) → Fresh, returning stale data.
+// ============================================================
+
+mod mtime_ns_regression {
+    use std::fs;
+    use std::io::Write as _;
+    use std::time::Duration;
+
+    use tempfile::TempDir;
+
+    use localcache::{CacheEngine, CacheStatus, ChangeDetectionMode};
+
+    fn write_exact(path: &std::path::Path, content: &[u8]) {
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path)
+            .unwrap();
+        f.write_all(content).unwrap();
+        f.flush().unwrap();
+    }
+
+    fn engine_with_mode(db: &std::path::Path, mode: ChangeDetectionMode) -> CacheEngine<Vec<f32>> {
+        CacheEngine::builder()
+            .database(db)
+            .change_detection(mode)
+            .build()
+            .unwrap()
+    }
+
+    /// Core helper: cache a file, overwrite it within the same second with
+    /// same-length/different-content, then assert the engine returns Stale.
+    fn assert_same_second_same_size_overwrite_is_stale(mode: ChangeDetectionMode) {
+        let dir = TempDir::new().unwrap();
+        let db = dir.path().join("db.sqlite3");
+        let engine = engine_with_mode(&db, mode);
+        let path = dir.path().join("file.bin");
+
+        // 8 bytes — same length before and after overwrite.
+        let content_v1 = b"AAAAAAAA";
+        let content_v2 = b"BBBBBBBB";
+
+        write_exact(&path, content_v1);
+        engine.set(&path, &vec![1.0_f32]).unwrap();
+
+        // Sleep 10 ms: enough for nanosecond-precision filesystems to advance
+        // the mtime counter, but well within the same clock second.
+        std::thread::sleep(Duration::from_millis(10));
+
+        write_exact(&path, content_v2);
+
+        let status = engine.check_status(&path).unwrap();
+
+        // If the filesystem has nanosecond-resolution mtime (Linux ext4,
+        // tmpfs, btrfs), the change MUST be detected.
+        // Skip the assertion on coarse-resolution filesystems (mtime
+        // unchanged after 10 ms) to avoid false failures in exotic CIs.
+        let stored_mtime = engine
+            .list_entries()
+            .unwrap()
+            .into_iter()
+            .find(|e| e.path == path.canonicalize().unwrap())
+            .map(|e| e.metadata.mtime)
+            .unwrap_or(0);
+
+        let current_meta = std::fs::metadata(&path).unwrap();
+        let current_mtime = current_meta
+            .modified()
+            .unwrap()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as i64;
+
+        if stored_mtime == current_mtime {
+            // Filesystem did not advance mtime within 10 ms — cannot test.
+            // This is not a test failure; it just means the host filesystem
+            // has whole-second resolution.  Document and skip.
+            eprintln!(
+                "[mtime_ns_regression] skipped: filesystem mtime did not \
+                 advance within 10 ms (stored={stored_mtime}, current={current_mtime})"
+            );
+            return;
+        }
+
+        assert_eq!(
+            status,
+            CacheStatus::Stale,
+            "mode={mode:?}: same-second same-size overwrite must be Stale, got {status:?}"
+        );
+    }
+
+    // --------------------------------------------------------------------------
+    // MetadataOnly — smallest detection window; only mtime+size
+    // --------------------------------------------------------------------------
+    #[test]
+    fn metadata_only_detects_same_second_same_size_overwrite() {
+        assert_same_second_same_size_overwrite_is_stale(ChangeDetectionMode::MetadataOnly);
+    }
+
+    // --------------------------------------------------------------------------
+    // MetadataThenPartialHash — metadata first; partial hash if changed
+    // --------------------------------------------------------------------------
+    #[test]
+    fn metadata_then_partial_hash_detects_same_second_same_size_overwrite() {
+        assert_same_second_same_size_overwrite_is_stale(
+            ChangeDetectionMode::MetadataThenPartialHash,
+        );
+    }
+
+    // --------------------------------------------------------------------------
+    // MetadataThenFullHash — the exact mode the developer reported
+    // --------------------------------------------------------------------------
+    #[test]
+    fn metadata_then_full_hash_detects_same_second_same_size_overwrite() {
+        assert_same_second_same_size_overwrite_is_stale(ChangeDetectionMode::MetadataThenFullHash);
+    }
+
+    // --------------------------------------------------------------------------
+    // Schema v4 → v5 migration: v4 fixture opens and entries migrate correctly
+    // --------------------------------------------------------------------------
+    #[test]
+    fn schema_v4_migrates_to_v5_and_entries_are_accessible() {
+        // Open the committed v4 golden fixture (compat-v0_18.sqlite3).
+        // initialize() runs migrate_v4_to_v5 (mtime × 1e9) automatically.
+        let dir = TempDir::new().unwrap();
+        let fixture_src = std::path::Path::new("tests/fixtures/compat-v0_18.sqlite3");
+        let db = dir.path().join("migrated.sqlite3");
+        fs::copy(fixture_src, &db).unwrap();
+
+        let engine: CacheEngine<Vec<f32>> = CacheEngine::builder()
+            .database(&db)
+            .namespace("plain")
+            .build()
+            .unwrap();
+
+        // Migration should succeed and all entries should be readable.
+        let count = engine.entry_count().unwrap();
+        assert_eq!(
+            count, 2,
+            "v4 fixture must have 2 entries in 'plain' namespace after migration"
+        );
+
+        // Payloads are intact after migration.
+        let entries = engine.query().run().unwrap();
+        assert_eq!(entries.len(), 2, "query must return all migrated entries");
+
+        let mut payloads: Vec<Vec<f32>> = entries.into_iter().map(|e| e.payload).collect();
+        payloads.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert_eq!(payloads[0], vec![1.0_f32, 2.0, 3.0]);
+        assert_eq!(payloads[1], vec![4.0_f32, 5.0, 6.0]);
+    }
+
+    // --------------------------------------------------------------------------
+    // Verify schema version is 5 after opening a fresh database
+    // --------------------------------------------------------------------------
+    #[test]
+    fn fresh_database_is_schema_v5() {
+        let dir = TempDir::new().unwrap();
+        let db = dir.path().join("fresh.sqlite3");
+        let _engine: CacheEngine<Vec<f32>> = CacheEngine::builder().database(&db).build().unwrap();
+
+        // Inspect the schema version directly via raw SQLite.
+        let conn = rusqlite::Connection::open(&db).unwrap();
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, 5, "new databases must open at schema v5");
+    }
+}

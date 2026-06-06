@@ -10,7 +10,16 @@ use crate::error::LocalFileCacheError;
 /// This is the public-facing type exposed via [`crate::CacheEntry`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileMetadata {
-    /// Modification time as seconds since the Unix epoch.
+    /// Modification time as **nanoseconds** since the Unix epoch.
+    ///
+    /// Stored with nanosecond precision (schema v5+) so that files
+    /// overwritten within the same second are correctly detected as stale
+    /// even when their size is unchanged.  On filesystems with coarser
+    /// timestamp resolution the sub-second portion will be zero, which is
+    /// still correct — the comparison remains exact.
+    ///
+    /// Fits in an `i64` for all dates through the year 2262
+    /// (`i64::MAX ≈ 9.2 × 10¹⁸ ns`).
     pub mtime: i64,
     /// File size in bytes.
     pub file_size: u64,
@@ -28,7 +37,7 @@ pub(crate) fn collect_metadata(path: &Path) -> Result<FileMetadata, LocalFileCac
     let mtime = meta
         .modified()?
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
+        .map(|d| d.as_nanos() as i64)
         .unwrap_or(0);
     let file_size = meta.len();
     Ok(FileMetadata {
