@@ -11,6 +11,47 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.18.0] — 2026-06-06
+
+### Added — RFC 0006: Directory-scoped Query Predicates
+
+- `QueryBuilder::path_in_dir(dir, recursive: bool)` — exact directory
+  scoping in SQL:
+  - `recursive = false`: matches only **direct children** of `dir`
+    (`LIKE 'dir/%' AND NOT LIKE 'dir/%/%'`).
+  - `recursive = true`: matches the **entire subtree**
+    (`LIKE 'dir/%'`).
+  - `dir` is canonicalized when it exists on disk; falls back to the raw
+    path string otherwise, so queries over deleted directories still match
+    their stored entries.
+  - LIKE metacharacters (`\`, `%`, `_`) inside directory names are escaped
+    automatically — they always match literally.
+- `QueryBuilder::path_glob(pattern)` — glob matching in SQL using the same
+  dialect as `ScanOptions::glob_pattern`:
+  - `*` — any sequence of characters (SQLite `GLOB *`)
+  - `?` — exactly one character (SQLite `GLOB ?`)
+  - `{a,b,c}` — brace alternation expanded to `OR`-chained `GLOB` terms
+  - `[` in a pattern matches a literal `[`; character classes are
+    intentionally unsupported.
+- Both predicates AND-combine with `path_like`, `index_hint`, payload
+  predicates (json feature), and each other.
+- Both predicates are reflected in `dry_run()` / `query_dry_run()` EXPLAIN
+  QUERY PLAN output.
+
+### Changed
+
+- `repository::keys()` and `repository::explain_query()` refactored to use a
+  shared `build_path_sql()` helper and `rusqlite::params_from_iter` for
+  variable-length parameter binding — replaces the two-case fixed-count match.
+- `engine::expand_braces` and `split_top_level` promoted from private to
+  `pub(crate)` (used by `QueryBuilder::path_glob`).
+- `escape_like()` added to `repository.rs` (private) — escapes LIKE
+  metacharacters for the `path_in_dir` prefix construction.
+- RFC 0006 status in `rfcs/proposed/` updated to `Implemented (v0.18.0)`
+  and moved to `rfcs/done/`.
+
+---
+
 ## [0.17.0] — 2026-06-06
 
 ### Added — RFC 0001: Recursive Directory Watching (`watching` feature)
@@ -432,6 +473,7 @@ Namespaces, batch ops, TTL, PRAGMAs, schema migration.
 Initial release.
 
 [Unreleased]: https://github.com/nabbisen/localcache-rs/compare/v0.16.2...HEAD
+[0.18.0]: https://github.com/nabbisen/localcache-rs/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/nabbisen/localcache-rs/compare/v0.16.2...v0.17.0
 [0.16.2]: https://github.com/nabbisen/localcache-rs/compare/v0.16.1...v0.16.2
 [0.16.1]: https://github.com/nabbisen/localcache-rs/compare/v0.16.0...v0.16.1

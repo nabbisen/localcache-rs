@@ -902,3 +902,307 @@ mod rfc0002_index_hints {
         assert!(!plan.is_empty(), "async dry_run must return a plan");
     }
 }
+
+// ============================================================
+// RFC 0006 — Directory-scoped Query Predicates
+// ============================================================
+
+mod rfc0006_dir_predicates {
+    use std::fs;
+
+    use tempfile::TempDir;
+
+    use localcache::CacheEngine;
+
+    // ── Fixture ────────────────────────────────────────────────────────────
+    //
+    //   root/
+    //     a.txt   (cached)
+    //     b.txt   (cached)
+    //     sub/
+    //       c.txt   (cached)
+    //       sub2/
+    //         d.txt   (cached)
+    //     other/
+    //       e.txt   (cached)
+
+    struct Fixture {
+        _dir: TempDir,
+        root: std::path::PathBuf,
+        a: std::path::PathBuf,
+        b: std::path::PathBuf,
+        c: std::path::PathBuf,
+        d: std::path::PathBuf,
+        e: std::path::PathBuf,
+    }
+
+    fn make_fixture() -> (Fixture, CacheEngine<Vec<f32>>) {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("root");
+        let sub = root.join("sub");
+        let sub2 = sub.join("sub2");
+        let other = root.join("other");
+        for d in [&root, &sub, &sub2, &other] {
+            fs::create_dir(d).unwrap();
+        }
+
+        let a = write_file_at(&root, "a.txt", b"a");
+        let b = write_file_at(&root, "b.txt", b"b");
+        let c = write_file_at(&sub, "c.txt", b"c");
+        let d = write_file_at(&sub2, "d.txt", b"d");
+        let e = write_file_at(&other, "e.txt", b"e");
+
+        let engine: CacheEngine<Vec<f32>> = CacheEngine::builder()
+            .database(dir.path().join("rfc0006.sqlite3"))
+            .build()
+            .unwrap();
+        for (path, val) in [(&a, 1.0), (&b, 2.0), (&c, 3.0), (&d, 4.0), (&e, 5.0)] {
+            engine.set(path, &vec![val]).unwrap();
+        }
+
+        let fix = Fixture {
+            _dir: dir,
+            root,
+            a,
+            b,
+            c,
+            d,
+            e,
+        };
+        (fix, engine)
+    }
+
+    fn write_file_at(dir: &std::path::Path, name: &str, content: &[u8]) -> std::path::PathBuf {
+        let p = dir.join(name);
+        std::fs::write(&p, content).unwrap();
+        p
+    }
+
+    // Sort helper for stable comparison.
+    fn sorted_paths(entries: Vec<localcache::CacheEntry<Vec<f32>>>) -> Vec<std::path::PathBuf> {
+        let mut v: Vec<_> = entries.into_iter().map(|e| e.path).collect();
+        v.sort();
+        v
+    }
+
+    // ── path_in_dir, non-recursive ──────────────────────────────────────────
+
+    #[test]
+    fn path_in_dir_non_recursive_returns_direct_children_only() {
+        let (fix, engine) = make_fixture();
+        let results = engine.query().path_in_dir(&fix.root, false).run().unwrap();
+        let paths = sorted_paths(results);
+        // Only a.txt and b.txt are direct children of root.
+        assert_eq!(paths, vec![fix.a.clone(), fix.b.clone()]);
+    }
+
+    #[test]
+    fn path_in_dir_non_recursive_subdir_returns_only_its_direct_children() {
+        let (fix, engine) = make_fixture();
+        let sub = fix.root.join("sub");
+        let results = engine.query().path_in_dir(&sub, false).run().unwrap();
+        let paths = sorted_paths(results);
+        // c.txt is a direct child of sub; d.txt is in sub/sub2 — excluded.
+        assert_eq!(paths, vec![fix.c.clone()]);
+    }
+
+    #[test]
+    fn path_in_dir_non_recursive_excludes_subdirectory_entries() {
+        let (fix, engine) = make_fixture();
+        let results = engine.query().path_in_dir(&fix.root, false).run().unwrap();
+        let paths = sorted_paths(results);
+        // c, d, e must not appear.
+        assert!(!paths.contains(&fix.c));
+        assert!(!paths.contains(&fix.d));
+        assert!(!paths.contains(&fix.e));
+    }
+
+    // ── path_in_dir, recursive ─────────────────────────────────────────────
+
+    #[test]
+    fn path_in_dir_recursive_returns_full_subtree() {
+        let (fix, engine) = make_fixture();
+        let results = engine.query().path_in_dir(&fix.root, true).run().unwrap();
+        let paths = sorted_paths(results);
+        // All five entries are under root.
+        assert_eq!(paths.len(), 5);
+        for p in [&fix.a, &fix.b, &fix.c, &fix.d, &fix.e] {
+            assert!(paths.contains(p), "expected {}", p.display());
+        }
+    }
+
+    #[test]
+    fn path_in_dir_recursive_sub_returns_sub_and_deeper() {
+        let (fix, engine) = make_fixture();
+        let sub = fix.root.join("sub");
+        let results = engine.query().path_in_dir(&sub, true).run().unwrap();
+        let paths = sorted_paths(results);
+        // c.txt (in sub) and d.txt (in sub/sub2) included; a, b, e excluded.
+        assert_eq!(paths.len(), 2);
+        assert!(paths.contains(&fix.c));
+        assert!(paths.contains(&fix.d));
+        assert!(!paths.contains(&fix.a));
+    }
+
+    // ── path_in_dir, special characters ───────────────────────────────────
+
+    #[test]
+    fn path_in_dir_handles_percent_in_directory_name() {
+        let dir = TempDir::new().unwrap();
+        let special = dir.path().join("100%_done");
+        fs::create_dir(&special).unwrap();
+        let f = write_file_at(&special, "x.txt", b"x");
+
+        let engine: CacheEngine<Vec<f32>> = CacheEngine::builder()
+            .database(dir.path().join("pct.sqlite3"))
+            .build()
+            .unwrap();
+        // Also cache a file whose path does NOT contain "100%_done".
+        let other = write_file_at(dir.path(), "other.txt", b"o");
+        engine.set(&f, &vec![1.0]).unwrap();
+        engine.set(&other, &vec![2.0]).unwrap();
+
+        let results = engine.query().path_in_dir(&special, true).run().unwrap();
+        let paths = sorted_paths(results);
+        // The % and _ must be matched literally, not as LIKE wildcards.
+        assert_eq!(paths, vec![f]);
+    }
+
+    // ── path_in_dir, nonexistent directory ────────────────────────────────
+
+    #[test]
+    fn path_in_dir_nonexistent_returns_empty() {
+        let dir = TempDir::new().unwrap();
+        let engine: CacheEngine<Vec<f32>> =
+            CacheEngine::builder().database(":memory:").build().unwrap();
+        // Engine is empty; the dir doesn't exist either.
+        let ghost = dir.path().join("does_not_exist");
+        let results = engine.query().path_in_dir(&ghost, true).run().unwrap();
+        assert!(results.is_empty());
+    }
+
+    // ── path_glob ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn path_glob_star_matches_all_txt() {
+        let (_fix, engine) = make_fixture();
+        let results = engine.query().path_glob("*.txt").run().unwrap();
+        assert_eq!(results.len(), 5, "all five .txt files should match");
+    }
+
+    #[test]
+    fn path_glob_question_mark_matches_single_char() {
+        let (_fix, engine) = make_fixture();
+        // "?.txt" matches a single-char stem — a.txt and b.txt (and c, d, e too
+        // since they also have single-char stems).
+        let results = engine.query().path_glob("*/?.txt").run().unwrap();
+        assert_eq!(results.len(), 5);
+    }
+
+    #[test]
+    fn path_glob_brace_alternation() {
+        let (fix, engine) = make_fixture();
+        // Match only a.txt and b.txt via brace alternation.
+        let root_str = fix.root.to_string_lossy();
+        let pattern = format!("{root_str}/{{a,b}}.txt");
+        let results = engine.query().path_glob(&pattern).run().unwrap();
+        let paths = sorted_paths(results);
+        assert_eq!(paths, vec![fix.a.clone(), fix.b.clone()]);
+    }
+
+    #[test]
+    fn path_glob_nested_brace_expansion() {
+        let (_fix, engine) = make_fixture();
+        // {a,{b,c}} expands to a, b, c — should match a.txt, b.txt, c.txt.
+        let pattern = "*/{a,{b,c}}.txt".to_string();
+        let results = engine.query().path_glob(&pattern).run().unwrap();
+        assert_eq!(results.len(), 3);
+    }
+
+    #[test]
+    fn path_glob_literal_bracket_matches_file_with_bracket_in_name() {
+        let dir = TempDir::new().unwrap();
+        let f = write_file_at(dir.path(), "[special].txt", b"s");
+        let engine: CacheEngine<Vec<f32>> =
+            CacheEngine::builder().database(":memory:").build().unwrap();
+        engine.set(&f, &vec![9.0]).unwrap();
+
+        // User writes the pattern with a literal `[`; our translation converts
+        // `[` → `[[]` so SQLite GLOB treats it as a character class matching `[`.
+        // Pattern "*/[special].txt" → after translation → "*/[[]special].txt"
+        // which matches the file named "[special].txt".
+        let sep = std::path::MAIN_SEPARATOR;
+        let pattern = format!("*{sep}[special].txt");
+        let results = engine.query().path_glob(&pattern).run().unwrap();
+        assert_eq!(results.len(), 1, "literal [ should match the file");
+    }
+
+    // ── Combination: path_in_dir + path_glob ──────────────────────────────
+
+    #[test]
+    fn path_in_dir_and_path_glob_combine() {
+        let (fix, engine) = make_fixture();
+        // Within root/sub (recursive) AND glob matching only c.txt.
+        let sub = fix.root.join("sub");
+        let results = engine
+            .query()
+            .path_in_dir(&sub, true)
+            .path_glob("*/c.txt")
+            .run()
+            .unwrap();
+        let paths = sorted_paths(results);
+        assert_eq!(paths, vec![fix.c.clone()]);
+    }
+
+    // ── dry_run reflects new predicates ───────────────────────────────────
+
+    #[test]
+    fn dry_run_with_path_in_dir() {
+        let (fix, engine) = make_fixture();
+        let plan = engine
+            .query()
+            .path_in_dir(&fix.root, false)
+            .dry_run()
+            .unwrap();
+        // Plan must be non-empty — the LIKE clause shows up in the scan.
+        assert!(!plan.is_empty(), "dry_run must return a plan");
+    }
+
+    #[test]
+    fn dry_run_with_path_glob() {
+        let (_fix, engine) = make_fixture();
+        let plan = engine.query().path_glob("*.txt").dry_run().unwrap();
+        assert!(!plan.is_empty());
+    }
+
+    // ── Equivalence test: path_in_dir(dir, false) vs LIKE + parent filter ─
+
+    #[test]
+    fn path_in_dir_non_recursive_equivalent_to_like_plus_parent_filter() {
+        let (fix, engine) = make_fixture();
+
+        // Reference: path_like prefix + Rust-side parent() equality.
+        let root_str = fix.root.to_string_lossy();
+        let pattern = format!("{}{}%", root_str, std::path::MAIN_SEPARATOR);
+        let all_under: Vec<_> = engine
+            .query()
+            .path_like(&pattern)
+            .run()
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.path.parent() == Some(&fix.root))
+            .map(|e| e.path)
+            .collect();
+
+        // RFC 0006 path: SQL-native, no post-filter.
+        let native: Vec<_> =
+            sorted_paths(engine.query().path_in_dir(&fix.root, false).run().unwrap());
+
+        let mut reference = all_under;
+        reference.sort();
+        assert_eq!(
+            native, reference,
+            "SQL-native and post-filter results must agree"
+        );
+    }
+}

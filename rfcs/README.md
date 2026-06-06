@@ -49,6 +49,7 @@ The "Background" section is optional in both templates.
 | [0003](./done/0003-opentelemetry-spans.md) | OpenTelemetry Spans | v0.17.0 |
 | [0004](./done/0004-shared-memory-db.md) | Read-only Shared-memory DB Mode | v0.17.0 |
 | [0005](./done/0005-async-std-smol.md) | async-std / smol Feature Variants | v0.17.0 |
+| [0006](./done/0006-directory-scoped-query-predicates.md) | Directory-scoped Query Predicates | v0.18.0 |
 
 ### Archive
 
@@ -56,4 +57,4 @@ The "Background" section is optional in both templates.
 
 ### Proposed
 
-*(none — all pending RFCs shipped in v0.17.0)*
+*(none)*

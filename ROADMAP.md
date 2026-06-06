@@ -52,6 +52,15 @@ Five pending RFCs implemented in a single release:
 - [x] RFC 000 lifecycle policy adopted: `rfcs/` restructured into
       `proposed/` / `done/` / `archive/` folders
 
+## Phase 18 — Directory-scoped Query Predicates (v0.18.0) ✅
+
+- [x] `QueryBuilder::path_in_dir(dir, recursive: bool)` — SQL-native directory
+      scoping; LIKE-metacharacter-safe prefix construction with `escape_like`
+- [x] `QueryBuilder::path_glob(pattern)` — brace-expanding glob in SQL via
+      `expand_braces` + SQLite `GLOB`; `[` escaped to `[[]`
+- [x] Shared `build_path_sql` helper + `params_from_iter` in `repository.rs`
+- [x] RFC 0006 authored, implemented, and moved to `rfcs/done/`
+
 ## Future / Unscheduled
 
 *(all items from the previous Future section shipped in v0.17.0)*

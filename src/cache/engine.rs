@@ -1275,7 +1275,7 @@ where
         &self,
         path_like: Option<&str>,
     ) -> Result<Vec<std::path::PathBuf>, LocalFileCacheError> {
-        repository::keys(&self.conn, &self.namespace, path_like, None)
+        repository::keys(&self.conn, &self.namespace, path_like, None, None, None)
     }
 
     // ------------------------------------------------------------------
@@ -1301,6 +1301,8 @@ where
             offset: 0,
             path_like: None,
             index_hint: None,
+            path_in_dir: None,
+            path_glob: None,
             order_by: Vec::new(),
         }
     }
@@ -1543,7 +1545,7 @@ impl GlobPattern {
 /// Nested brace groups within alternatives are supported:
 /// * `"{a,{b,c}}.txt"` → `["a.txt", "b.txt", "c.txt"]`
 /// * `"{pre,post}_{x,y}.txt"` → 4 combinations
-fn expand_braces(pattern: &str) -> Vec<String> {
+pub(crate) fn expand_braces(pattern: &str) -> Vec<String> {
     // Find the first `{` and its *matching* `}` (tracking nesting depth).
     let bytes = pattern.as_bytes();
     if let Some(open) = bytes.iter().position(|&b| b == b'{') {
@@ -1578,7 +1580,7 @@ fn expand_braces(pattern: &str) -> Vec<String> {
 }
 
 /// Split `s` on commas that are not inside any `{...}` group.
-fn split_top_level(s: &str) -> Vec<String> {
+pub(crate) fn split_top_level(s: &str) -> Vec<String> {
     let mut parts = Vec::new();
     let mut depth = 0usize;
     let mut start = 0;

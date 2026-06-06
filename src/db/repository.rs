@@ -613,38 +613,17 @@ pub(crate) fn keys(
     namespace: &str,
     pattern: Option<&str>,
     index_hint: Option<&str>,
+    path_in_dir: Option<(&str, bool)>,
+    path_glob: Option<&[String]>,
 ) -> Result<Vec<std::path::PathBuf>, LocalFileCacheError> {
-    // Build "files" table reference — append INDEXED BY clause when requested.
-    let table = match index_hint {
-        Some(idx) => format!("files INDEXED BY {idx}"),
-        None => "files".to_owned(),
-    };
-
-    let (sql, params_vec): (String, Vec<String>) = if let Some(pat) = pattern {
-        (
-            format!("SELECT path FROM {table} WHERE namespace = ?1 AND path LIKE ?2 ORDER BY path"),
-            vec![namespace.to_owned(), pat.to_owned()],
-        )
-    } else {
-        (
-            format!("SELECT path FROM {table} WHERE namespace = ?1 ORDER BY path"),
-            vec![namespace.to_owned()],
-        )
-    };
-
+    let (sql, params_vec) = build_path_sql(namespace, pattern, index_hint, path_in_dir, path_glob);
     let mut stmt = conn.prepare(&sql)?;
-    let paths: Result<Vec<_>, _> = match params_vec.len() {
-        1 => stmt
-            .query_map(params![params_vec[0]], |r| {
-                Ok(std::path::PathBuf::from(r.get::<_, String>(0)?))
-            })?
-            .collect(),
-        _ => stmt
-            .query_map(params![params_vec[0], params_vec[1]], |r| {
-                Ok(std::path::PathBuf::from(r.get::<_, String>(0)?))
-            })?
-            .collect(),
-    };
+    let paths: Result<Vec<_>, _> = stmt
+        .query_map(
+            rusqlite::params_from_iter(params_vec.iter().map(String::as_str)),
+            |r| Ok(std::path::PathBuf::from(r.get::<_, String>(0)?)),
+        )?
+        .collect();
     Ok(paths?)
 }
 
@@ -655,37 +634,99 @@ pub(crate) fn explain_query(
     namespace: &str,
     pattern: Option<&str>,
     index_hint: Option<&str>,
+    path_in_dir: Option<(&str, bool)>,
+    path_glob: Option<&[String]>,
 ) -> Result<String, LocalFileCacheError> {
+    let (sql, params_vec) = build_path_sql(namespace, pattern, index_hint, path_in_dir, path_glob);
+    let explain_sql = format!("EXPLAIN QUERY PLAN {sql}");
+    let mut stmt = conn.prepare(&explain_sql)?;
+    let rows: Result<Vec<String>, _> = stmt
+        .query_map(
+            rusqlite::params_from_iter(params_vec.iter().map(String::as_str)),
+            |row| row.get::<_, String>(3),
+        )?
+        .collect();
+    Ok(rows?.join("\n"))
+}
+
+// ---------------------------------------------------------------------------
+// Path-listing SQL builder (shared by keys, explain_query)
+// ---------------------------------------------------------------------------
+
+/// Build the `SELECT path FROM files …` SQL and its bind parameters for all
+/// path-filtering options.  All filters AND-combine.
+///
+/// `path_in_dir`  — `(prefix, recursive)` where `prefix` is the canonical
+///                  directory path including a trailing platform separator.
+/// `path_glob`    — pre-expanded, `[`-escaped SQLite GLOB alternatives.
+fn build_path_sql(
+    namespace: &str,
+    pattern: Option<&str>,
+    index_hint: Option<&str>,
+    path_in_dir: Option<(&str, bool)>,
+    path_glob: Option<&[String]>,
+) -> (String, Vec<String>) {
     let table = match index_hint {
         Some(idx) => format!("files INDEXED BY {idx}"),
         None => "files".to_owned(),
     };
 
-    let (sql, params_vec): (String, Vec<String>) = if let Some(pat) = pattern {
-        (
-            format!("SELECT path FROM {table} WHERE namespace = ?1 AND path LIKE ?2 ORDER BY path"),
-            vec![namespace.to_owned(), pat.to_owned()],
-        )
-    } else {
-        (
-            format!("SELECT path FROM {table} WHERE namespace = ?1 ORDER BY path"),
-            vec![namespace.to_owned()],
-        )
-    };
+    let mut clauses: Vec<String> = vec!["namespace = ?".to_owned()];
+    let mut params: Vec<String> = vec![namespace.to_owned()];
 
-    let explain_sql = format!("EXPLAIN QUERY PLAN {sql}");
-    let mut stmt = conn.prepare(&explain_sql)?;
-    let rows: Result<Vec<String>, _> = match params_vec.len() {
-        1 => stmt
-            .query_map(params![params_vec[0]], |row| row.get::<_, String>(3))?
-            .collect(),
-        _ => stmt
-            .query_map(params![params_vec[0], params_vec[1]], |row| {
-                row.get::<_, String>(3)
-            })?
-            .collect(),
-    };
-    Ok(rows?.join("\n"))
+    // path_like — SQL LIKE with no ESCAPE (caller controls metacharacters).
+    if let Some(pat) = pattern {
+        clauses.push("path LIKE ? ESCAPE '\\'".to_owned());
+        params.push(pat.to_owned());
+    }
+
+    // path_in_dir — exact prefix LIKE, optionally excluding sub-subdirectories.
+    if let Some((prefix, recursive)) = path_in_dir {
+        let escaped = escape_like(prefix);
+        // Recursive: all paths that start with the directory prefix.
+        clauses.push("path LIKE ? ESCAPE '\\'".to_owned());
+        params.push(format!("{escaped}%"));
+        if !recursive {
+            // Non-recursive: exclude paths that contain another separator
+            // after the prefix (i.e. paths deeper than one level).
+            let sep_esc = escape_like(std::path::MAIN_SEPARATOR_STR);
+            clauses.push("path NOT LIKE ? ESCAPE '\\'".to_owned());
+            params.push(format!("{escaped}%{sep_esc}%"));
+        }
+    }
+
+    // path_glob — one SQLite GLOB term per brace-expanded alternative, OR-combined.
+    if let Some(globs) = path_glob {
+        if !globs.is_empty() {
+            let terms: Vec<String> = globs.iter().map(|_| "path GLOB ?".to_owned()).collect();
+            clauses.push(format!("({})", terms.join(" OR ")));
+            params.extend(globs.iter().cloned());
+        }
+    }
+
+    let sql = format!(
+        "SELECT path FROM {table} WHERE {} ORDER BY path",
+        clauses.join(" AND ")
+    );
+    (sql, params)
+}
+
+/// Escape characters that are special in a SQL `LIKE` expression when using
+/// backslash as the `ESCAPE` character: `\`, `%`, `_`.
+///
+/// The result is safe to embed in a `LIKE` pattern where literal prefix/suffix
+/// characters must not act as wildcards.
+fn escape_like(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '%' => out.push_str("\\%"),
+            '_' => out.push_str("\\_"),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------

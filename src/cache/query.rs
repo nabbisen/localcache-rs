@@ -143,6 +143,10 @@ pub struct QueryBuilder<'e, T> {
     pub(crate) path_like: Option<String>,
     /// Nominates a specific SQLite index for the `files` table scan.
     pub(crate) index_hint: Option<String>,
+    /// Directory prefix filter: (normalized prefix including trailing separator, recursive).
+    pub(crate) path_in_dir: Option<(String, bool)>,
+    /// SQLite GLOB alternatives (after brace expansion and `[`→`[[]` translation).
+    pub(crate) path_glob: Option<Vec<String>>,
     /// Multiple sort keys applied in order (primary, secondary, …).
     pub(crate) order_by: Vec<OrderBy>,
 }
@@ -161,7 +165,90 @@ where
         self
     }
 
-    /// Suggest a specific SQLite index for the `files` table scan.
+    /// Restrict to entries whose stored path lives **in `dir`**.
+    ///
+    /// `recursive = false` matches only **direct children** of `dir` (no
+    /// subdirectories).  `recursive = true` matches the entire subtree.
+    ///
+    /// `dir` is canonicalized when it exists on disk; when it does not exist
+    /// (e.g. a deleted directory) the path string is used verbatim, so the
+    /// query still matches whatever entries were stored under it.
+    ///
+    /// Characters that are special in SQL `LIKE` (backslash, `%`, `_`) are
+    /// escaped automatically — directory names containing those characters
+    /// match **literally**.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use localcache::CacheEngine;
+    /// # let engine = CacheEngine::<Vec<f32>>::builder().database(":memory:").build()?;
+    /// // Direct children only:
+    /// let results = engine.query()
+    ///     .path_in_dir("/data/docs", false)
+    ///     .run()?;
+    ///
+    /// // All files in the subtree:
+    /// let all = engine.query()
+    ///     .path_in_dir("/data/docs", true)
+    ///     .run()?;
+    /// # Ok::<(), localcache::LocalFileCacheError>(())
+    /// ```
+    pub fn path_in_dir(mut self, dir: impl AsRef<std::path::Path>, recursive: bool) -> Self {
+        let dir_path = dir.as_ref();
+        let resolved = match crate::path::normalize_path(dir_path) {
+            Ok(p) => p,
+            // Directory gone from disk — use raw path so stored entries can still be found.
+            Err(LocalFileCacheError::FileNotFound { .. }) | Err(_) => dir_path.to_path_buf(),
+        };
+        // Build the prefix string: canonical dir path + platform separator.
+        let mut prefix = resolved.to_string_lossy().into_owned();
+        if !prefix.ends_with(std::path::MAIN_SEPARATOR) {
+            prefix.push(std::path::MAIN_SEPARATOR);
+        }
+        self.path_in_dir = Some((prefix, recursive));
+        self
+    }
+
+    /// Restrict to entries whose stored path matches a glob `pattern`.
+    ///
+    /// Uses the same dialect as [`ScanOptions::glob_pattern`]:
+    /// - `*` — any sequence of characters (including none)
+    /// - `?` — exactly one character
+    /// - `{a,b,c}` — brace alternation (expanded before matching)
+    ///
+    /// The match is applied to the **full stored path**, case-sensitively.
+    /// A literal `[` in a pattern is matched as-is; unlike the SQLite
+    /// `GLOB` operator, character classes (`[abc]`) are not supported.
+    ///
+    /// > Note: `*` and `?` in the pattern always act as wildcards.  If you
+    /// > need a literal `*` or `?` in a path segment, use `path_like` with
+    /// > SQL `LIKE` escaping instead.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use localcache::CacheEngine;
+    /// # let engine = CacheEngine::<Vec<f32>>::builder().database(":memory:").build()?;
+    /// // Match all .txt and .md files anywhere in the cache:
+    /// let docs = engine.query()
+    ///     .path_glob("*.{txt,md}")
+    ///     .run()?;
+    /// # Ok::<(), localcache::LocalFileCacheError>(())
+    /// ```
+    pub fn path_glob(mut self, pattern: impl Into<String>) -> Self {
+        let pattern = pattern.into();
+        // Expand `{a,b}` into individual alternatives, then translate
+        // the `*`/`?` subset to SQLite GLOB syntax.  The only translation
+        // needed is escaping `[` as `[[]` so it matches literally (our
+        // dialect does not support character classes).
+        let alternatives: Vec<String> = crate::cache::engine::expand_braces(&pattern)
+            .into_iter()
+            .map(|alt| alt.replace('[', "[[]"))
+            .collect();
+        self.path_glob = Some(alternatives);
+        self
+    }
     ///
     /// Generates `INDEXED BY <name>` in the path-listing SQL.  If the
     /// named index does not exist, [`QueryBuilder::run`] returns
@@ -213,6 +300,8 @@ where
             &self.engine.namespace,
             self.path_like.as_deref(),
             self.index_hint.as_deref(),
+            self.path_in_dir.as_ref().map(|(s, r)| (s.as_str(), *r)),
+            self.path_glob.as_deref(),
         )
     }
 
@@ -416,6 +505,8 @@ where
         &q.engine.namespace,
         q.path_like.as_deref(),
         q.index_hint.as_deref(),
+        q.path_in_dir.as_ref().map(|(s, r)| (s.as_str(), *r)),
+        q.path_glob.as_deref(),
     )?;
 
     // Tuple: (entry, json_value_or_null, last_accessed_at)

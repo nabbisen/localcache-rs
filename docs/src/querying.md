@@ -182,3 +182,54 @@ With `AsyncCacheEngine`:
 ```rust
 let plan = engine.query_dry_run(|q| q.path_like("%/docs/%")).await?;
 ```
+
+## Directory-scoped queries (v0.18.0)
+
+Two new predicates push directory filtering into SQL, avoiding over-fetch:
+
+### `path_in_dir`
+
+```rust
+// Direct children only (no subdirectories):
+let images = engine.query()
+    .path_in_dir("/media/photos/2025", false)
+    .run()?;
+
+// Full subtree:
+let all = engine.query()
+    .path_in_dir("/media/photos", true)
+    .run()?;
+```
+
+Directory names containing `%`, `_`, or `\` are escaped automatically.
+A directory that no longer exists on disk is matched against stored entries
+using its path string verbatim — deleted-directory queries still work.
+
+### `path_glob`
+
+```rust
+// Match .txt and .md anywhere in the cache:
+let docs = engine.query()
+    .path_glob("*.{txt,md}")
+    .run()?;
+
+// Match files exactly one directory under /data:
+let top = engine.query()
+    .path_glob("/data/?/*.bin")
+    .run()?;
+```
+
+Supported: `*` (any sequence), `?` (one character), `{a,b}` alternation.
+A literal `[` in a pattern matches `[` (character classes are unsupported).
+
+### Combining predicates
+
+```rust
+// Only .txt files directly in /data/docs (not in subdirectories):
+let results = engine.query()
+    .path_in_dir("/data/docs", false)
+    .path_glob("*.txt")
+    .run()?;
+```
+
+Both predicates compose with `index_hint` and `dry_run`.
