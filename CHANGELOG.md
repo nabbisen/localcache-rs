@@ -11,6 +11,57 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.19.1] — 2026-06-06
+
+### Security / Maintenance
+
+This is a dependency maintenance patch — no public API changes.
+
+#### rusqlite 0.39 → 0.40.1
+
+- Bundles **SQLite 3.53.2** (via libsqlite3-sys 0.38.1), up from SQLite 3.51.3
+  in rusqlite 0.39 / libsqlite3-sys 0.37.
+- All APIs used internally (`params_from_iter`, `OpenFlags`, `prepare_cached`,
+  `query_map`, `execute_batch`) were probed in a scratch crate and compile
+  and run identically under 0.40 — zero code changes required.
+
+#### aes-gcm: explicit minimum `"0.10.3"` (was `"0.10"`)
+
+- **RUSTSEC-2023-0096**: AES-GCM `< 0.10.3` may have timing variability in
+  decryption.  The previous `"0.10"` SemVer bound technically allowed
+  0.10.0–0.10.2 (the vulnerable range); the pin is now `"0.10.3"` to make
+  the safety invariant explicit.  Cargo.lock was already resolving to 0.10.3;
+  this is a tightening of the stated minimum.
+- `aes-gcm 0.11.x` remains RC-only (`0.11.0-rc.4` as of this release) —
+  not adopted.
+
+#### tokio: explicit minimum `"1.23"` (was `"1"`)
+
+- **RUSTSEC-2023-0001**: Tokio `< 1.23.0` has a vulnerability in
+  `tokio::fs::canonicalize` and related I/O paths.  The previous `"1"` bound
+  technically allowed any 1.x; the pin is now `"1.23"` to document the
+  invariant.  Cargo.lock now resolves to **tokio 1.52.3** (latest stable).
+- Note: localcache itself does not call `tokio::fs::canonicalize` (it uses
+  `std::path::Path::canonicalize` instead), so the specific vulnerable code
+  path was never exercised.  The pin tightening prevents this from becoming
+  a concern in future changes.
+
+#### bincode 3 — still a stub, stay on 2.x
+
+- `bincode 3.0.0` on crates.io **remains an intentional
+  `compile_error!("https://xkcd.com/2347/")` stub**.  The actual v3
+  development lives in the `bincode-next` crate (3.0.0-rc.15 as of this
+  release — still not stable).
+- No action: we stay on `bincode 2.0.1` with `config::legacy()`.  A probe
+  crate was built to confirm the stub status before this entry was written.
+
+#### Other patch updates (via `cargo update`)
+
+tokio 1.52.1 → 1.52.3, serde_json, metrics, inotify, hashbrown, and
+various transitive deps updated to their latest compatible patch versions.
+
+---
+
 ## [0.19.0] — 2026-06-06
 
 ### Added — RFC 0007: Read-only Connection Pool (`ReadPool<T>`)
@@ -533,6 +584,7 @@ Namespaces, batch ops, TTL, PRAGMAs, schema migration.
 Initial release.
 
 [Unreleased]: https://github.com/nabbisen/localcache-rs/compare/v0.16.2...HEAD
+[0.19.1]: https://github.com/nabbisen/localcache-rs/compare/v0.19.0...v0.19.1
 [0.19.0]: https://github.com/nabbisen/localcache-rs/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/nabbisen/localcache-rs/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/nabbisen/localcache-rs/compare/v0.16.2...v0.17.0
