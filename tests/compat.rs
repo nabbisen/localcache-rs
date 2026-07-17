@@ -1,4 +1,4 @@
-//! Compatibility regression tests — RFC 0008.
+//! Compatibility regression tests — RFC 008.
 //!
 //! # Wire-format stability (Q3)
 //!

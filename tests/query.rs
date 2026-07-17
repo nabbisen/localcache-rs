@@ -749,10 +749,10 @@ mod async_phase11_tests {
 // Phase 12 —
 
 // ============================================================
-// RFC 0002 — Query Index Hints and Explain Plan
+// RFC 002 — Query Index Hints and Explain Plan
 // ============================================================
 
-mod rfc0002_index_hints {
+mod rfc002_index_hints {
     use tempfile::TempDir;
 
     use localcache::CacheEngine;
@@ -826,8 +826,8 @@ mod rfc0002_index_hints {
         let dir = TempDir::new().unwrap();
         let engine = populated_engine(&dir);
 
-        let idx_full = engine.create_path_index("rfc0002test").unwrap();
-        assert_eq!(idx_full, "lc_user_rfc0002test");
+        let idx_full = engine.create_path_index("rfc002test").unwrap();
+        assert_eq!(idx_full, "lc_user_rfc002test");
 
         let results = engine
             .query()
@@ -837,7 +837,7 @@ mod rfc0002_index_hints {
             .unwrap();
 
         assert_eq!(results.len(), 10, "should return all 10 entries with hint");
-        engine.drop_path_index("rfc0002test").unwrap();
+        engine.drop_path_index("rfc002test").unwrap();
     }
 
     // ------------------------------------------------------------------
@@ -904,10 +904,10 @@ mod rfc0002_index_hints {
 }
 
 // ============================================================
-// RFC 0006 — Directory-scoped Query Predicates
+// RFC 006 — Directory-scoped Query Predicates
 // ============================================================
 
-mod rfc0006_dir_predicates {
+mod rfc006_dir_predicates {
     use std::fs;
 
     use tempfile::TempDir;
@@ -953,7 +953,7 @@ mod rfc0006_dir_predicates {
         let e = write_file_at(&other, "e.txt", b"e");
 
         let engine: CacheEngine<Vec<f32>> = CacheEngine::builder()
-            .database(dir.path().join("rfc0006.sqlite3"))
+            .database(dir.path().join("rfc006.sqlite3"))
             .build()
             .unwrap();
         for (path, val) in [(&a, 1.0), (&b, 2.0), (&c, 3.0), (&d, 4.0), (&e, 5.0)] {
@@ -1194,7 +1194,7 @@ mod rfc0006_dir_predicates {
             .map(|e| e.path)
             .collect();
 
-        // RFC 0006 path: SQL-native, no post-filter.
+        // RFC 006 path: SQL-native, no post-filter.
         let native: Vec<_> =
             sorted_paths(engine.query().path_in_dir(&fix.root, false).run().unwrap());
 

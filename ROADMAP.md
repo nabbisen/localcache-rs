@@ -35,18 +35,18 @@
 
 Five pending RFCs implemented in a single release:
 
-- [x] **RFC 0001** — Recursive directory watching: `watch_dir` / `unwatch_dir`
+- [x] **RFC 001** — Recursive directory watching: `watch_dir` / `unwatch_dir`
       on both watcher types; `watch_dirs(bool)` builder flag; `contains()`
       membership filter in callbacks
-- [x] **RFC 0002** — Query index hints & explain plan: `QueryBuilder::index_hint`,
+- [x] **RFC 002** — Query index hints & explain plan: `QueryBuilder::index_hint`,
       `QueryBuilder::dry_run`, `AsyncCacheEngine::query_dry_run`
-- [x] **RFC 0003** — OpenTelemetry spans: `opentelemetry` feature
+- [x] **RFC 003** — OpenTelemetry spans: `opentelemetry` feature
       (opentelemetry 0.32 + tracing-opentelemetry 0.33); `namespace` field
       added to all tracing spans; `check_status` promoted to `debug_span!`
-- [x] **RFC 0004** — Read-only shared-cache mode: `CacheOptions::shared_cache`,
+- [x] **RFC 004** — Read-only shared-cache mode: `CacheOptions::shared_cache`,
       `CacheEngineBuilder::shared_cache()`; SQLite URI + `query_only` ON;
       `:memory:` shared in-process variant
-- [x] **RFC 0005** — async-std / smol runtime variants: `async-std` and `smol`
+- [x] **RFC 005** — async-std / smol runtime variants: `async-std` and `smol`
       features; `src/cache/runtime.rs` `SpawnBlocking` trait; precedence-based
       dispatch (Tokio > async-std > smol) for additive feature compatibility
 - [x] RFC 000 lifecycle policy adopted: `rfcs/` restructured into
@@ -59,14 +59,14 @@ Five pending RFCs implemented in a single release:
 - [x] `QueryBuilder::path_glob(pattern)` — brace-expanding glob in SQL via
       `expand_braces` + SQLite `GLOB`; `[` escaped to `[[]`
 - [x] Shared `build_path_sql` helper + `params_from_iter` in `repository.rs`
-- [x] RFC 0006 authored, implemented, and moved to `rfcs/done/`
+- [x] RFC 006 authored, implemented, and moved to `rfcs/done/`
 
 ## Phase 19 — Read-only Pool and Compatibility Guarantees (v0.19.0) ✅
 
-- [x] **RFC 0007** — `ReadPool<T>`: N-slot read-only pool, `Clone+Send+Sync`,
+- [x] **RFC 007** — `ReadPool<T>`: N-slot read-only pool, `Clone+Send+Sync`,
       round-robin checkout, independent/shared-cache backends,
       full read-side API including `query_run`/`query_dry_run`
-- [x] **RFC 0008** — Compatibility guarantees:
+- [x] **RFC 008** — Compatibility guarantees:
       wire-format stability documented + enforced by golden fixture
       (`tests/fixtures/compat-v0_18.sqlite3`); path-semantics contract
       documented in code and docs; 9 regression tests
@@ -110,7 +110,7 @@ has an independent **Go** review.
 
 | Milestone | Target window | Scope | Exit gate |
 |---|---|---|---|
-| **M0 — Plan and design** | Jul 17–22 | Approve this schedule; resolve archive-layout authority; draft RFCs 0009–0015 | Roadmap accepted; RFC review order agreed; no implementation started without its RFC |
+| **M0 — Plan and design** | Jul 17–22 | Approve this schedule; resolve archive-layout authority; draft RFCs 009–015 | Roadmap accepted; RFC review order agreed; no implementation started without its RFC |
 | **M1 — Buildable source and archive** | Jul 23–27 | Restore or remove the declared benchmark coherently; make the source archive self-buildable; define reproducible gate commands | Current checkout and extracted archive pass `cargo metadata` and the RFC-defined build smoke gate |
 | **M2 — Data integrity and SQL safety** | Jul 28–Aug 5 | Preserve v1 payloads through v1-to-v5 migration; make migrations atomic; constrain and safely handle SQLite identifiers | Historical fixture and rollback tests pass; hostile identifier tests pass; focused security review accepted |
 | **M3 — Mutation boundaries and input safety** | Aug 6–14 | Enforce read-only schema/mutation rules; prevent watcher privilege bypass; make glob/path/CLI handling Unicode-safe and non-panicking; align deleted-path behavior | Negative read-only and Unicode/property tests pass; public behavior matches approved RFCs |
@@ -126,13 +126,13 @@ to RFC 000.
 
 | RFC | Working title | Primary review findings | Planned implementation milestone | Handoff expectation |
 |---|---|---|---|---|
-| **0009** | Reproducible Source Archives and Release Gates | B-01, B-07 | M1, completed in M6 | Optional release-engineering checklist |
-| **0010** | Transactional, Payload-Preserving Schema Migrations | B-02 | M2 | Recommended implementation and fixture handoff |
-| **0011** | Safe SQLite Identifier Boundary | B-03 | M2 | Optional hostile-input QA checklist |
-| **0012** | Read-only Schema and Mutation Contract | B-04 | M3 | Recommended API-boundary handoff |
-| **0013** | Panic-free Path, Glob, and CLI Text Handling | B-05 and related path findings | M3 | Optional property-test handoff |
-| **0014** | MSRV and Dependency Security Policy | B-06, B-08 | M4 | Recommended dependency-verification handoff |
-| **0015** | Async Runtime and Watcher Failure Safety | Runtime/watcher non-blocking findings | M5 | Recommended runtime test-matrix handoff |
+| **009** | Reproducible Source Archives and Release Gates | B-01, B-07 | M1, completed in M6 | Optional release-engineering checklist |
+| **010** | Transactional, Payload-Preserving Schema Migrations | B-02 | M2 | Recommended implementation and fixture handoff |
+| **011** | Safe SQLite Identifier Boundary | B-03 | M2 | Optional hostile-input QA checklist |
+| **012** | Read-only Schema and Mutation Contract | B-04 | M3 | Recommended API-boundary handoff |
+| **013** | Panic-free Path, Glob, and CLI Text Handling | B-05 and related path findings | M3 | Optional property-test handoff |
+| **014** | MSRV and Dependency Security Policy | B-06, B-08 | M4 | Recommended dependency-verification handoff |
+| **015** | Async Runtime and Watcher Failure Safety | Runtime/watcher non-blocking findings | M5 | Recommended runtime test-matrix handoff |
 
 An implementation handoff is created only when the approved RFC still needs
 non-obvious sequencing, fixture provenance, cross-runtime validation, or a
@@ -142,8 +142,8 @@ multi-developer task split. Handoffs remain companion documents under
 ### Review and commit points
 
 - **Design review 1:** roadmap and milestone acceptance (this change).
-- **Design review 2:** each RFC independently; RFC 0009 first, then RFCs 0010
-  and 0011, then the remaining queue.
+- **Design review 2:** each RFC independently; RFC 009 first, then RFCs 010
+  and 011, then the remaining queue.
 - **Implementation review 1:** M1 buildable-source and extracted-archive proof.
 - **Implementation review 2:** M2 migration-integrity and SQL-safety proof.
 - **Implementation review 3:** M4 declared-MSRV and advisory-policy proof.
@@ -175,6 +175,6 @@ Phase 21 is complete only when all of the following are true:
 *(all items from the previous Future section shipped in v0.17.0)*
 
 - Performance tuning for very large namespaces (> 1M entries)
-- Cross-process shared-cache via named shared memory (beyond RFC 0004 scope)
+- Cross-process shared-cache via named shared memory (beyond RFC 004 scope)
 - `#[async_test]` proc-macro wrapper for unified async test authoring across
-  runtime backends (deferred from RFC 0005)
+  runtime backends (deferred from RFC 005)

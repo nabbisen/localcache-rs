@@ -1,4 +1,4 @@
-# RFC 0003 — OpenTelemetry Spans
+# RFC 003 — OpenTelemetry Spans
 
 | Field    | Value |
 |----------|-------|

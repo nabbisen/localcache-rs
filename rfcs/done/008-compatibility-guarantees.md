@@ -1,4 +1,4 @@
-# RFC 0008 — Compatibility Guarantees: Payload Wire Format and Path Semantics
+# RFC 008 — Compatibility Guarantees: Payload Wire Format and Path Semantics
 
 | Field    | Value |
 |----------|-------|

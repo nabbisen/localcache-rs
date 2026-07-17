@@ -24,7 +24,7 @@
 //!   `read_only` connection with its own SQLite page cache — maximum
 //!   read parallelism, higher per-slot memory.
 //! - **Shared-cache** (`shared_cache = true` on the `CacheOptions`): slots
-//!   share one page cache (RFC 0004 mode) — lower memory on large pools.
+//!   share one page cache (RFC 004 mode) — lower memory on large pools.
 //!
 //! # WAL requirement
 //!

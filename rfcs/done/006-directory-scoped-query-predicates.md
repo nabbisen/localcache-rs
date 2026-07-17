@@ -1,11 +1,11 @@
-# RFC 0006 — Directory-scoped Query Predicates
+# RFC 006 — Directory-scoped Query Predicates
 
 | Field    | Value |
 |----------|-------|
 | Status   | Implemented (v0.18.0) |
 | Feature  | *(core, no feature flag)* |
 | Touches  | `src/cache/query.rs`, `src/db/repository.rs` |
-| Depends on | RFC 0002 (Implemented, v0.17.0) — shares the path-listing SQL builder |
+| Depends on | RFC 002 (Implemented, v0.17.0) — shares the path-listing SQL builder |
 
 ## Summary
 
@@ -30,7 +30,7 @@ non-recursive directory scoping ("current dir only") and recursive scoping
 the prefix"; their workaround is `LIKE` + facade post-filter by
 `Path::parent()` equality — correct, but it over-fetches on caches sized
 for an `Everywhere` strategy (every matching path is loaded, decoded, and
-then discarded).  RFC 0002's `index_hint` reduces the scan cost but not the
+then discarded).  RFC 002's `index_hint` reduces the scan cost but not the
 over-fetch.
 
 The same gap exists for glob matching: the engine ships a glob matcher
@@ -92,7 +92,7 @@ pub(crate) path_glob: Option<String>,
 ### SQL generation — `repository.rs`
 
 `keys()` and `explain_query()` (already sharing their SQL shape since
-RFC 0002) gain a small WHERE-fragment builder.  All fragments AND-combine:
+RFC 002) gain a small WHERE-fragment builder.  All fragments AND-combine:
 
 ```sql
 SELECT path FROM files [INDEXED BY …]

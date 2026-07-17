@@ -1,4 +1,4 @@
-# RFC 0004 — Read-only Shared-memory DB Mode
+# RFC 004 — Read-only Shared-memory DB Mode
 
 | Field    | Value |
 |----------|-------|

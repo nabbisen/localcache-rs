@@ -1,4 +1,4 @@
-//! Integration tests — ReadPool (RFC 0007).
+//! Integration tests — ReadPool (RFC 007).
 
 mod common;
 use common::write_file;
@@ -307,7 +307,7 @@ fn build_read_pool_via_builder() {
 fn read_pool_shared_cache_reads_writer_data() {
     let dir = TempDir::new().unwrap();
     let db = make_populated_db(&dir);
-    // shared_cache = true selects the RFC 0004 backend.
+    // shared_cache = true selects the RFC 004 backend.
     let pool: ReadPool<Vec<f32>> = ReadPool::open(
         CacheOptions {
             database_path: db,

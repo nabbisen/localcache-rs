@@ -545,11 +545,11 @@ mod debounce_tests {
 }
 
 // ============================================================
-// RFC 0001 — Recursive Directory Watching
+// RFC 001 — Recursive Directory Watching
 // ============================================================
 
 #[cfg(feature = "watching")]
-mod rfc0001_recursive_dir_watching {
+mod rfc001_recursive_dir_watching {
     use std::fs;
     use std::io::Write as _;
     use std::time::Duration;
@@ -560,7 +560,7 @@ mod rfc0001_recursive_dir_watching {
 
     fn make_file_engine(dir: &TempDir) -> CacheEngine<Vec<f32>> {
         CacheEngine::builder()
-            .database(dir.path().join("rfc0001.sqlite3"))
+            .database(dir.path().join("rfc001.sqlite3"))
             .build()
             .unwrap()
     }

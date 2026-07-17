@@ -53,6 +53,6 @@ Dates are targets; no milestone is complete until its exit gate passes.
 ## Future directions
 
 - Performance tuning for very large namespaces (> 1M entries)
-- Cross-process shared-cache via named shared memory (beyond RFC 0004 scope)
+- Cross-process shared-cache via named shared memory (beyond RFC 004 scope)
 - `#[async_test]` proc-macro wrapper for unified async test authoring across
-  runtime backends (deferred from RFC 0005)
+  runtime backends (deferred from RFC 005)

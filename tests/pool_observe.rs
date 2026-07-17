@@ -454,13 +454,13 @@ mod async_phase13_tests {
 // Phase 14 — preload()
 
 // ============================================================
-// RFC 0003 — OpenTelemetry Spans
+// RFC 003 — OpenTelemetry Spans
 // Tests the namespace field added to tracing spans; the full
 // OTel bridge is a caller responsibility (no new span sites).
 // ============================================================
 
 #[cfg(feature = "tracing")]
-mod rfc0003_opentelemetry_spans {
+mod rfc003_opentelemetry_spans {
     use std::sync::{Arc, Mutex};
 
     use tempfile::TempDir;
@@ -503,7 +503,7 @@ mod rfc0003_opentelemetry_spans {
         tracing::subscriber::with_default(recorder, || {
             let engine: CacheEngine<Vec<f32>> = CacheEngine::builder()
                 .database(":memory:")
-                .namespace("rfc0003_ns")
+                .namespace("rfc003_ns")
                 .build()
                 .unwrap();
 
@@ -547,10 +547,10 @@ mod rfc0003_opentelemetry_spans {
 }
 
 // ============================================================
-// RFC 0004 — Read-only Shared-cache Mode
+// RFC 004 — Read-only Shared-cache Mode
 // ============================================================
 
-mod rfc0004_shared_cache {
+mod rfc004_shared_cache {
     use tempfile::TempDir;
 
     use localcache::{CacheEngine, LocalFileCacheError};
@@ -675,13 +675,13 @@ mod rfc0004_shared_cache {
 }
 
 // ============================================================
-// RFC 0005 — async-std / smol Feature Variants
+// RFC 005 — async-std / smol Feature Variants
 // ============================================================
 
 // async-std backend tests (only when async-std is the active runtime,
 // i.e. async-std is enabled but Tokio is not).
 #[cfg(all(not(feature = "async"), feature = "async-std"))]
-mod rfc0005_async_std {
+mod rfc005_async_std {
     use localcache::{AsyncCacheEngine, CacheOptions};
 
     use super::write_file;
@@ -721,7 +721,7 @@ mod rfc0005_async_std {
 
 // smol backend tests (only when smol is the active runtime).
 #[cfg(all(not(feature = "async"), not(feature = "async-std"), feature = "smol"))]
-mod rfc0005_smol {
+mod rfc005_smol {
     use localcache::{AsyncCacheEngine, CacheOptions};
 
     use super::write_file;

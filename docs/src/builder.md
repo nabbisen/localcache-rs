@@ -100,7 +100,7 @@ etc.) return `LocalFileCacheError::ReadOnly`.
 
 ### `shared_cache()`
 
-Opens in read-only **shared-cache** mode (RFC 0004): uses a SQLite `file:`
+Opens in read-only **shared-cache** mode (RFC 004): uses a SQLite `file:`
 URI with `mode=ro&cache=shared` and enforces `PRAGMA query_only = ON`.
 Multiple engines opened on the same file within one process share the
 SQLite page cache, reducing memory usage.

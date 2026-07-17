@@ -1,4 +1,4 @@
-# RFC 0005 — async-std / smol Feature Variants
+# RFC 005 — async-std / smol Feature Variants
 
 | Field    | Value |
 |----------|-------|
@@ -252,7 +252,7 @@ Cargo's feature model requires features to be **additive**.
 
 **Resolution:** when multiple runtime features are enabled, a single
 backend is selected by fixed priority order (Tokio > async-std > smol)
-via `#[cfg]` guards in `src/cache/runtime.rs`.  The `RFC_0005_PRIORITY`
+via `#[cfg]` guards in `src/cache/runtime.rs`.  The `RFC_005_PRIORITY`
 comment in that module documents the order explicitly.  Callers who need
 a specific runtime should enable only that feature.
 

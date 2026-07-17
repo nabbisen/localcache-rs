@@ -1,11 +1,11 @@
-# RFC 0007 — Read-only Connection Pool (`ReadPool<T>`)
+# RFC 007 — Read-only Connection Pool (`ReadPool<T>`)
 
 | Field    | Value |
 |----------|-------|
 | Status   | Implemented (v0.19.0) |
 | Feature  | *(core, no feature flag)* |
 | Touches  | new `src/pool/read_pool.rs` (or `src/read_pool.rs`), `src/pool.rs` (docs cross-reference), `src/lib.rs` (re-export) |
-| Depends on | RFC 0004 (Implemented, v0.17.0) — shared-cache open mode is one of the two pool backends |
+| Depends on | RFC 004 (Implemented, v0.17.0) — shared-cache open mode is one of the two pool backends |
 
 ## Summary
 
@@ -26,7 +26,7 @@ in-house engine served these from an `r2d2` read pool.  `localcache`'s
 `ConnectionPool` is `Arc<Mutex<CacheEngine>>` — correct, but all
 operations serialize on one connection.
 
-v0.17.0's `shared_cache()` (RFC 0004) already enables the *pattern*:
+v0.17.0's `shared_cache()` (RFC 004) already enables the *pattern*:
 open one read-only engine per thread and fan out manually.  This RFC
 turns the pattern into a supported type so adopters don't each rebuild
 the slot management, and closes Q2 completely.
@@ -43,7 +43,7 @@ threads), so a `Vec<Mutex<CacheEngine<T>>>` shared via `Arc` is sound.
   - **independent** (default): each slot opens with plain
     `read_only` flags — fully independent page caches, maximum read
     concurrency (no shared-cache table locks);
-  - **shared-cache**: each slot opens per RFC 0004
+  - **shared-cache**: each slot opens per RFC 004
     (`file:…?mode=ro&cache=shared` + `PRAGMA query_only`) — one shared
     page cache, lower memory for large pools.
 - Read-side API only: `get`, `get_if_fresh`, `batch_get`,
@@ -141,7 +141,7 @@ where
 A read-only connection to a WAL database needs the `-wal`/`-shm`
 sidecars to be initializable.  This holds whenever a read-write engine
 has opened the database at least once (the normal producer/consumer
-deployment, and what RFC 0004's tests already exercise).  `ReadPool::open`
+deployment, and what RFC 004's tests already exercise).  `ReadPool::open`
 surfaces the underlying SQLite error unchanged if the database has never
 been initialized; the module docs state the prerequisite explicitly.
 

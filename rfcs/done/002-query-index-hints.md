@@ -1,4 +1,4 @@
-# RFC 0002 — Query Index Hints and Explain Plan
+# RFC 002 — Query Index Hints and Explain Plan
 
 | Field    | Value |
 |----------|-------|

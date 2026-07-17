@@ -1,6 +1,6 @@
 //! Internal async executor abstraction for [`super::async_engine::AsyncCacheEngine`].
 //!
-//! This module implements RFC 0005: *async-std / smol Feature Variants*.
+//! This module implements RFC 005: *async-std / smol Feature Variants*.
 //!
 //! # Feature priority
 //!

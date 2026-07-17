@@ -34,10 +34,10 @@ aes-gcm    = "0.10.3"    # < 0.10.3 affected by RUSTSEC-2023-0096; 0.11.x still 
 tracing    = "0.1"
 notify                  = "8"
 notify-debouncer-mini   = "0.7"
-# opentelemetry bridge (RFC 0003)
+# opentelemetry bridge (RFC 003)
 opentelemetry          = { version = "0.32", default-features = false, features = ["trace"] }
 tracing-opentelemetry  = { version = "0.33", default-features = false }
-# alternative async runtimes (RFC 0005)
+# alternative async runtimes (RFC 005)
 async-std              = { version = "1.13", features = ["attributes"] }
 smol                   = "2"
 # cli

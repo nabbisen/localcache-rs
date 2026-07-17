@@ -90,7 +90,7 @@ CacheOptions {
     ttl:                    Option<Duration>,
     namespace:              String,
     read_only:              bool,
-    shared_cache:           bool,         // RFC 0004: shared page-cache read-only mode
+    shared_cache:           bool,         // RFC 004: shared page-cache read-only mode
     payload_version:        u32,
     max_entries:            Option<usize>,
     watch_dirs:             bool,         // watching feature: directory-level watching

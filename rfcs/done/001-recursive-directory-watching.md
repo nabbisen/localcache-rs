@@ -1,4 +1,4 @@
-# RFC 0001 — Recursive Directory Watching
+# RFC 001 — Recursive Directory Watching
 
 | Field    | Value |
 |----------|-------|

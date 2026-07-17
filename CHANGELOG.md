@@ -133,7 +133,7 @@ various transitive deps updated to their latest compatible patch versions.
 
 ## [0.19.0] — 2026-06-06
 
-### Added — RFC 0007: Read-only Connection Pool (`ReadPool<T>`)
+### Added — RFC 007: Read-only Connection Pool (`ReadPool<T>`)
 
 - New `ReadPool<T>` type in `src/read_pool.rs` — a cloneable, `Clone + Send + Sync`
   pool of N independent read-only [`CacheEngine`] connections.
@@ -148,13 +148,13 @@ various transitive deps updated to their latest compatible patch versions.
 - Two connection backends controlled by `CacheOptions::shared_cache`:
   - **independent** (default) — each slot opens with plain `read_only` flags;
     fully independent page caches; maximum WAL read parallelism.
-  - **shared-cache** — RFC 0004 mode; shared page cache across slots;
+  - **shared-cache** — RFC 004 mode; shared page cache across slots;
     lower memory on large pools.
 - `:memory:` databases and `size == 0` are rejected at construction with a
   clear `UnsupportedFeature` error.
 - `ReadPool` re-exported from `localcache::ReadPool`.
 
-### Added — RFC 0008: Compatibility Guarantees
+### Added — RFC 008: Compatibility Guarantees
 
 - **Wire-format stability guarantee** formally documented and test-enforced:
   - Documented in `Codec::Bincode` doc comment, `src/serialization.rs`
@@ -186,14 +186,14 @@ various transitive deps updated to their latest compatible patch versions.
   - Archive name now uses a `v` prefix: `localcache-v0.19.0.tar.gz`.
   - Extracted top-level directory matches the archive version:
     `localcache-v0.19.0/`.
-- RFC 0007 and RFC 0008 moved from `rfcs/proposed/` to `rfcs/done/`,
+- RFC 007 and RFC 008 moved from `rfcs/proposed/` to `rfcs/done/`,
   Status updated to `Implemented (v0.19.0)`.
 
 ---
 
 ## [0.18.0] — 2026-06-06
 
-### Added — RFC 0006: Directory-scoped Query Predicates
+### Added — RFC 006: Directory-scoped Query Predicates
 
 - `QueryBuilder::path_in_dir(dir, recursive: bool)` — exact directory
   scoping in SQL:
@@ -227,14 +227,14 @@ various transitive deps updated to their latest compatible patch versions.
   `pub(crate)` (used by `QueryBuilder::path_glob`).
 - `escape_like()` added to `repository.rs` (private) — escapes LIKE
   metacharacters for the `path_in_dir` prefix construction.
-- RFC 0006 status in `rfcs/proposed/` updated to `Implemented (v0.18.0)`
+- RFC 006 status in `rfcs/proposed/` updated to `Implemented (v0.18.0)`
   and moved to `rfcs/done/`.
 
 ---
 
 ## [0.17.0] — 2026-06-06
 
-### Added — RFC 0001: Recursive Directory Watching (`watching` feature)
+### Added — RFC 001: Recursive Directory Watching (`watching` feature)
 
 - `CacheWatcher::watch_dir(dir)` / `unwatch_dir(dir)` — register an
   entire directory subtree for recursive watching with a single OS watch.
@@ -248,7 +248,7 @@ various transitive deps updated to their latest compatible patch versions.
   ignored.
 - `CacheOptions::watch_dirs: bool` field (default `false`).
 
-### Added — RFC 0002: Query Index Hints and Explain Plan
+### Added — RFC 002: Query Index Hints and Explain Plan
 
 - `QueryBuilder::index_hint(name)` — injects `INDEXED BY <name>` into
   the path-listing SQL; returns `Err(Database(_))` on an invalid name.
@@ -259,7 +259,7 @@ various transitive deps updated to their latest compatible patch versions.
   `dry_run()`.
 - `repository::explain_query()` internal function.
 
-### Added — RFC 0003: OpenTelemetry Spans
+### Added — RFC 003: OpenTelemetry Spans
 
 - New `opentelemetry` Cargo feature (`["tracing", "dep:opentelemetry",
   "dep:tracing-opentelemetry"]`).  Pulls in compatible
@@ -273,7 +273,7 @@ various transitive deps updated to their latest compatible patch versions.
 - `check_status` upgraded from inline `debug!` events to a proper
   `debug_span!`, consistent with `get` and `set`.
 
-### Added — RFC 0004: Read-only Shared-cache Mode
+### Added — RFC 004: Read-only Shared-cache Mode
 
 - `CacheOptions::shared_cache: bool` field (default `false`).
 - `CacheEngineBuilder::shared_cache()` builder method.
@@ -286,7 +286,7 @@ various transitive deps updated to their latest compatible patch versions.
 - `uri_encode_path()` internal helper (escapes `%`, `#`, `?`, space in
   SQLite URI path components; no extra dependency).
 
-### Added — RFC 0005: async-std / smol Feature Variants
+### Added — RFC 005: async-std / smol Feature Variants
 
 - New `async-std` Cargo feature — enables `AsyncCacheEngine` backed by
   `async_std::task::spawn_blocking` (async-std 1.13).
@@ -341,11 +341,11 @@ various transitive deps updated to their latest compatible patch versions.
 
   | RFC | Title | Template |
   |-----|-------|----------|
-  | [0001](rfcs/0001-recursive-directory-watching.md) | Recursive Directory Watching | Lightweight |
-  | [0002](rfcs/0002-query-index-hints.md) | Query Index Hints and Explain Plan | Full |
-  | [0003](rfcs/0003-opentelemetry-spans.md) | OpenTelemetry Spans | Full |
-  | [0004](rfcs/0004-shared-memory-db.md) | Read-only Shared-memory DB Mode | Full |
-  | [0005](rfcs/0005-async-std-smol.md) | async-std / smol Feature Variants | Full |
+  | [001](rfcs/done/001-recursive-directory-watching.md) | Recursive Directory Watching | Lightweight |
+  | [002](rfcs/done/002-query-index-hints.md) | Query Index Hints and Explain Plan | Full |
+  | [003](rfcs/done/003-opentelemetry-spans.md) | OpenTelemetry Spans | Full |
+  | [004](rfcs/done/004-shared-memory-db.md) | Read-only Shared-memory DB Mode | Full |
+  | [005](rfcs/done/005-async-std-smol.md) | async-std / smol Feature Variants | Full |
 
   Each RFC covers: summary, motivation, public API surface, internal
   design with code sketches, test plan, and (where applicable) security
