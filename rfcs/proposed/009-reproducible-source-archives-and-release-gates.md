@@ -184,13 +184,26 @@ documentation, and evidence must all enforce this one root-layout contract.
 ### R5 — Safe archive structure
 
 Validation must use structured archive-header parsing, not line-oriented
-parsing of human-formatted `tar -t` output. Before extraction, it must:
+parsing of human-formatted `tar -t` output. It distinguishes logical
+extractable members from archive control/extension records.
 
-- allow only regular-file and directory entries; symbolic links, hard links,
-  device nodes, FIFOs, sockets, and every other entry type are rejected;
+Before extraction, it must:
+
+- allow only regular-file and directory logical members; symbolic links, hard
+  links, device nodes, FIFOs, sockets, and every other extractable entry type
+  are rejected;
+- allow exactly one global PAX control record only when it is the canonical
+  `git archive` form produced by the pinned toolchain: its header name is
+  `pax_global_header`, it contains exactly the recognized `comment` key, and
+  that value equals the independently supplied expected 40-hex commit ID;
+- reject every unexpected global PAX key or record, every per-entry PAX record,
+  and every GNU or other archive extension record;
 - parse and reject link targets even though link entries are forbidden, so
   hostile link fixtures cannot bypass validation through parser drift;
-- normalize member names before any comparison;
+- for a directory record only, remove exactly one format-level trailing `/`
+  before component validation; reject an empty result, multiple trailing
+  separators, and interior empty components;
+- normalize logical member names before any comparison;
 - reject absolute roots, empty components, `.` or `..` components, ambiguous
   platform separators, NUL or control characters, and any path outside the
   selected R4 root layout;
@@ -200,8 +213,10 @@ parsing of human-formatted `tar -t` output. Before extraction, it must:
 - compare each member's normalized path, regular-file/directory type, and
   executable mode with that manifest.
 
-Unexpected members are failures even when every required file is present.
-Only after every header passes may the verifier extract into a private, newly
+The permitted global PAX control record is excluded from the logical export
+manifest after its commit binding is validated. Unexpected logical members or
+control records are failures even when every required file is present. Only
+after every header passes may the verifier extract into a private, newly
 created empty directory. After extraction, validation must assert the exact R4
 layout and include:
 
@@ -482,10 +497,10 @@ The owner designates this canonical RC producer environment:
 
 ```text
 platform: linux/amd64
-base tag (informational): docker.io/library/rust:1.97.0-bookworm
+base tag (informational): docker.io/library/rust:1.97.1-bookworm
 platform manifest:
-  docker.io/library/rust@sha256:b5a086f64ffecaa4e283063184770107915756739598173e1f5712d6b34b84d0
-Rust/Cargo in base: 1.97.0
+  docker.io/library/rust@sha256:389c1ae98c20fbcadca68a685482749267cec3c90893ae4671c5a37cc894c416
+Rust/Cargo in base: 1.97.1
 locale: C.UTF-8
 timezone: UTC
 mdBook: 0.5.4
@@ -495,6 +510,9 @@ cargo-audit: 0.22.2
 The Linux/amd64 platform digest was verified through Docker Hub's public tag
 metadata on 2026-07-17. The mutable tag is recorded only for humans; automation
 must pull by the full platform digest and assert `linux/amd64`.
+Rust 1.97.1 is required because it fixes the LLVM optimization miscompilation
+reported for 1.97.0; the superseded compiler is not eligible for release
+evidence.
 
 The implementation adds a checked-in producer-tool manifest containing the
 exact versions and integrity hashes for every auxiliary binary not already
@@ -516,7 +534,7 @@ The canonical producer contract fixes:
 - gzip headers without wall-clock timestamps or source filenames.
 
 For this RFC's first M1/M6 implementation, stable is pinned to Rust/Cargo
-1.97.0 by the canonical base. A later stable-toolchain change is a reviewed
+1.97.1 by the canonical base. A later stable-toolchain change is a reviewed
 producer-manifest update, resolved once before an RC run rather than during
 it. The exact selected compiler and Cargo version is used for every stable
 source-context and artifact-context gate in the run. Only an archive and
@@ -652,7 +670,9 @@ workspace packages are prepared together using the canonical producer's
 supported Cargo command, and both normalized manifests and file lists are
 recorded. An isolated local registry is the reviewed fallback boundary, not an
 implementation-time substitution: if joint workspace verification is not
-supported as designed, implementation pauses for design review.
+supported as designed, implementation pauses, the RFC returns for design
+review, and only an explicitly approved isolated-registry strategy may then be
+implemented.
 
 ### Evidence layout
 
@@ -740,19 +760,24 @@ Artifact signing is outside this RFC and may be proposed separately.
   including the retained benchmark, are present.
 - `.git/`, `.git-exclude/`, `target/`, `docs/book/`, and nested release
   archives are absent.
+- Raw canonical `git archive` output passes, including exactly one validated
+  global PAX commit-comment record and normalized directory markers.
 - Absolute paths; empty, `.` and `..` components; alternate separators;
-  NUL/control-character names; normalized duplicates; and unexpected members
-  are rejected.
+  NUL/control-character names; normalized duplicates; malformed directory
+  trailing separators; and unexpected members are rejected.
 - Symlink and hard-link escape fixtures, link targets, device/special entries,
   and type/mode mismatches are rejected before extraction.
+- Unexpected or malformed global/per-entry PAX records, mismatched commit
+  comments, GNU extensions, and other extension records are rejected.
 - Structured archive headers are used; a line-oriented listing parser is
   rejected by test.
 - The selected root layout and new-empty-destination workflow are asserted
   exactly.
 - Two builds from the same clean commit have equal SHA-256 in the canonical
   producer environment.
-- Each supported non-canonical platform produces the same normalized content
-  manifest.
+- Each non-canonical platform claimed in the checked-in producer policy
+  produces the same normalized content manifest. The claimed platform list
+  must be non-empty and explicit by M6.
 - `cargo metadata --locked` succeeds from extraction.
 - Stable smoke checks, benchmark compile, and mdBook build succeed from
   extraction.
@@ -875,9 +900,10 @@ The owner approved all four resolutions on 2026-07-17:
 2. **Benchmark disposition:** author and retain a meaningful Criterion
    benchmark with target-specific compile-only release gating; measurements
    remain advisory.
-3. **Canonical RC producer:** use the exact Linux/amd64 OCI platform digest and
-   pinned tool contract in R16. Byte identity is required only there; other
-   supported platforms prove normalized content equivalence and behavior.
+3. **Canonical RC producer:** use the exact Rust 1.97.1 Linux/amd64 OCI
+   platform digest and pinned tool contract in R16. Byte identity is required
+   only there; other platforms explicitly claimed by M6 prove normalized
+   content equivalence and behavior.
 4. **Durable Accepted state:** adopt RFC 000's five-folder variant. After
    focused re-review recommends acceptance and the owner authorizes the
    transition, move RFC 009 to `rfcs/accepted/`, update its Status and index,
@@ -891,7 +917,7 @@ state.
 This RFC is ready to move from `proposed/` to `accepted/` only when:
 
 - B-01 through B-07 from the 2026-07-17 RFC 009 design review are incorporated;
-- OQ-1 through OQ-4 have explicit owner resolutions recorded in the RFC;
+- owner decisions 1 through 4 are recorded in the RFC;
 - focused independent re-review recommends acceptance; and
 - the owner authorizes the repository-visible Accepted transition.
 
