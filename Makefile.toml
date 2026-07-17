@@ -6,6 +6,7 @@
 # Common tasks:
 #   cargo make check          — fmt + clippy (all feature combinations)
 #   cargo make test           — full test suite with all features
+#   cargo make source-integrity — verify manifest target sources without Cargo
 #   cargo make bench-compile  — verify benchmarks compile
 #   cargo make pre-publish    — all checks before publishing
 #   cargo make publish-lib    — publish localcache to crates.io
@@ -21,6 +22,20 @@ default_to_workspace = false
 
 [env]
 ALL_FEATURES = "async,compression,json,encryption,tracing,watching,metrics"
+
+# ---------------------------------------------------------------------------
+# Bootstrap source integrity
+# ---------------------------------------------------------------------------
+
+[tasks.source-integrity]
+description = "Verify manifest target sources without invoking Cargo"
+command = "python3"
+args = ["scripts/source_integrity.py"]
+
+[tasks.source-integrity-test]
+description = "Test the bootstrap source-integrity preflight"
+command = "python3"
+args = ["-m", "unittest", "discover", "-s", "scripts/tests", "-v"]
 
 # ---------------------------------------------------------------------------
 # Formatting & linting
@@ -53,7 +68,7 @@ args = ["clippy", "--all-targets", "--no-default-features", "--", "-D", "warning
 
 [tasks.check]
 description = "Format check + clippy (default, all, minimal)"
-dependencies = ["fmt-check", "clippy-default", "clippy-all", "clippy-min"]
+dependencies = ["source-integrity", "fmt-check", "clippy-default", "clippy-all", "clippy-min"]
 
 # ---------------------------------------------------------------------------
 # Tests
@@ -85,12 +100,31 @@ dependencies = ["test-no-features", "test-default", "test"]
 [tasks.bench-compile]
 description = "Verify benchmarks compile (no actual run)"
 command = "cargo"
-args = ["bench", "--no-run", "--features", "json"]
+args = [
+    "bench",
+    "-p",
+    "localcache",
+    "--bench",
+    "cache_bench",
+    "--no-run",
+    "--features",
+    "localcache/json",
+    "--locked",
+]
 
 [tasks.bench]
 description = "Run benchmarks (requires --features json)"
 command = "cargo"
-args = ["bench", "--features", "json"]
+args = [
+    "bench",
+    "-p",
+    "localcache",
+    "--bench",
+    "cache_bench",
+    "--features",
+    "localcache/json",
+    "--locked",
+]
 
 # ---------------------------------------------------------------------------
 # Documentation
@@ -123,6 +157,7 @@ args = ["package", "--no-verify", "--allow-dirty"]
 [tasks.pre-publish]
 description = "All checks required before publishing"
 dependencies = [
+    "source-integrity",
     "fmt-check",
     "clippy-all",
     "test-all",

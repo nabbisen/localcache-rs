@@ -11,8 +11,19 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  source-integrity:
+    name: Source integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Test source-integrity preflight
+        run: python3 -m unittest discover -s scripts/tests -v
+      - name: Verify manifest target sources
+        run: python3 scripts/source_integrity.py
+
   test:
     name: Test (${{ matrix.features }})
+    needs: source-integrity
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -73,6 +84,7 @@ jobs:
 
   bench-compile:
     name: Bench (compile-only)
+    needs: source-integrity
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -86,10 +98,13 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-bench-${{ hashFiles('**/Cargo.lock') }}
       - name: Check bench compiles
-        run: cargo bench --no-run --features json
+        run: >-
+          cargo bench -p localcache --bench cache_bench --no-run
+          --features localcache/json --locked
 
   msrv:
     name: MSRV (stable)
+    needs: source-integrity
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
