@@ -62,10 +62,10 @@ The "Background" section is optional in both templates.
 
 ### Accepted
 
-*(none yet)*
+| RFC | Title | Target |
+|-----|-------|--------|
+| [009](./accepted/009-reproducible-source-archives-and-release-gates.md) | Reproducible Source Archives and Release Gates | Phase 21 M1/M6 |
 
 ### Proposed
 
-| RFC | Title | Target |
-|-----|-------|--------|
-| [009](./proposed/009-reproducible-source-archives-and-release-gates.md) | Reproducible Source Archives and Release Gates | Phase 21 M1/M6 |
+*(none yet)*

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed |
+| Status | Accepted |
 | Feature | *(release engineering; no Cargo feature)* |
 | Touches | `Cargo.toml`, `Makefile.toml`, `.github/workflows/ci.yaml`, release scripts, archive metadata, release documentation |
 | Findings | Architect review B-01 and B-07 |
@@ -904,24 +904,25 @@ The owner approved all four resolutions on 2026-07-17:
    platform digest and pinned tool contract in R16. Byte identity is required
    only there; other platforms explicitly claimed by M6 prove normalized
    content equivalence and behavior.
-4. **Durable Accepted state:** adopt RFC 000's five-folder variant. After
-   focused re-review recommends acceptance and the owner authorizes the
-   transition, move RFC 009 to `rfcs/accepted/`, update its Status and index,
-   create its implementation/QA handoff, and only then begin M1.
+4. **Durable Accepted state:** adopt RFC 000's five-folder variant. The final
+   focused re-review recommended Accept and the owner authorized the transition
+   on 2026-07-17. RFC 009 moved to `rfcs/accepted/`, its Status and index were
+   updated, and its implementation/QA handoff was created before M1.
 
 A review record under `.git-exclude/` remains evidence, not a durable approval
 state.
 
 ## Acceptance criteria
 
-This RFC is ready to move from `proposed/` to `accepted/` only when:
+The Proposed-to-Accepted transition required:
 
 - B-01 through B-07 from the 2026-07-17 RFC 009 design review are incorporated;
 - owner decisions 1 through 4 are recorded in the RFC;
-- focused independent re-review recommends acceptance; and
-- the owner authorizes the repository-visible Accepted transition.
+- focused independent re-review recommending acceptance; and
+- owner authorization for the repository-visible Accepted transition.
 
-It is ready to move from `accepted/` to `done/` only when:
+The transition occurred on 2026-07-17. This RFC is ready to move from
+`accepted/` to `done/` only when:
 
 - the repository contains every manifest-required target;
 - the project archive contains the full development source required by R2;
