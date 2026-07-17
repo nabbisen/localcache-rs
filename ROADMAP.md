@@ -72,6 +72,104 @@ Five pending RFCs implemented in a single release:
       documented in code and docs; 9 regression tests
 - [x] Release tarball structure changed to `localcache-vX.Y.Z/(files)`
 
+## Phase 20 — Nanosecond Change Detection (v0.20.0) ✅
+
+- [x] Store and compare file modification times at nanosecond precision
+- [x] Add the schema v4-to-v5 migration
+- [x] Add regression coverage for same-second, same-size overwrites
+- [x] Preserve payload compatibility through the v4-to-v5 migration fixture
+
+## Phase 21 — Stabilization and Compatibility Recovery (target: v0.20.1) 🚧
+
+### Goal and scope
+
+Restore a trustworthy release baseline after the 2026-07-17 independent
+architecture review returned **No-Go** for the current v0.20.0 tree.
+This phase closes the review's release blockers before feature development
+resumes.
+
+In scope: source/archive buildability, migration data integrity, SQLite
+identifier safety, read-only enforcement, panic-free path and glob handling,
+async failure semantics, Rust 1.85 compatibility, dependency-security policy,
+release gates, documentation consistency, and fresh release evidence.
+
+Out of scope: new cache features, large-cache performance work, cross-process
+shared memory, and other Future items. Those remain deferred until this phase
+has an independent **Go** review.
+
+### Planning assumptions
+
+- Schedule baseline: **2026-07-17**, Asia/Tokyo.
+- One primary implementer; independent architecture review is a separate gate.
+- Dates are targets, not permission to bypass an exit gate.
+- Non-trivial work is designed and approved in an RFC before implementation.
+- The release version is provisionally v0.20.1 and must be confirmed before the
+  release-candidate milestone under the project's version-immutability policy.
+
+### Milestone schedule
+
+| Milestone | Target window | Scope | Exit gate |
+|---|---|---|---|
+| **M0 — Plan and design** | Jul 17–22 | Approve this schedule; resolve archive-layout authority; draft RFCs 0009–0015 | Roadmap accepted; RFC review order agreed; no implementation started without its RFC |
+| **M1 — Buildable source and archive** | Jul 23–27 | Restore or remove the declared benchmark coherently; make the source archive self-buildable; define reproducible gate commands | Current checkout and extracted archive pass `cargo metadata` and the RFC-defined build smoke gate |
+| **M2 — Data integrity and SQL safety** | Jul 28–Aug 5 | Preserve v1 payloads through v1-to-v5 migration; make migrations atomic; constrain and safely handle SQLite identifiers | Historical fixture and rollback tests pass; hostile identifier tests pass; focused security review accepted |
+| **M3 — Mutation boundaries and input safety** | Aug 6–14 | Enforce read-only schema/mutation rules; prevent watcher privilege bypass; make glob/path/CLI handling Unicode-safe and non-panicking; align deleted-path behavior | Negative read-only and Unicode/property tests pass; public behavior matches approved RFCs |
+| **M4 — MSRV and supply-chain recovery** | Aug 15–21 | Select a Rust-1.85-compatible SQLite stack or approve a new MSRV; update vulnerable dependencies; define advisory deny/warn/exception policy | Full declared-MSRV build succeeds; security policy gate is green or has approved, expiring exceptions |
+| **M5 — Async and maintainability hardening** | Aug 22–28 | Remove unnecessary unsafe generic casts; unify runtime panic/poison handling; surface watcher setup failures; perform only risk-reducing module splits | Runtime-backend tests and mutex-panic tests pass; no unexplained unsafe remains; focused review accepted |
+| **M6 — Release controls, docs, and RC** | Aug 29–Sep 5 | Correct CI/Makefile feature matrices; enforce warning policy; reconcile archive rules; refresh docs/RFC final prose; assemble fresh evidence | Stable and MSRV gates, tests, clippy, docs, package/archive smoke, and advisory gate all pass on the RC |
+| **M7 — Independent review and release decision** | Sep 8–12 | Independent architecture re-review of the RC and extracted archive | Every blocker closed; reviewer verdict **Accept** or **Accept with notes**; owner authorizes release |
+
+### RFC design queue
+
+RFC numbers are provisional until each file is created and indexed according
+to RFC 000.
+
+| RFC | Working title | Primary review findings | Planned implementation milestone | Handoff expectation |
+|---|---|---|---|---|
+| **0009** | Reproducible Source Archives and Release Gates | B-01, B-07 | M1, completed in M6 | Optional release-engineering checklist |
+| **0010** | Transactional, Payload-Preserving Schema Migrations | B-02 | M2 | Recommended implementation and fixture handoff |
+| **0011** | Safe SQLite Identifier Boundary | B-03 | M2 | Optional hostile-input QA checklist |
+| **0012** | Read-only Schema and Mutation Contract | B-04 | M3 | Recommended API-boundary handoff |
+| **0013** | Panic-free Path, Glob, and CLI Text Handling | B-05 and related path findings | M3 | Optional property-test handoff |
+| **0014** | MSRV and Dependency Security Policy | B-06, B-08 | M4 | Recommended dependency-verification handoff |
+| **0015** | Async Runtime and Watcher Failure Safety | Runtime/watcher non-blocking findings | M5 | Recommended runtime test-matrix handoff |
+
+An implementation handoff is created only when the approved RFC still needs
+non-obvious sequencing, fixture provenance, cross-runtime validation, or a
+multi-developer task split. Handoffs remain companion documents under
+`rfcs/handoffs/` and inherit their RFC's lifecycle state.
+
+### Review and commit points
+
+- **Design review 1:** roadmap and milestone acceptance (this change).
+- **Design review 2:** each RFC independently; RFC 0009 first, then RFCs 0010
+  and 0011, then the remaining queue.
+- **Implementation review 1:** M1 buildable-source and extracted-archive proof.
+- **Implementation review 2:** M2 migration-integrity and SQL-safety proof.
+- **Implementation review 3:** M4 declared-MSRV and advisory-policy proof.
+- **Release review:** M6 evidence bundle, followed by M7 independent review.
+
+Each accepted RFC and each completed milestone is a separate logical commit
+point unless the RFC explicitly justifies a smaller atomic sequence.
+
+### Phase exit criteria
+
+Phase 21 is complete only when all of the following are true:
+
+- All eight blocking findings from the 2026-07-17 architecture review are
+  closed with tests or reproducible gate evidence.
+- The current checkout and the extracted source archive pass the same declared
+  release gates.
+- Stable Rust and the declared MSRV pass the complete target/feature policy.
+- Historical migration fixtures prove payload preservation from v1 and v4.
+- Security scanning passes the approved deny/warn/exception policy.
+- Public documentation, implemented RFC prose, Cargo metadata, CI, and release
+  tooling describe one consistent contract.
+- A fresh evidence bundle identifies the exact commit, toolchains, commands,
+  results, and archive under review.
+- Independent architecture review changes the release recommendation from
+  No-Go to Go, and the project owner authorizes the release.
+
 ## Future / Unscheduled
 
 *(all items from the previous Future section shipped in v0.17.0)*

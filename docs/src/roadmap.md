@@ -27,6 +27,28 @@ on GitHub for the full backlog with implementation notes.
 | 17 | 0.17 | RFC backlog — watching dirs, index hints, OTel, shared cache, async-std/smol |
 | 18 | 0.18 | Directory-scoped query predicates — `path_in_dir`, `path_glob` |
 | 19 | 0.19 | Read-only pool + compatibility guarantees — `ReadPool<T>`, golden fixture |
+| 20 | 0.20 | Nanosecond mtime precision — schema v5 and overwrite regression coverage |
+
+## Active stabilization schedule
+
+Phase 21 targets a corrective v0.20.1 release. It closes the findings from
+the 2026-07-17 independent architecture review before new feature work resumes.
+
+| Milestone | Target | Outcome |
+|---|---|---|
+| M0 | Jul 17–22 | Roadmap approved and detailed RFC queue reviewed |
+| M1 | Jul 23–27 | Current source and extracted release archive are buildable |
+| M2 | Jul 28–Aug 5 | Historical migrations preserve payloads and SQLite identifiers are safe |
+| M3 | Aug 6–14 | Read-only boundaries and Unicode/path handling are non-bypassable and non-panicking |
+| M4 | Aug 15–21 | Declared MSRV and dependency-security policy are verified |
+| M5 | Aug 22–28 | Async/watcher failure handling and highest-risk maintainability debt are addressed |
+| M6 | Aug 29–Sep 5 | CI, documentation, release gates, and fresh RC evidence agree |
+| M7 | Sep 8–12 | Independent architecture review and owner release decision |
+
+The detailed scope, RFC mapping, dependencies, and exit gates are maintained in
+the repository-root
+[ROADMAP.md](https://github.com/nabbisen/localcache-rs/blob/main/ROADMAP.md).
+Dates are targets; no milestone is complete until its exit gate passes.
 
 ## Future directions
 
