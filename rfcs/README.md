@@ -3,6 +3,9 @@
 This directory contains design specifications for `localcache`.
 The lifecycle of RFC files (folder layout, states, numbering, status fields,
 cross-references) is governed by **[RFC 000](./done/000-rfc-lifecycle-policy.md)**.
+localcache uses RFC 000's five-folder variant: an RFC moves from `proposed/`
+to `accepted/` only after independent review and explicit owner approval.
+Implementation must not begin while an RFC remains Proposed.
 
 ## Templates
 
@@ -54,6 +57,10 @@ The "Background" section is optional in both templates.
 | [008](./done/008-compatibility-guarantees.md) | Compatibility Guarantees: Payload Wire Format and Path Semantics | v0.19.0 |
 
 ### Archive
+
+*(none yet)*
+
+### Accepted
 
 *(none yet)*
 

@@ -103,6 +103,9 @@ has an independent **Go** review.
 - One primary implementer; independent architecture review is a separate gate.
 - Dates are targets, not permission to bypass an exit gate.
 - Non-trivial work is designed and approved in an RFC before implementation.
+- Because design review and implementation are separate roles, an approved RFC
+  must have a durable repository-visible Accepted state before delegation;
+  ignored review records alone do not authorize implementation.
 - The release version is provisionally v0.20.1 and must be confirmed before the
   release-candidate milestone under the project's version-immutability policy.
 
@@ -110,8 +113,8 @@ has an independent **Go** review.
 
 | Milestone | Target window | Scope | Exit gate |
 |---|---|---|---|
-| **M0 — Plan and design** | Jul 17–22 | Approve this schedule; resolve archive-layout authority; draft RFCs 009–015 | Roadmap accepted; RFC review order agreed; no implementation started without its RFC |
-| **M1 — Buildable source and archive** | Jul 23–27 | Restore or remove the declared benchmark coherently; make the source archive self-buildable; define reproducible gate commands | Current checkout and extracted archive pass `cargo metadata` and the RFC-defined build smoke gate |
+| **M0 — Plan and design** | Jul 17–22 | Approve this schedule; resolve archive-layout and canonical-producer authority; adopt a durable Accepted RFC state; draft RFCs 009–015 | Roadmap accepted; RFC review order agreed; owner decisions recorded; no implementation starts without an Accepted RFC |
+| **M1 — Buildable source and archive** | Jul 23–27 | Author or remove the declared benchmark coherently; create source-context and artifact-context runners; make the source archive self-buildable and safely verifiable | Current checkout and extracted archive pass their applicable RFC-defined smoke gates; exact export manifest and malicious archive fixtures pass |
 | **M2 — Data integrity and SQL safety** | Jul 28–Aug 5 | Preserve v1 payloads through v1-to-v5 migration; make migrations atomic; constrain and safely handle SQLite identifiers | Historical fixture and rollback tests pass; hostile identifier tests pass; focused security review accepted |
 | **M3 — Mutation boundaries and input safety** | Aug 6–14 | Enforce read-only schema/mutation rules; prevent watcher privilege bypass; make glob/path/CLI handling Unicode-safe and non-panicking; align deleted-path behavior | Negative read-only and Unicode/property tests pass; public behavior matches approved RFCs |
 | **M4 — MSRV and supply-chain recovery** | Aug 15–21 | Select a Rust-1.85-compatible SQLite stack or approve a new MSRV; update vulnerable dependencies; define advisory deny/warn/exception policy | Full declared-MSRV build succeeds; security policy gate is green or has approved, expiring exceptions |
@@ -126,7 +129,7 @@ to RFC 000.
 
 | RFC | Working title | Primary review findings | Planned implementation milestone | Handoff expectation |
 |---|---|---|---|---|
-| **009** | Reproducible Source Archives and Release Gates | B-01, B-07 | M1, completed in M6 | Optional release-engineering checklist |
+| **009** | Reproducible Source Archives and Release Gates | B-01, B-07 | M1, completed in M6 | Required implementation and QA handoff after acceptance |
 | **010** | Transactional, Payload-Preserving Schema Migrations | B-02 | M2 | Recommended implementation and fixture handoff |
 | **011** | Safe SQLite Identifier Boundary | B-03 | M2 | Optional hostile-input QA checklist |
 | **012** | Read-only Schema and Mutation Contract | B-04 | M3 | Recommended API-boundary handoff |
@@ -144,6 +147,9 @@ multi-developer task split. Handoffs remain companion documents under
 - **Design review 1:** roadmap and milestone acceptance (this change).
 - **Design review 2:** each RFC independently; RFC 009 first, then RFCs 010
   and 011, then the remaining queue.
+- **Design acceptance:** after an independent acceptance recommendation and
+  explicit owner approval, move the RFC into the repository's Accepted state
+  before implementation or handoff delegation.
 - **Implementation review 1:** M1 buildable-source and extracted-archive proof.
 - **Implementation review 2:** M2 migration-integrity and SQL-safety proof.
 - **Implementation review 3:** M4 declared-MSRV and advisory-policy proof.
@@ -158,8 +164,9 @@ Phase 21 is complete only when all of the following are true:
 
 - All eight blocking findings from the 2026-07-17 architecture review are
   closed with tests or reproducible gate evidence.
-- The current checkout and the extracted source archive pass the same declared
-  release gates.
+- The current checkout and extracted source archive pass the same applicable
+  code, documentation, package, benchmark, and security gates; source-only
+  Git provenance and archive construction run only in source context.
 - Stable Rust and the declared MSRV pass the complete target/feature policy.
 - Historical migration fixtures prove payload preservation from v1 and v4.
 - Security scanning passes the approved deny/warn/exception policy.
