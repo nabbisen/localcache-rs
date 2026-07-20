@@ -1,0 +1,81 @@
+schema-version = 1
+
+[producer]
+platform = "linux/amd64"
+image = "docker.io/library/rust@sha256:389c1ae98c20fbcadca68a685482749267cec3c90893ae4671c5a37cc894c416"
+informational-tag = "docker.io/library/rust:1.97.1-bookworm"
+rust = "rustc 1.97.1 (8bab26f4f 2026-07-14)"
+cargo = "cargo 1.97.1 (c980f4866 2026-06-30)"
+locale = "C.UTF-8"
+timezone = "UTC"
+
+[canonical-tools.python]
+command = "python3"
+version = "Python 3.11.2"
+sha256 = "6d972cf21be56fe3c947ab6ba257ff8d08c342dd2714442986791bd9a6dfabfe"
+
+[canonical-tools.git]
+command = "git"
+version = "git version 2.39.5"
+sha256 = "2540879925a6881e3877ff7e3330746ba3027b04edf16a3a12dccd1644c4f32d"
+
+[canonical-tools.mdbook]
+command = "mdbook"
+version = "mdbook v0.5.4"
+sha256 = "dc9020903f60cf632c0cc01bf8c12b57237649c2ab64c7a85a60e12103e356ce"
+
+[canonical-tool-artifacts.mdbook]
+url = "https://github.com/rust-lang/mdBook/releases/download/v0.5.4/mdbook-v0.5.4-x86_64-unknown-linux-gnu.tar.gz"
+archive-sha256 = "3f28de05dafca9d0f2eab99c662116b0e37b89b1d96a08f8f430b9eeae958cd7"
+binary-sha256 = "dc9020903f60cf632c0cc01bf8c12b57237649c2ab64c7a85a60e12103e356ce"
+
+[canonical-base-components.python-gzip]
+path = "/usr/lib/python3.11/gzip.py"
+sha256 = "8e0a7f850ef481fea41e0de9b52b4a014573b58e500ae83b92e5888d7a061008"
+
+[canonical-base-components.python-hashlib]
+path = "/usr/lib/python3.11/hashlib.py"
+sha256 = "e2bffb462e4d43e6637b9450e259e8ba2a56626ba3037d68aa1cee68b3f61d4a"
+
+[canonical-base-components.python-hashlib-extension]
+path = "/usr/lib/python3.11/lib-dynload/_hashlib.cpython-311-x86_64-linux-gnu.so"
+sha256 = "2fe950de7ddfa4b2961315021e181cffa10dca74f4b409eeb3b215cf1ff4e33e"
+
+[canonical-base-components.zlib]
+path = "/usr/lib/x86_64-linux-gnu/libz.so.1.2.13"
+sha256 = "7e2a72b4c4b38c61e6962de6e3f4a5e9ae692e732c68deead10a7ce2135a7f68"
+
+[canonical-base-components.openssl]
+path = "/usr/lib/x86_64-linux-gnu/libcrypto.so.3"
+sha256 = "72db1b3de8b7dfbaba4c056135f408da555f9d5e137c82129478e07e769f8070"
+
+[supported-host-tools.python]
+command = "python3"
+version = "Python 3.14.6"
+sha256 = "684d10e0f26224cb8b112bd9d49f4c097905ea11aa801a15bf79936ea171d99c"
+
+[supported-host-tools.git]
+command = "git"
+version = "git version 2.55.0"
+sha256 = "292115a21c70326a0fa239e6d9bdee32f750cbd23d12fdef2e518ad4b451a8b3"
+
+[supported-host-tools.mdbook]
+command = "mdbook"
+version = "mdbook v0.5.4"
+sha256 = "39d2434fc670a8c9b8cac39f899247c062ac1e2fdda92a4eb339df8ed5386f49"
+
+[implementations.release-runner]
+path = "scripts/release.py"
+sha256 = "e365e021028aaeba7e1f6a249f0056911e3aa0efe76610ca3a27e5286a4c0b40"
+
+[implementations.canonical-producer]
+path = "scripts/canonical-producer.sh"
+sha256 = "a965e232e4542379486f2e497e4b8814f1e17ae05040a429a8934a3cc18509aa"
+
+[implementations.archive-parser-writer-compressor]
+path = "scripts/release_archive.py"
+sha256 = "cb6ed66d0a4edd0a5b481305028249ddba748d19cf839a462406c6879df8eafe"
+
+[implementations.source-integrity]
+path = "scripts/source_integrity.py"
+sha256 = "07587f3ece397b3be523a2142ce9a68130936599cda67a22b3c5b56383907f77"

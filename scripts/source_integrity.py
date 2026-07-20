@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import subprocess
 import sys
 import tomllib
 from dataclasses import dataclass
@@ -185,7 +186,37 @@ def default_candidates(
     ]
 
 
-def verify(root: Path) -> tuple[list[Path], list[Target]]:
+def tracked_files(root: Path) -> set[Path]:
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-z", "--cached"],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        detail = (
+            error.stderr.decode("utf-8", "replace").strip()
+            if isinstance(error, subprocess.CalledProcessError)
+            else str(error)
+        )
+        raise IntegrityError(f"cannot enumerate tracked files: {detail}") from error
+
+    tracked: set[Path] = set()
+    for raw_path in completed.stdout.split(b"\0"):
+        if not raw_path:
+            continue
+        try:
+            path = raw_path.decode("utf-8", "strict")
+        except UnicodeDecodeError as error:
+            raise IntegrityError("tracked path is not valid UTF-8") from error
+        tracked.add((root / path).resolve())
+    return tracked
+
+
+def verify(
+    root: Path, *, require_tracked: bool = False
+) -> tuple[list[Path], list[Target]]:
     root = root.resolve()
     root_manifest = root / "Cargo.toml"
     root_document = load_manifest(root_manifest)
@@ -197,6 +228,7 @@ def verify(root: Path) -> tuple[list[Path], list[Target]]:
         targets.extend(explicit_targets(manifest, document))
 
     errors: list[str] = []
+    tracked = tracked_files(root) if require_tracked else None
     for target in targets:
         source = target.source.resolve()
         try:
@@ -210,6 +242,11 @@ def verify(root: Path) -> tuple[list[Path], list[Target]]:
         if not source.is_file():
             errors.append(
                 f"{target.manifest}: missing {target.kind} target source "
+                f"for {target.name!r}: {target.source}"
+            )
+        elif tracked is not None and source not in tracked:
+            errors.append(
+                f"{target.manifest}: untracked {target.kind} target source "
                 f"for {target.name!r}: {target.source}"
             )
 
@@ -226,13 +263,18 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=Path(__file__).resolve().parents[1],
         help="workspace root (defaults to the script's repository)",
     )
+    parser.add_argument(
+        "--require-tracked",
+        action="store_true",
+        help="also require every target source to be tracked by Git",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
     try:
-        manifests, targets = verify(args.root)
+        manifests, targets = verify(args.root, require_tracked=args.require_tracked)
     except IntegrityError as error:
         print(f"source-integrity: FAILED\n{error}", file=sys.stderr)
         return 1

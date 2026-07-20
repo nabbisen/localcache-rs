@@ -77,6 +77,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+## Project source archives
+
+Project source archives are named `localcache-vX.Y.Z.tar.gz`. Their project
+files are directly at the archive root, so always extract into a new empty
+directory:
+
+```sh
+mkdir localcache-vX.Y.Z
+test -z "$(ls -A localcache-vX.Y.Z)"
+tar -xzf localcache-vX.Y.Z.tar.gz -C localcache-vX.Y.Z
+```
+
+Do not extract one over an existing checkout. Maintainer-produced archives are
+validated against the exact committed export manifest and smoke-tested from a
+Git-free fresh extraction before review.
+
 ---
 
 ## Features

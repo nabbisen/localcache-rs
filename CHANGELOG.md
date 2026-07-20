@@ -9,6 +9,14 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Changed
+
+- Project source archives now place project files directly at the archive
+  root. Create a new empty destination before extraction; the former
+  `localcache-vX.Y.Z/` member prefix is no longer used.
+- Source archives are constructed from a clean committed revision and
+  structurally validated before a Git-free extracted-source smoke test.
+
 ---
 
 ## [0.20.0] — 2026-06-06

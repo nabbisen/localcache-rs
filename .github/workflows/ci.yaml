@@ -19,7 +19,7 @@ jobs:
       - name: Test source-integrity preflight
         run: python3 -m unittest discover -s scripts/tests -v
       - name: Verify manifest target sources
-        run: python3 scripts/source_integrity.py
+        run: python3 scripts/source_integrity.py --require-tracked
 
   test:
     name: Test (${{ matrix.features }})

@@ -1,4 +1,5 @@
 import importlib.util
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -165,6 +166,34 @@ members = ["missing-*"]
                 "workspace member pattern has no matches",
             ):
                 SOURCE_INTEGRITY.verify(root)
+
+    def test_require_tracked_rejects_untracked_target(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.write(
+                root / "Cargo.toml",
+                """
+[package]
+name = "sample"
+version = "0.1.0"
+
+[[bench]]
+name = "throughput"
+""",
+            )
+            self.write(root / "src/lib.rs", "")
+            self.write(root / "benches/throughput.rs", "")
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            subprocess.run(
+                ["git", "-C", str(root), "add", "Cargo.toml", "src/lib.rs"],
+                check=True,
+            )
+
+            with self.assertRaisesRegex(
+                SOURCE_INTEGRITY.IntegrityError,
+                "untracked bench target source.*benches/throughput.rs",
+            ):
+                SOURCE_INTEGRITY.verify(root, require_tracked=True)
 
     @staticmethod
     def write(path: Path, contents: str) -> None:
