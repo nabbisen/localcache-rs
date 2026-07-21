@@ -89,8 +89,11 @@ therefore separates **creation policy** from **safe existing-object policy**.
   this RFC is implemented.
 - **Legacy spelling**: a structurally valid public index name already present
   in a released v4/v5 database but not admitted by the new-name grammar.
-- **Identifier equivalence**: SQLite's identifier comparison behavior. ASCII
-  letters are case-insensitive; non-ASCII spelling is not Unicode-folded.
+- **Identifier equivalence**: byte-for-byte equality after folding only ASCII
+  `A..Z` to `a..z`. Non-ASCII bytes are compared exactly; there is no Unicode
+  normalization or case folding.
+- **Authorization snapshot**: one SQLite read transaction/snapshot containing
+  every catalog and metadata observation used for one resolver or list result.
 - **Owned path index**: an index which has the public prefix and the exact
   released non-unique, non-partial ordinary index shape on
   `files(namespace ASC BINARY, path ASC BINARY)`.
@@ -141,15 +144,38 @@ single-statement API), never `execute_batch`. The dynamic identifier is the
 only generated SQL fragment. Table names, columns, ordering, and all other SQL
 tokens remain static.
 
+Executable DDL is scoped explicitly to the authoritative `main` schema. Its
+forms are equivalent to:
+
+```sql
+CREATE INDEX main."authorized_identifier" ON files(namespace, path)
+DROP INDEX main."authorized_identifier"
+```
+
+SQLite's `CREATE INDEX` grammar places the schema qualifier on the index name
+and requires the unqualified table to belong to that same schema. The create
+statement does not rely on `IF NOT EXISTS`; R4 resolves and validates any
+identifier-equivalent object first. Query table sources are likewise always
+`main.files`. No executable RFC 011 statement performs unqualified object
+resolution across TEMP, main, or attached schemas.
+
 No helper may accept a pre-quoted identifier or arbitrary SQL. Its input and
 output types must make it difficult to confuse a suffix, a full catalog name,
 and encoded SQL text.
 
 ### R3 — Catalog-backed ownership and allowlists
 
-Catalog checks use static SQL with bound values. Prefix discovery must use an
-exact prefix expression such as `substr(name, 1, 8) = 'lc_user_'`; the current
-`LIKE 'lc_user_%'` is forbidden because `_` is a wildcard.
+Catalog checks use static SQL with bound values and are scoped explicitly to
+`main`. Object rows come from `main.sqlite_schema`. Table-valued metadata calls
+provide the schema argument, including forms equivalent to
+`pragma_index_list('files', 'main')` and
+`pragma_index_xinfo(?1, 'main')`. The RFC 010 semantic predicate is reused,
+but its currently one-argument metadata lookup plumbing must not be copied.
+
+Prefix discovery must use an exact prefix expression such as
+`substr(name, 1, 8) = 'lc_user_'`; the current `LIKE 'lc_user_%'` is forbidden
+because `_` is a wildcard. TEMP and attached schemas are neither searched nor
+accepted, even when they contain same-named tables or indexes.
 
 The runtime structural predicate for an owned path index is the same semantic
 predicate used by RFC 010's v4/v5 classifier:
@@ -178,9 +204,18 @@ SQLite autoindexes, indexes on other tables, TEMP or attached-schema objects,
 lookalike prefixes, and arbitrary externally-created indexes are never allowed
 as query hints.
 
-Catalog resolution uses SQLite identifier equivalence, not Rust Unicode case
-folding. The resolver must return zero or one match; ambiguity or a shape
+Catalog resolution implements identifier equivalence by comparing equal-length
+UTF-8 byte strings, folding only bytes in ASCII `A..Z`, and comparing every
+other byte exactly. It must use a direct Rust implementation or a demonstrably
+equivalent, non-overridable SQLite primitive. It must not use `LIKE`, general
+Unicode folding/normalization, or a connection-overridable collation. The
+resolver must return zero or one main-schema match; ambiguity or a shape
 mismatch fails closed. It must not use caller-controlled schema qualifiers.
+
+Every group of `main.sqlite_schema`, index-list, and index-xinfo reads which
+contributes to one authorization/list decision runs in one authorization
+snapshot. Independent autocommit reads which can mix schema generations are
+not sufficient.
 
 ### R4 — Public operation contracts
 
@@ -190,14 +225,15 @@ The public signature and successful return type remain unchanged.
 
 1. Enforce the write guard.
 2. In an `Immediate` transaction, prefix the suffix in memory and resolve any
-   identifier-equivalent existing schema object through a bound lookup.
+   identifier-equivalent existing `main` schema object through bound,
+   main-scoped metadata lookups.
 3. If an owned path index already exists, commit no schema change and return
    its catalog spelling. This preserves released idempotence for legacy names
    and ASCII case variants without placing the name in SQL.
 4. If a conflicting object exists, roll back and fail closed.
 5. If no object exists, validate the suffix using R1, create exactly the owned
-   path-index shape with one quoted single statement, validate the result, and
-   commit.
+   path-index shape with one quoted `CREATE INDEX main."..." ON files(...)`
+   statement, validate the result in `main`, and commit.
 6. If validation or post-creation validation fails, roll back and fail closed.
 
 `IF NOT EXISTS` alone is not an ownership check and must not mask a table,
@@ -208,11 +244,12 @@ view, wrong-shape index, or concurrent conflict.
 The public signature and `bool` meaning remain unchanged.
 
 1. Enforce the write guard.
-2. Prefix the caller's suffix in memory and resolve it with a bound catalog
-   lookup inside an `Immediate` transaction.
+2. Prefix the caller's suffix in memory and resolve it with bound, main-scoped
+   metadata lookups inside an `Immediate` transaction.
 3. If no identifier-equivalent object exists, return `Ok(false)` without DDL.
 4. If the object is an owned path index, encode the caller-provided full name,
-   drop it with one statement, verify absence, commit, and return `Ok(true)`.
+   drop it with one `DROP INDEX main."..."` statement, verify its absence from
+   `main`, commit, and return `Ok(true)`.
 5. If a matching object exists but is not owned, fail closed without dropping
    it.
 
@@ -223,17 +260,25 @@ reach executable SQL.
 
 #### `list_path_indexes`
 
-Return every structurally valid owned path index, including legacy spellings,
-in catalog-name order. Do not list a name based on prefix alone. If a matching
-prefix object changes concurrently into an invalid shape, return an error
-rather than advertise it as safe.
+Within one authorization snapshot, inspect every exact-prefix candidate in
+`main` and return every structurally valid owned path index, including legacy
+spellings, in catalog-name order. Do not list a name based on prefix alone. If
+any exact-prefix candidate in that snapshot has an invalid shape, the complete
+call returns the stable R5 safety error rather than omitting or advertising the
+candidate.
+
+The returned names are guaranteed valid only in the authorization snapshot.
+A schema change after that snapshot may make a later, independently validated
+operation fail. `list_path_indexes` cannot and does not promise validity after
+its return boundary.
 
 #### `QueryBuilder::index_hint`
 
 The fluent setter remains non-fallible and stores opaque caller text. Both
 terminal paths, `run()` and `dry_run()`, resolve the full supplied name through
-the R3 allowlist immediately before constructing their SQL. The authorized
-caller spelling is then encoded and inserted after `INDEXED BY`.
+the R3 allowlist in one authorization snapshot immediately before constructing
+their SQL. The authorized caller spelling is then encoded and inserted after
+`INDEXED BY` on the static `main.files` table source.
 
 A valid legacy public name may be hinted because its existing catalog object,
 not its spelling alone, grants authorization. A new, nonexistent name does not
@@ -282,15 +327,22 @@ legacy compatibility path in the coming-release notes.
 
 ### R6 — Transaction, race, and mutation guarantees
 
-Create and drop use an `Immediate` transaction for catalog resolution, DDL,
-postcondition validation, and commit. A returned error or panic-unwind before
-commit rolls back the operation. Because the released methods take `&self`, a
-rusqlite RAII transaction created with `Transaction::new_unchecked` and
-`TransactionBehavior::Immediate` is permitted: “unchecked” there means Rust's
-mutable-borrow nested-transaction exclusion is checked at runtime instead.
-Raw `BEGIN`/`COMMIT` batch text is forbidden. A nested-transaction error must
-occur before mutation, and implementation must not catch an error and commit
-partial work.
+Create and drop use an `Immediate` transaction for main-scoped catalog
+resolution, DDL, postcondition validation, and commit. A returned error or
+normal panic unwind before commit rolls back the operation. Because the
+released methods take `&self`, a rusqlite RAII transaction created with
+`Transaction::new_unchecked` and `TransactionBehavior::Immediate` is permitted:
+“unchecked” there means Rust's mutable-borrow nested-transaction exclusion is
+checked at runtime instead. Raw `BEGIN`/`COMMIT` batch text is forbidden. A
+nested-transaction error must occur before mutation, and implementation must
+not catch an error and commit partial work. No unwind/RAII guarantee is made
+for `panic=abort`.
+
+List and query-hint authorization use a rusqlite RAII read transaction with
+`Deferred` behavior, or an equivalently proven single SQLite read snapshot,
+for all metadata reads contributing to that decision. The snapshot ends after
+the complete decision. It does not lock the returned list result against later
+schema changes.
 
 Query hint resolution is read-only. A second connection can alter schema after
 resolution and before statement preparation; that race may produce a normal
@@ -349,15 +401,16 @@ the general encoder.
 ### Query construction
 
 `build_path_sql` becomes fallible or receives an already authorized and
-encoded optional hint. `keys` and `explain_query` must call the same resolver,
-so `run()` and `dry_run()` cannot drift. Parameter values for namespace and
-path predicates remain bound exactly as today.
+encoded optional hint. `keys` and `explain_query` must call the same
+main-scoped, one-snapshot resolver, so `run()` and `dry_run()` cannot drift.
+Parameter values for namespace and path predicates remain bound exactly as
+today.
 
 The only two table-source forms are conceptually:
 
 ```sql
-FROM files
-FROM files INDEXED BY "authorized_identifier"
+FROM main.files
+FROM main.files INDEXED BY "authorized_identifier"
 ```
 
 No fallback is permitted when an explicit hint is rejected or SQLite cannot
@@ -369,9 +422,11 @@ discarding it would hide application and schema errors.
 RFC 010 already reads `sqlite_schema`, `pragma_index_list`, and
 `pragma_index_xinfo` using bound values and validates the exact public-index
 shape. RFC 011 should extract the reusable row types and semantic predicate
-only as far as necessary for runtime ownership checks. It must not weaken or
-redefine open-time classification, parse database names into SQL, or broaden
-the set of schema objects RFC 010 accepts.
+only as far as necessary for runtime ownership checks. RFC 011's lookup layer
+must use `main.sqlite_schema` and the explicit `main` schema arguments even
+though RFC 010's current index-xinfo helper uses the one-argument form. It must
+not weaken or redefine open-time classification, parse database names into
+SQL, or broaden the set of schema objects RFC 010 accepts.
 
 ## Test plan
 
@@ -400,11 +455,55 @@ exist and that no injected table or index appears.
 - Reject nonexistent hints, SQLite autoindexes, unrelated indexes, attached or
   TEMP objects, wrong-table indexes, wrong terms/order/collation, unique,
   expression, descending, and partial indexes.
+- Create same-named `main` plus TEMP and `main` plus attached-schema tables and
+  indexes. Prove all metadata inspection reads `main`, both query terminals
+  read `main.files`, drop removes only the authorized main index, create writes
+  only to main, and TEMP/attached-only names remain unauthorized and unchanged.
+- Assert the exact main-qualified CREATE, DROP, unhinted query, and hinted query
+  behavior; do not rely only on postcondition rollback to detect a
+  wrong-schema operation.
 - Prove prefix lookalikes are not selected by wildcard behavior.
 - Mutate schema from a second connection after engine open and prove create,
   drop, list, and hint fail closed on conflicts without unrelated mutation.
 - Prove ASCII case-equivalent create is idempotent and returns catalog
   spelling; prove non-ASCII names are not Unicode-case-folded.
+- Prove identifier equivalence folds only ASCII `A..Z` bytes, with no `LIKE`,
+  overridable-collation, Unicode-folding, or normalization behavior.
+
+### Snapshot and race behavior
+
+- Use a private deterministic test barrier between the first and later
+  metadata reads. With a second connection and a journal mode which permits
+  the writer to commit, prove one resolver/list decision observes one schema
+  generation rather than mixed metadata.
+- In one snapshot containing an invalid exact-prefix main candidate, prove the
+  complete list call returns the stable safety error rather than omitting it.
+- After a completed list snapshot, change the schema and prove the returned
+  list was only a snapshot-time statement: a later operation revalidates and
+  fails safely.
+- After a completed hint-authorization snapshot but before statement
+  preparation, change the schema and prove `run()` and `dry_run()` either use
+  the authorized main object or return `Database`; neither falls back, changes
+  schemas, or expands parser structure.
+
+### DDL rollback and nested transactions
+
+- Provide a private `cfg(test)` failpoint, or an equivalent deterministic test
+  mechanism, immediately after successful create DDL and immediately after
+  successful drop DDL, before postconditions and commit. It must not be public,
+  environment-controlled, or compiled into production behavior.
+- Inject a returned error at both post-DDL points and compare complete semantic
+  snapshots to prove the created index is absent after rollback and the
+  dropped index is restored exactly. The snapshot includes main schema
+  objects and definitions, index flags and terms, `user_version`, file/payload
+  row counts and representative payload bytes, plus TEMP/attached collision
+  objects when that fixture uses them.
+- Inject and catch at least one normal panic unwind after destructive drop DDL
+  and prove the same complete rollback. No such claim applies to
+  `panic=abort`.
+- Begin an outer transaction in an internal test, invoke the
+  `new_unchecked(..., Immediate)` path, and prove nested transaction rejection
+  occurs before any schema or data mutation.
 
 ### Released compatibility
 
@@ -440,10 +539,13 @@ The controls are deliberately layered:
 
 1. a narrow grammar limits newly persisted names;
 2. catalog authorization limits existing-object operations;
-3. standard identifier encoding fixes the parser boundary;
-4. single-statement execution removes batch expansion;
-5. structural ownership prevents dropping or forcing unrelated indexes; and
-6. transactions and postconditions close check/use races for DDL.
+3. explicit `main` scoping binds authorization, metadata, and execution to the
+   same schema;
+4. one-snapshot metadata prevents mixed-generation authorization;
+5. standard identifier encoding fixes the parser boundary;
+6. single-statement execution removes batch expansion;
+7. structural ownership prevents dropping or forcing unrelated indexes; and
+8. transactions and postconditions close check/use races for DDL.
 
 None of these controls weakens the requirement to bind SQL values. Conversely,
 binding catalog lookup values does not make the later identifier position
@@ -507,17 +609,41 @@ and would not fix create/drop. Rejected.
 - [SQLite binding values to prepared statements](https://www.sqlite.org/c3ref/bind_blob.html)
 - [SQLite keyword and identifier quoting guidance](https://www.sqlite.org/lang_keywords.html)
 - [SQLite `INDEXED BY`](https://www.sqlite.org/lang_indexedby.html)
+- [SQLite object-name resolution](https://www.sqlite.org/lang_naming.html)
+- [SQLite `DROP INDEX`](https://www.sqlite.org/lang_dropindex.html)
 - [SQLite schema introspection PRAGMAs](https://www.sqlite.org/pragma.html#pragma_index_list)
 - [SQLite `CREATE INDEX`](https://www.sqlite.org/lang_createindex.html)
 - [RFC 002 — Query Index Hints and Explain Plan](../done/002-query-index-hints.md)
 - [RFC 010 — Transactional, Payload-Preserving Schema Migrations](../accepted/010-transactional-payload-preserving-schema-migrations.md)
 
+## Design review history
+
+The first independent design review is recorded at
+`.git-exclude/reviewed/architect-rfc-011-design-review-2026-07-21.md`. Its
+verdict was **Accept with changes; remain Proposed**. This revision addresses:
+
+- F-01 by making `main` explicit in catalog sources, schema arguments, DDL,
+  query table sources, and TEMP/attached collision tests;
+- F-02 by requiring one authorization snapshot per resolver/list decision,
+  defining list validity at that snapshot, failing the whole list on an
+  invalid exact-prefix candidate, and adding deterministic two-connection
+  barriers; and
+- F-03 by requiring post-create and post-drop error failpoints, destructive-DDL
+  panic-unwind rollback, complete semantic snapshots, and nested-transaction
+  rejection before mutation.
+
+The review's non-blocking identifier-equivalence request is also incorporated
+as an explicit ASCII-byte algorithm which forbids Unicode folding,
+normalization, `LIKE`, and overridable collations. RFC 011 remains Proposed
+pending focused independent re-review and explicit owner approval.
+
 ## Acceptance and completion gates
 
 The design may move from Proposed to Accepted only after independent review
-confirms the grammar, quoting algorithm, catalog/ownership predicate, released-
-name compatibility, error behavior, and RFC 010 boundary, followed by explicit
-owner approval.
+confirms the grammar, quoting algorithm, main-scoped one-snapshot
+catalog/ownership predicate, released-name compatibility, post-DDL rollback
+proof, error behavior, and RFC 010 boundary, followed by explicit owner
+approval.
 
 Implementation may begin only after that transition. B-03 closes only after
 the hostile-input matrix and focused independent implementation review are
