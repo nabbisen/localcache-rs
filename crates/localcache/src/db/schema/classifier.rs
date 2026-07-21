@@ -888,17 +888,33 @@ mod tests {
     #[test]
     fn exact_historical_fixtures_classify_without_writes() {
         assert_fixture_sha256(
-            "tests/fixtures/compat-v0_1.sqlite3",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/compat-v0_1.sqlite3"
+            ),
             "bd0bb9ffb9e07abafebde2c8a492618bf23ba8cf0e8c29cd8a9a76a4f5153aac",
         );
         assert_fixture_sha256(
-            "tests/fixtures/compat-v0_19-user-index.sqlite3",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/compat-v0_19-user-index.sqlite3"
+            ),
             "585ea037ad94ef77696b3bb3c6d13d9778975057e2bdd7bdc5b01b299cfc86df",
         );
         for (path, version, expected) in [
-            ("tests/fixtures/compat-v0_1.sqlite3", 0, version_state(1, 3)),
             (
-                "tests/fixtures/compat-v0_19-user-index.sqlite3",
+                concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/compat-v0_1.sqlite3"
+                ),
+                0,
+                version_state(1, 3),
+            ),
+            (
+                concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/compat-v0_19-user-index.sqlite3"
+                ),
                 4,
                 version_state(4, 1),
             ),

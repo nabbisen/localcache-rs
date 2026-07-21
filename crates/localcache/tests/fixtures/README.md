@@ -86,7 +86,8 @@ The exact isolated build/run operations were:
 work="${RFC010_FIXTURE_WORKDIR:?}/rfc010"
 mkdir -p "$work/v0_1/examples" "$work/v0_1/target/tmp"
 git archive e44cfedc16cf96e3dfe97ad7ccbc1631b2398775 | tar -x -C "$work/v0_1"
-cp tests/fixtures/generators/compat_v0_1.rs "$work/v0_1/examples/gen_rfc010_fixture.rs"
+cp crates/localcache/tests/fixtures/generators/compat_v0_1.rs \
+  "$work/v0_1/examples/gen_rfc010_fixture.rs"
 printf '\n[workspace]\n' >> "$work/v0_1/Cargo.toml"
 env TMPDIR="$work/v0_1/target/tmp" cargo build --locked \
   --manifest-path "$work/v0_1/Cargo.toml" --example gen_rfc010_fixture
@@ -123,7 +124,7 @@ The corresponding isolated build/run operations were:
 work="${RFC010_FIXTURE_WORKDIR:?}/rfc010"
 mkdir -p "$work/v0_19/examples" "$work/v0_19/benches" "$work/v0_19/target/tmp"
 git archive 6109f075bad0b830440d8ddd054a3c506fab5cde | tar -x -C "$work/v0_19"
-cp tests/fixtures/generators/compat_v0_19_user_index.rs \
+cp crates/localcache/tests/fixtures/generators/compat_v0_19_user_index.rs \
   "$work/v0_19/examples/gen_rfc010_fixture.rs"
 printf 'fn main() {}\n' > "$work/v0_19/benches/cache_bench.rs"
 env TMPDIR="$work/v0_19/target/tmp" cargo build --locked \

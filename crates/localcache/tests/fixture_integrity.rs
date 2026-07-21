@@ -12,9 +12,15 @@ use localcache::{CacheEngine, JournalMode, SynchronousMode};
 #[path = "fixture_integrity/public_boundaries.rs"]
 mod public_boundaries;
 
-const V0_1_PATH: &str = "tests/fixtures/compat-v0_1.sqlite3";
+const V0_1_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/compat-v0_1.sqlite3"
+);
 const V0_1_SHA256: &str = "bd0bb9ffb9e07abafebde2c8a492618bf23ba8cf0e8c29cd8a9a76a4f5153aac";
-const V0_19_INDEX_PATH: &str = "tests/fixtures/compat-v0_19-user-index.sqlite3";
+const V0_19_INDEX_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/compat-v0_19-user-index.sqlite3"
+);
 const V0_19_INDEX_SHA256: &str = "585ea037ad94ef77696b3bb3c6d13d9778975057e2bdd7bdc5b01b299cfc86df";
 
 fn assert_sha256(path: &str, expected: &str) {

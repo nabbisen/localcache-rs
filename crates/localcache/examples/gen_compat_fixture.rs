@@ -30,7 +30,10 @@ const PLAIN_B: [f32; 3] = [4.0, 5.0, 6.0];
 const COMPRESSED_C: [f32; 3] = [7.0, 8.0, 9.0];
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let fixture_path = Path::new("tests/fixtures/compat-v0_18.sqlite3");
+    let fixture_path = Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/compat-v0_18.sqlite3"
+    ));
 
     // Remove any existing fixture so we start clean.
     if fixture_path.exists() {

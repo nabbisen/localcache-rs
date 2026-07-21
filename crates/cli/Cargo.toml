@@ -13,7 +13,7 @@ name = "localcache"
 path = "src/main.rs"
 
 [dependencies]
-localcache = { path = "..", features = ["compression", "json"] }
+localcache = { workspace = true, features = ["compression", "json"] }
 clap       = { workspace = true }
 serde_json = { workspace = true }
 

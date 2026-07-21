@@ -66,7 +66,7 @@ sha256 = "39d2434fc670a8c9b8cac39f899247c062ac1e2fdda92a4eb339df8ed5386f49"
 
 [implementations.release-runner]
 path = "scripts/release.py"
-sha256 = "e365e021028aaeba7e1f6a249f0056911e3aa0efe76610ca3a27e5286a4c0b40"
+sha256 = "8ff5a21dc4470d84c152dea4b4d1e4b277409d15e52cf9052373877d8decab93"
 
 [implementations.canonical-producer]
 path = "scripts/canonical-producer.sh"

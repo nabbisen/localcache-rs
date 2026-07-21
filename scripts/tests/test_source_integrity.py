@@ -15,6 +15,51 @@ SPEC.loader.exec_module(SOURCE_INTEGRITY)
 
 
 class SourceIntegrityTests(unittest.TestCase):
+    def test_accepts_virtual_workspace_with_nested_crates(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.write(
+                root / "Cargo.toml",
+                """
+[workspace]
+members = ["crates/library", "crates/cli"]
+""",
+            )
+            self.write(
+                root / "crates/library/Cargo.toml",
+                """
+[package]
+name = "sample"
+version = "0.1.0"
+
+[[bench]]
+name = "throughput"
+""",
+            )
+            self.write(root / "crates/library/src/lib.rs", "")
+            self.write(root / "crates/library/benches/throughput.rs", "")
+            self.write(
+                root / "crates/cli/Cargo.toml",
+                """
+[package]
+name = "sample-cli"
+version = "0.1.0"
+""",
+            )
+            self.write(root / "crates/cli/src/main.rs", "")
+
+            manifests, targets = SOURCE_INTEGRITY.verify(root)
+
+            self.assertEqual(len(manifests), 3)
+            self.assertEqual(
+                {(target.kind, target.name) for target in targets},
+                {
+                    ("lib", "sample"),
+                    ("bench", "throughput"),
+                    ("bin", "sample-cli"),
+                },
+            )
+
     def test_accepts_workspace_with_explicit_targets(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

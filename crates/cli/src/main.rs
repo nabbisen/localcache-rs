@@ -425,7 +425,7 @@ fn cmd_scan(opts: CacheOptions, args: ScanArgs) -> Result<(), LocalFileCacheErro
         return Ok(());
     }
 
-    println!("{:<8}  {}", "STATUS", "PATH");
+    println!("{:<8}  PATH", "STATUS");
     println!("{}", "-".repeat(80));
 
     let mut counts = (0usize, 0usize, 0usize);
@@ -600,7 +600,7 @@ fn cmd_query(opts: CacheOptions, args: QueryArgs) -> Result<(), LocalFileCacheEr
         return Ok(());
     }
 
-    println!("{:<8}  {}", "STATUS", "PATH");
+    println!("{:<8}  PATH", "STATUS");
     println!("{}", "-".repeat(80));
 
     let statuses = engine.check_status_batch(&keys);
@@ -750,7 +750,7 @@ fn cmd_namespaces(opts: CacheOptions) -> Result<(), LocalFileCacheError> {
         return Ok(());
     }
 
-    println!("{:<30}  {}", "NAMESPACE", "ENTRIES");
+    println!("{:<30}  ENTRIES", "NAMESPACE");
     println!("{}", "-".repeat(50));
     for ns in &namespaces {
         let count = CacheEngine::<Vec<u8>>::open(CacheOptions {

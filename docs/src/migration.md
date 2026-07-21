@@ -122,6 +122,16 @@ metadata, missing-payload relationships, payload BLOBs, and the
 AUTOINCREMENT high-water mark are preserved. Payloads are copied as raw bytes;
 the migration does not need to decode them.
 
+Plan capacity and downtime before upgrading a large cache. Preservation checks
+copy every payload BLOB into a temporary snapshot, and a v1 upgrade also holds
+the original and shadow tables until equivalence is proven. Peak storage can
+therefore approach three times the payload data, plus SQLite journal or WAL
+space. SQLite may place the temporary snapshot on a different filesystem, so
+check free space for both the database and the system temporary directory. The
+full comparison runs inside an `IMMEDIATE` transaction and blocks other writers
+until it commits; schedule multi-gigabyte upgrades in a maintenance window and
+retain a normal backup.
+
 localcache 0.1.0 did not set `PRAGMA user_version`, so its real databases
 report version 0. Initialization distinguishes that exact historical schema
 from a truly empty database by read-only schema inspection. A non-empty
@@ -200,8 +210,9 @@ tooling, and backed by updated compatibility tests.
 
 ### How the guarantee is enforced
 
-`tests/compat.rs` opens the committed golden fixture
-(`tests/fixtures/compat-v0_18.sqlite3`, written by v0.18.0) on every CI run
+`crates/localcache/tests/compat.rs` opens the committed golden fixture
+(`crates/localcache/tests/fixtures/compat-v0_18.sqlite3`, written by v0.18.0)
+on every CI run
 and asserts that all payloads decode to their expected bit-exact values.  A
 change to the encoding path that breaks this test is caught before it reaches
 any user database.

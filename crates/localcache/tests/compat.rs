@@ -35,7 +35,10 @@ use localcache::{CacheEngine, JournalMode};
 /// We copy rather than opening in-place so no accidental side files are
 /// created next to the committed .sqlite3.
 fn copy_fixture(dir: &TempDir) -> std::path::PathBuf {
-    let src = Path::new("tests/fixtures/compat-v0_18.sqlite3");
+    let src = Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/compat-v0_18.sqlite3"
+    ));
     let dst = dir.path().join("compat.sqlite3");
     fs::copy(src, &dst).expect("fixture file missing — regenerate with gen_compat_fixture");
     dst

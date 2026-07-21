@@ -76,6 +76,23 @@ class ReleaseRunnerTests(unittest.TestCase):
         self.assertIn("--locked", commands["benchmark-compile"])
         self.assertEqual(commands["mdbook"], ["mdbook", "build", "docs"])
 
+    def test_workspace_version_rejects_stale_cli_dependency(self) -> None:
+        document = {
+            "packages": [
+                {"name": "localcache", "version": "1.2.3", "dependencies": []},
+                {
+                    "name": "localcache-cli",
+                    "version": "1.2.3",
+                    "dependencies": [{"name": "localcache", "req": "^1.2.2"}],
+                },
+            ]
+        }
+        with self.assertRaisesRegex(RUNNER.ReleaseError, "does not match"):
+            RUNNER.workspace_version(document)
+
+        document["packages"][1]["dependencies"][0]["req"] = "^1.2.3"
+        self.assertEqual(RUNNER.workspace_version(document), "1.2.3")
+
     def test_failed_gate_is_logged_and_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

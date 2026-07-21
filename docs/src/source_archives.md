@@ -37,9 +37,10 @@ noncanonical and cannot become a release candidate.
 The runner only constructs and verifies a review candidate. It does not tag,
 push, publish crates, or create a hosted release.
 
-The bootstrap source-integrity check covers manifest-declared targets plus the
-conventional `src/lib.rs`, `src/main.rs`, and `build.rs` roots. In source
-context those target files must also be Git-tracked. Auto-discovered nested
-targets are left to Cargo metadata and compilation; archive completeness is
-instead enforced by comparing every structured archive member with the full
-committed Git export manifest.
+The bootstrap source-integrity check discovers the virtual workspace members
+under `crates/` and covers their manifest-declared targets plus conventional
+`src/lib.rs`, `src/main.rs`, and `build.rs` roots. In source context those
+target files must also be Git-tracked. Auto-discovered nested targets are left
+to Cargo metadata and compilation; archive completeness is instead enforced by
+comparing every structured archive member with the full committed Git export
+manifest.

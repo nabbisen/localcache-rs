@@ -26,6 +26,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
+- The repository now uses a virtual Cargo workspace with the `localcache` and
+  `localcache-cli` packages under `crates/localcache` and `crates/cli`.
 - Project source archives now place project files directly at the archive
   root. Create a new empty destination before extraction; the former
   `localcache-vX.Y.Z/` member prefix is no longer used.

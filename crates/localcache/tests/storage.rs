@@ -891,7 +891,10 @@ mod mtime_ns_regression {
         // Open the committed v4 golden fixture (compat-v0_18.sqlite3).
         // initialize() runs migrate_v4_to_v5 (mtime × 1e9) automatically.
         let dir = TempDir::new().unwrap();
-        let fixture_src = std::path::Path::new("tests/fixtures/compat-v0_18.sqlite3");
+        let fixture_src = std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/compat-v0_18.sqlite3"
+        ));
         let db = dir.path().join("migrated.sqlite3");
         fs::copy(fixture_src, &db).unwrap();
 

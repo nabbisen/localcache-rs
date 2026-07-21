@@ -9,7 +9,8 @@ on GitHub.
 - `ReadPool<T>` — N-slot concurrent read-only connection pool (`Clone+Send+Sync`),
   `build_read_pool(size)` builder method
 - `Codec::Bincode` wire-format stability guarantee: documented in API + committed
-  golden fixture (`tests/fixtures/compat-v0_18.sqlite3`) decoded on every CI run
+  golden fixture (`crates/localcache/tests/fixtures/compat-v0_18.sqlite3`)
+  decoded on every CI run
 - Path-semantics contract documented: canonicalization, deleted-file fallback,
   `cleanup_missing_files` Windows behaviour
 - Release tarballs now use `localcache-vX.Y.Z/(files)` structure

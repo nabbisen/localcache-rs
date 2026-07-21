@@ -26,10 +26,11 @@ LAYOUT = "archive-root"
 REQUIRED_PATHS = (
     "Cargo.toml",
     "Cargo.lock",
-    "src/lib.rs",
-    "cli/Cargo.toml",
-    "cli/src/main.rs",
-    "benches/cache_bench.rs",
+    "crates/localcache/Cargo.toml",
+    "crates/localcache/src/lib.rs",
+    "crates/localcache/benches/cache_bench.rs",
+    "crates/cli/Cargo.toml",
+    "crates/cli/src/main.rs",
     "docs/book.toml",
     "docs/src/SUMMARY.md",
     "rfcs/README.md",
@@ -317,19 +318,43 @@ def cargo_metadata(
     )
     try:
         document = json.loads(output)
+    except json.JSONDecodeError as error:
+        raise ReleaseError("Cargo metadata was not valid JSON") from error
+    return workspace_version(document), document
+
+
+def workspace_version(document: dict[str, object]) -> str:
+    try:
         packages = document["packages"]
         versions = {
             package["name"]: package["version"]
             for package in packages
             if package["name"] in {"localcache", "localcache-cli"}
         }
-    except (KeyError, TypeError, json.JSONDecodeError) as error:
+    except (KeyError, TypeError) as error:
         raise ReleaseError("Cargo metadata did not contain expected packages") from error
     if set(versions) != {"localcache", "localcache-cli"}:
         raise ReleaseError("Cargo metadata is missing a workspace package")
     if len(set(versions.values())) != 1:
         raise ReleaseError(f"workspace package versions differ: {versions}")
-    return versions["localcache"], document
+    version = versions["localcache"]
+    try:
+        cli = next(package for package in packages if package["name"] == "localcache-cli")
+        dependency = next(
+            dependency
+            for dependency in cli["dependencies"]
+            if dependency["name"] == "localcache"
+        )
+        requirement = dependency["req"]
+    except (KeyError, StopIteration, TypeError) as error:
+        raise ReleaseError("CLI metadata is missing its localcache dependency") from error
+    expected_requirement = f"^{version}"
+    if requirement != expected_requirement:
+        raise ReleaseError(
+            "CLI localcache dependency does not match the workspace version: "
+            f"expected {expected_requirement!r}, observed {requirement!r}"
+        )
+    return version
 
 
 def verify_required_layout(root: Path) -> None:
