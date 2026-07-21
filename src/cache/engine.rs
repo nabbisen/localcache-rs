@@ -142,6 +142,7 @@ where
 
         if is_memory || !read_only {
             if !is_memory {
+                schema::preflight_before_runtime_config(&conn)?;
                 conn.execute_batch(&format!(
                     "PRAGMA journal_mode = {}; PRAGMA synchronous = {};",
                     options.journal_mode.as_str(),

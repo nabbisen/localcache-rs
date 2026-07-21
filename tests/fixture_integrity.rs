@@ -7,7 +7,7 @@ use rusqlite::Connection;
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
-use localcache::{CacheEngine, JournalMode};
+use localcache::{CacheEngine, JournalMode, SynchronousMode};
 
 const V0_1_PATH: &str = "tests/fixtures/compat-v0_1.sqlite3";
 const V0_1_SHA256: &str = "bd0bb9ffb9e07abafebde2c8a492618bf23ba8cf0e8c29cd8a9a76a4f5153aac";
@@ -113,6 +113,7 @@ fn released_v4_user_index_fixture_has_exact_digest_and_shape() {
 #[derive(Debug, PartialEq)]
 struct V0_1Snapshot {
     version: i64,
+    journal_mode: String,
     schema: Vec<(String, String, String, Option<String>)>,
     files: Vec<(i64, String, i64, i64, Option<String>, i64)>,
     payloads: Vec<(i64, Vec<u8>)>,
@@ -177,6 +178,9 @@ fn v0_1_snapshot(path: &Path) -> V0_1Snapshot {
         version: conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap(),
+        journal_mode: conn
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .unwrap(),
         schema,
         files,
         payloads,
@@ -187,22 +191,89 @@ fn v0_1_snapshot(path: &Path) -> V0_1Snapshot {
 #[test]
 fn public_open_refuses_v0_1_before_destructive_migration_and_preserves_state() {
     assert_sha256(V0_1_PATH, V0_1_SHA256);
+    for journal_mode in [JournalMode::Wal, JournalMode::Delete, JournalMode::Memory] {
+        for synchronous in [
+            SynchronousMode::Off,
+            SynchronousMode::Normal,
+            SynchronousMode::Full,
+            SynchronousMode::Extra,
+        ] {
+            let directory = TempDir::new().unwrap();
+            let copied = directory.path().join("compat-v0_1.sqlite3");
+            fs::copy(V0_1_PATH, &copied).unwrap();
+            let before = v0_1_snapshot(&copied);
+
+            let error = match CacheEngine::<Vec<f32>>::builder()
+                .database(&copied)
+                .journal_mode(journal_mode)
+                .synchronous(synchronous)
+                .build()
+            {
+                Ok(_) => panic!("historical v0.1 database unexpectedly entered legacy migration"),
+                Err(error) => error,
+            };
+
+            let message = error.to_string();
+            assert!(message.contains("recognized historical unversioned v0.1 database"));
+            assert!(message.contains("database was not modified"));
+            assert_eq!(
+                v0_1_snapshot(&copied),
+                before,
+                "state changed for {journal_mode:?}/{synchronous:?}"
+            );
+            assert!(!directory.path().join("compat-v0_1.sqlite3-wal").exists());
+            assert!(!directory.path().join("compat-v0_1.sqlite3-shm").exists());
+        }
+    }
+}
+
+#[test]
+fn released_public_mixed_case_user_index_reopens_successfully() {
     let directory = TempDir::new().unwrap();
-    let copied = directory.path().join("compat-v0_1.sqlite3");
-    fs::copy(V0_1_PATH, &copied).unwrap();
-    let before = v0_1_snapshot(&copied);
-
-    let error = match CacheEngine::<Vec<f32>>::builder()
-        .database(&copied)
-        .journal_mode(JournalMode::Delete)
+    let database = directory.path().join("mixed-case-index.sqlite3");
+    let engine = CacheEngine::<Vec<f32>>::builder()
+        .database(&database)
         .build()
-    {
-        Ok(_) => panic!("historical v0.1 database unexpectedly entered legacy migration"),
-        Err(error) => error,
-    };
+        .unwrap();
+    for suffix in ["MixedCase_9", "dollar$sign", "éclair"] {
+        assert_eq!(
+            engine.create_path_index(suffix).unwrap(),
+            format!("lc_user_{suffix}")
+        );
+    }
+    drop(engine);
 
-    let message = error.to_string();
-    assert!(message.contains("recognized historical unversioned v0.1 database"));
-    assert!(message.contains("database was not modified"));
-    assert_eq!(v0_1_snapshot(&copied), before);
+    let reopened = CacheEngine::<Vec<f32>>::builder()
+        .database(&database)
+        .build();
+    assert!(
+        reopened.is_ok(),
+        "valid released mixed-case index was rejected"
+    );
+    drop(reopened);
+
+    let conn = Connection::open_with_flags(
+        &database,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .unwrap();
+    let indexes = conn
+        .prepare(
+            "SELECT name FROM sqlite_schema
+             WHERE type = 'index' AND name LIKE 'lc_user_%'
+             ORDER BY name",
+        )
+        .unwrap()
+        .query_map([], |row| row.get::<_, String>(0))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(
+        indexes,
+        [
+            "lc_user_MixedCase_9",
+            "lc_user_dollar$sign",
+            "lc_user_éclair"
+        ]
+    );
 }

@@ -11,7 +11,7 @@ const CURRENT_VERSION: i64 = 5;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SchemaState {
     Fresh,
-    Version(u8),
+    Version { version: u8, files_high_water: i64 },
 }
 
 #[derive(Debug)]
@@ -78,8 +78,11 @@ pub(super) fn classify(
     } else {
         physical_version as u8
     };
-    validate_version(conn, physical_version, effective_version, &objects)?;
-    Ok(SchemaState::Version(effective_version))
+    let files_high_water = validate_version(conn, physical_version, effective_version, &objects)?;
+    Ok(SchemaState::Version {
+        version: effective_version,
+        files_high_water,
+    })
 }
 
 fn validate_version(
@@ -87,15 +90,15 @@ fn validate_version(
     physical_version: i64,
     version: u8,
     objects: &[SchemaObject],
-) -> Result<(), LocalFileCacheError> {
+) -> Result<i64, LocalFileCacheError> {
     validate_object_policy(physical_version, version, objects)?;
     validate_table(conn, physical_version, "files", version, objects)?;
     validate_table(conn, physical_version, "payloads", version, objects)?;
     validate_foreign_key(conn, physical_version)?;
-    validate_indexes(conn, physical_version, version, objects)?;
-    validate_sequence(conn, physical_version)?;
+    validate_indexes(conn, physical_version, version)?;
+    let files_high_water = validate_sequence(conn, physical_version)?;
     validate_foreign_key_integrity(conn, physical_version)?;
-    Ok(())
+    Ok(files_high_water)
 }
 
 fn application_objects(conn: &Connection) -> Result<Vec<SchemaObject>, LocalFileCacheError> {
@@ -318,6 +321,12 @@ fn validate_table_ddl(
             ));
         }
     }
+    if contains_word_sequence(&words, &["on", "conflict"]) {
+        return Err(unrecognized(
+            physical_version,
+            "non-released constraint conflict policy",
+        ));
+    }
 
     let count = |word: &str| words.iter().filter(|candidate| **candidate == word).count();
     let id_contract = if table_name == "files" {
@@ -484,7 +493,6 @@ fn validate_indexes(
     conn: &Connection,
     physical_version: i64,
     version: u8,
-    objects: &[SchemaObject],
 ) -> Result<(), LocalFileCacheError> {
     let mut statement = conn.prepare(
         "SELECT name, \"unique\", origin, partial
@@ -540,7 +548,6 @@ fn validate_indexes(
             }
             validate_index_terms(&xinfo, expected)
                 .map_err(|reason| unrecognized(physical_version, reason))?;
-            validate_index_ddl(index, objects, expected, physical_version)?;
             seen_builtins.insert(index.name.as_str());
         } else if version >= 4 && index.name.starts_with("lc_user_") {
             if index.unique || index.partial || index.origin != "c" {
@@ -552,7 +559,6 @@ fn validate_indexes(
             let expected = &["namespace", "path"];
             validate_index_terms(&xinfo, expected)
                 .map_err(|reason| unrecognized(physical_version, reason))?;
-            validate_index_ddl(index, objects, expected, physical_version)?;
         } else {
             return Err(unrecognized(physical_version, "unexpected index"));
         }
@@ -624,34 +630,7 @@ fn validate_index_terms(rows: &[IndexXinfoRow], expected: &[&str]) -> Result<(),
     Ok(())
 }
 
-fn validate_index_ddl(
-    index: &IndexListRow,
-    objects: &[SchemaObject],
-    expected_columns: &[&str],
-    physical_version: i64,
-) -> Result<(), LocalFileCacheError> {
-    let sql = objects
-        .iter()
-        .find(|object| object.object_type == "index" && object.name == index.name)
-        .and_then(|object| object.sql.as_deref())
-        .ok_or_else(|| unrecognized(physical_version, "missing index DDL"))?;
-    let tokens = tokenize(sql).map_err(|reason| unrecognized(physical_version, reason))?;
-    let words: Vec<&str> = tokens
-        .iter()
-        .filter_map(|token| match token {
-            DdlToken::Word(word) => Some(word.as_str()),
-            _ => None,
-        })
-        .collect();
-    let mut expected = vec!["create", "index", index.name.as_str(), "on", "files"];
-    expected.extend_from_slice(expected_columns);
-    if words != expected {
-        return Err(unrecognized(physical_version, "index DDL mismatch"));
-    }
-    Ok(())
-}
-
-fn validate_sequence(conn: &Connection, physical_version: i64) -> Result<(), LocalFileCacheError> {
+fn validate_sequence(conn: &Connection, physical_version: i64) -> Result<i64, LocalFileCacheError> {
     let mut statement = conn.prepare("SELECT name, seq, typeof(seq) FROM sqlite_sequence")?;
     let rows = statement
         .query_map([], |row| {
@@ -675,14 +654,11 @@ fn validate_sequence(conn: &Connection, physical_version: i64) -> Result<(), Loc
         |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
     match rows.as_slice() {
-        [] if live_count == 0 => Ok(()),
+        [] if live_count == 0 => Ok(0),
         [(name, Value::Integer(sequence), kind)]
-            if name == "files"
-                && kind == "integer"
-                && *sequence >= 0
-                && max_positive.is_none_or(|maximum| *sequence >= maximum) =>
+            if name == "files" && kind == "integer" && *sequence >= 0 =>
         {
-            Ok(())
+            Ok(max_positive.map_or(*sequence, |maximum| maximum.max(*sequence)))
         }
         _ => Err(unrecognized(
             physical_version,
@@ -713,9 +689,29 @@ fn unrecognized(physical_version: i64, reason: &str) -> LocalFileCacheError {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::{fs, path::Path};
+
+    use sha2::{Digest, Sha256};
 
     use super::*;
+
+    const V1_SCHEMA: &str = "
+        CREATE TABLE files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            path TEXT NOT NULL UNIQUE,
+            mtime INTEGER NOT NULL,
+            file_size INTEGER NOT NULL,
+            hash TEXT,
+            updated_at INTEGER NOT NULL
+        );
+        CREATE TABLE payloads (
+            file_id INTEGER PRIMARY KEY,
+            content BLOB NOT NULL,
+            FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
+        );
+        CREATE INDEX idx_files_path ON files(path);
+        PRAGMA user_version = 1;
+    ";
 
     const V5_SCHEMA: &str = "
         CREATE TABLE files (
@@ -745,6 +741,18 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(V5_SCHEMA).unwrap();
         conn
+    }
+
+    fn version_state(version: u8, files_high_water: i64) -> SchemaState {
+        SchemaState::Version {
+            version,
+            files_high_water,
+        }
+    }
+
+    fn assert_fixture_sha256(path: &str, expected: &str) {
+        let bytes = fs::read(path).unwrap();
+        assert_eq!(format!("{:x}", Sha256::digest(bytes)), expected);
     }
 
     fn assert_rejected_unchanged(sql: &str) {
@@ -780,7 +788,7 @@ mod tests {
     fn fresh_and_exact_v5_classify() {
         let fresh = Connection::open_in_memory().unwrap();
         assert_eq!(classify(&fresh, 0).unwrap(), SchemaState::Fresh);
-        assert_eq!(classify(&v5(), 5).unwrap(), SchemaState::Version(5));
+        assert_eq!(classify(&v5(), 5).unwrap(), version_state(5, 0));
     }
 
     #[test]
@@ -860,21 +868,25 @@ mod tests {
         let conn = v5();
         conn.execute_batch("CREATE INDEX lc_user_test ON files(namespace, path);")
             .unwrap();
-        assert_eq!(classify(&conn, 5).unwrap(), SchemaState::Version(5));
+        assert_eq!(classify(&conn, 5).unwrap(), version_state(5, 0));
     }
 
     #[test]
     fn exact_historical_fixtures_classify_without_writes() {
+        assert_fixture_sha256(
+            "tests/fixtures/compat-v0_1.sqlite3",
+            "bd0bb9ffb9e07abafebde2c8a492618bf23ba8cf0e8c29cd8a9a76a4f5153aac",
+        );
+        assert_fixture_sha256(
+            "tests/fixtures/compat-v0_19-user-index.sqlite3",
+            "585ea037ad94ef77696b3bb3c6d13d9778975057e2bdd7bdc5b01b299cfc86df",
+        );
         for (path, version, expected) in [
-            (
-                "tests/fixtures/compat-v0_1.sqlite3",
-                0,
-                SchemaState::Version(1),
-            ),
+            ("tests/fixtures/compat-v0_1.sqlite3", 0, version_state(1, 3)),
             (
                 "tests/fixtures/compat-v0_19-user-index.sqlite3",
                 4,
-                SchemaState::Version(4),
+                version_state(4, 1),
             ),
         ] {
             let conn = Connection::open_with_flags(
@@ -886,6 +898,30 @@ mod tests {
             assert_eq!(classify(&conn, version).unwrap(), expected);
             assert_eq!(conn.total_changes(), before_changes);
         }
+    }
+
+    #[test]
+    fn explicit_v1_without_payload_carries_sequence_above_live_id() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(V1_SCHEMA).unwrap();
+        conn.execute(
+            "INSERT INTO files (id, path, mtime, file_size, updated_at)
+             VALUES (3, 'without-payload', 0, 0, 0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE sqlite_sequence SET seq = 17 WHERE name = 'files'",
+            [],
+        )
+        .unwrap();
+        assert_eq!(classify(&conn, 1).unwrap(), version_state(1, 17));
+        assert_eq!(
+            conn.query_row("SELECT count(*) FROM payloads", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
     }
 
     #[test]
@@ -980,6 +1016,27 @@ mod tests {
                 "last_accessed_at INTEGER NOT NULL DEFAULT 0,\n            generated INTEGER GENERATED ALWAYS AS (mtime) VIRTUAL,",
             ),
             V5_SCHEMA.replace("UNIQUE(namespace, path)", "UNIQUE(path, namespace)"),
+            V5_SCHEMA.replace(
+                "UNIQUE(namespace, path)",
+                "UNIQUE(namespace, path) ON CONFLICT IGNORE",
+            ),
+            V5_SCHEMA.replace(
+                "UNIQUE(namespace, path)",
+                "UNIQUE(namespace, path) ON CONFLICT REPLACE",
+            ),
+            V5_SCHEMA.replace(
+                "id INTEGER PRIMARY KEY AUTOINCREMENT",
+                "id INTEGER PRIMARY KEY ON CONFLICT FAIL AUTOINCREMENT",
+            ),
+            V5_SCHEMA.replace(
+                "path TEXT NOT NULL,",
+                "path TEXT NOT NULL ON CONFLICT IGNORE,",
+            ),
+            V5_SCHEMA.replace(
+                "id INTEGER PRIMARY KEY AUTOINCREMENT",
+                "id INTEGER UNIQUE",
+            ),
+            V5_SCHEMA.replace("hash TEXT,", "hash TEXT CHECK(hash IS NULL),"),
             V5_SCHEMA.replace("ON DELETE CASCADE", "ON DELETE RESTRICT"),
             V5_SCHEMA.replace(
                 "path TEXT NOT NULL,",
@@ -1030,6 +1087,107 @@ mod tests {
             ))
             .unwrap();
             assert!(classify(&conn, 5).is_err(), "accepted {replacement}");
+        }
+    }
+
+    #[test]
+    fn sequence_effective_high_water_matrix_matches_rfc() {
+        let empty = v5();
+        assert_eq!(classify(&empty, 5).unwrap(), version_state(5, 0));
+
+        let absent_nonempty = v5();
+        absent_nonempty
+            .execute(
+                "INSERT INTO files (id, path, mtime, file_size, updated_at)
+                 VALUES (7, 'p', 0, 0, 0)",
+                [],
+            )
+            .unwrap();
+        absent_nonempty
+            .execute("DELETE FROM sqlite_sequence WHERE name = 'files'", [])
+            .unwrap();
+        assert!(classify(&absent_nonempty, 5).is_err());
+
+        let duplicate = v5();
+        duplicate
+            .execute(
+                "INSERT INTO files (path, mtime, file_size, updated_at)
+                 VALUES ('p', 0, 0, 0)",
+                [],
+            )
+            .unwrap();
+        duplicate
+            .execute(
+                "INSERT INTO sqlite_sequence (name, seq) VALUES ('files', 2)",
+                [],
+            )
+            .unwrap();
+        assert!(classify(&duplicate, 5).is_err());
+
+        let below_live = v5();
+        below_live
+            .execute(
+                "INSERT INTO files (id, path, mtime, file_size, updated_at)
+                 VALUES (7, 'p', 0, 0, 0)",
+                [],
+            )
+            .unwrap();
+        below_live
+            .execute(
+                "UPDATE sqlite_sequence SET seq = 3 WHERE name = 'files'",
+                [],
+            )
+            .unwrap();
+        assert_eq!(classify(&below_live, 5).unwrap(), version_state(5, 7));
+
+        let above_live = v5();
+        above_live
+            .execute(
+                "INSERT INTO files (id, path, mtime, file_size, updated_at)
+                 VALUES (7, 'p', 0, 0, 0)",
+                [],
+            )
+            .unwrap();
+        above_live
+            .execute(
+                "UPDATE sqlite_sequence SET seq = 11 WHERE name = 'files'",
+                [],
+            )
+            .unwrap();
+        assert_eq!(classify(&above_live, 5).unwrap(), version_state(5, 11));
+
+        let maximum = v5();
+        maximum
+            .execute(
+                "INSERT INTO files (id, path, mtime, file_size, updated_at)
+                 VALUES (?1, 'p', 0, 0, 0)",
+                [i64::MAX],
+            )
+            .unwrap();
+        assert_eq!(classify(&maximum, 5).unwrap(), version_state(5, i64::MAX));
+    }
+
+    #[test]
+    fn unsupported_versions_and_each_version_zero_object_kind_fail_unchanged() {
+        let conn = v5();
+        for version in [-1, 6, i64::MAX] {
+            let error = classify(&conn, version).unwrap_err().to_string();
+            assert!(error.contains("database was not modified"), "{error}");
+        }
+
+        for sql in [
+            "CREATE TABLE unrelated (id INTEGER)",
+            "CREATE TABLE unrelated (id INTEGER); CREATE INDEX unrelated_idx ON unrelated(id)",
+            "CREATE VIEW unrelated AS SELECT 1",
+            "CREATE TABLE unrelated (id INTEGER); \
+             CREATE TRIGGER unrelated_trigger AFTER INSERT ON unrelated BEGIN SELECT 1; END",
+        ] {
+            let candidate = Connection::open_in_memory().unwrap();
+            candidate.execute_batch(sql).unwrap();
+            let before_changes = candidate.total_changes();
+            let error = classify(&candidate, 0).unwrap_err().to_string();
+            assert!(error.contains("database was not modified"), "{error}");
+            assert_eq!(candidate.total_changes(), before_changes);
         }
     }
 

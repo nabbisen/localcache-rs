@@ -19,6 +19,16 @@ use classifier::SchemaState;
 
 const CURRENT_VERSION: u32 = 5;
 
+/// Reject unrecognized or temporarily guarded schemas before caller runtime
+/// PRAGMAs can persistently reconfigure the database.
+pub(crate) fn preflight_before_runtime_config(
+    conn: &Connection,
+) -> Result<(), LocalFileCacheError> {
+    let physical_version = classifier::read_user_version(conn)?;
+    let state = classifier::classify(conn, physical_version)?;
+    reject_temporarily_guarded_historical(physical_version, state)
+}
+
 /// Apply the current schema to `conn`, running any necessary migrations.
 pub(crate) fn initialize(conn: &Connection) -> Result<(), LocalFileCacheError> {
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
@@ -34,33 +44,27 @@ pub(crate) fn initialize(conn: &Connection) -> Result<(), LocalFileCacheError> {
         return validate_current_read_snapshot(conn);
     }
     let state = classifier::classify(conn, version)?;
+    reject_temporarily_guarded_historical(version, state)?;
     match state {
         SchemaState::Fresh => create_fresh(conn)?,
-        SchemaState::Version(1) if version == 0 => {
-            return Err(LocalFileCacheError::UnsupportedFeature(
-                "recognized historical unversioned v0.1 database requires the transactional \
-                 migration path; migration is temporarily unavailable and database was not modified"
-                    .into(),
-            ));
-        }
-        SchemaState::Version(1) => {
+        SchemaState::Version { version: 1, .. } => {
             migrate_v1_to_v2(conn)?;
             migrate_v2_to_v3(conn)?;
             migrate_v3_to_v4(conn)?;
             migrate_v4_to_v5(conn)?;
         }
-        SchemaState::Version(2) => {
+        SchemaState::Version { version: 2, .. } => {
             migrate_v2_to_v3(conn)?;
             migrate_v3_to_v4(conn)?;
             migrate_v4_to_v5(conn)?;
         }
-        SchemaState::Version(3) => {
+        SchemaState::Version { version: 3, .. } => {
             migrate_v3_to_v4(conn)?;
             migrate_v4_to_v5(conn)?;
         }
-        SchemaState::Version(4) => migrate_v4_to_v5(conn)?,
-        SchemaState::Version(5) => validate_current_read_snapshot(conn)?,
-        SchemaState::Version(_) => unreachable!("classifier returned unsupported version"),
+        SchemaState::Version { version: 4, .. } => migrate_v4_to_v5(conn)?,
+        SchemaState::Version { version: 5, .. } => validate_current_read_snapshot(conn)?,
+        SchemaState::Version { .. } => unreachable!("classifier returned unsupported version"),
     }
     Ok(())
 }
@@ -69,13 +73,27 @@ fn validate_current_read_snapshot(conn: &Connection) -> Result<(), LocalFileCach
     let transaction = conn.unchecked_transaction()?;
     let version = classifier::read_user_version(&transaction)?;
     match classifier::classify(&transaction, version)? {
-        SchemaState::Version(5) => transaction.commit()?,
+        SchemaState::Version { version: 5, .. } => transaction.commit()?,
         _ => {
             return Err(LocalFileCacheError::UnsupportedFeature(
                 "database changed while current schema was being validated; database was not modified"
                     .into(),
             ));
         }
+    }
+    Ok(())
+}
+
+fn reject_temporarily_guarded_historical(
+    physical_version: i64,
+    state: SchemaState,
+) -> Result<(), LocalFileCacheError> {
+    if physical_version == 0 && matches!(state, SchemaState::Version { version: 1, .. }) {
+        return Err(LocalFileCacheError::UnsupportedFeature(
+            "recognized historical unversioned v0.1 database requires the transactional \
+             migration path; migration is temporarily unavailable and database was not modified"
+                .into(),
+        ));
     }
     Ok(())
 }
