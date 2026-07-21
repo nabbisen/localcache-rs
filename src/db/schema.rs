@@ -13,49 +13,73 @@ use rusqlite::Connection;
 
 use crate::error::LocalFileCacheError;
 
+mod classifier;
+
+use classifier::SchemaState;
+
 const CURRENT_VERSION: u32 = 5;
 
 /// Apply the current schema to `conn`, running any necessary migrations.
 pub(crate) fn initialize(conn: &Connection) -> Result<(), LocalFileCacheError> {
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
-    let version = user_version(conn)?;
-    match version {
-        0 => create_fresh(conn)?,
-        1 => {
+    let foreign_keys: i64 = conn.query_row("PRAGMA foreign_keys", [], |row| row.get(0))?;
+    if foreign_keys != 1 {
+        return Err(LocalFileCacheError::UnsupportedFeature(
+            "SQLite foreign-key enforcement could not be enabled".into(),
+        ));
+    }
+
+    let version = classifier::read_user_version(conn)?;
+    if version == i64::from(CURRENT_VERSION) {
+        return validate_current_read_snapshot(conn);
+    }
+    let state = classifier::classify(conn, version)?;
+    match state {
+        SchemaState::Fresh => create_fresh(conn)?,
+        SchemaState::Version(1) => {
             migrate_v1_to_v2(conn)?;
             migrate_v2_to_v3(conn)?;
             migrate_v3_to_v4(conn)?;
             migrate_v4_to_v5(conn)?;
         }
-        2 => {
+        SchemaState::Version(2) => {
             migrate_v2_to_v3(conn)?;
             migrate_v3_to_v4(conn)?;
             migrate_v4_to_v5(conn)?;
         }
-        3 => {
+        SchemaState::Version(3) => {
             migrate_v3_to_v4(conn)?;
             migrate_v4_to_v5(conn)?;
         }
-        4 => migrate_v4_to_v5(conn)?,
-        CURRENT_VERSION => {}
-        v => {
-            return Err(LocalFileCacheError::UnsupportedFeature(format!(
-                "database schema version {v} is newer than this build supports \
-                 (max {CURRENT_VERSION})"
-            )));
+        SchemaState::Version(4) => migrate_v4_to_v5(conn)?,
+        SchemaState::Version(5) => validate_current_read_snapshot(conn)?,
+        SchemaState::Version(_) => unreachable!("classifier returned unsupported version"),
+    }
+    Ok(())
+}
+
+fn validate_current_read_snapshot(conn: &Connection) -> Result<(), LocalFileCacheError> {
+    let transaction = conn.unchecked_transaction()?;
+    let version = classifier::read_user_version(&transaction)?;
+    match classifier::classify(&transaction, version)? {
+        SchemaState::Version(5) => transaction.commit()?,
+        _ => {
+            return Err(LocalFileCacheError::UnsupportedFeature(
+                "database changed while current schema was being validated; database was not modified"
+                    .into(),
+            ));
         }
     }
     Ok(())
 }
 
+// Slice 2 replaces these legacy migration helpers with one typed Immediate
+// transaction. At the Slice 1 boundary, the classifier prevents malformed or
+// unrelated schemas from reaching their existing behavior.
+
 pub(crate) fn enable_foreign_keys(conn: &Connection) -> Result<(), LocalFileCacheError> {
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     Ok(())
-}
-
-fn user_version(conn: &Connection) -> Result<u32, LocalFileCacheError> {
-    let v: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-    Ok(v as u32)
 }
 
 fn set_user_version(conn: &Connection, v: u32) -> Result<(), LocalFileCacheError> {

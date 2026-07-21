@@ -478,6 +478,7 @@ fn migrates_v2_database_to_v3() {
                 content BLOB NOT NULL,
                 FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
             );
+            CREATE INDEX idx_files_namespace_path ON files(namespace, path);
             INSERT INTO files (namespace, path, mtime, file_size, updated_at)
             VALUES ('default', '/v2/legacy.txt', 1000, 10, 1000);
             ",

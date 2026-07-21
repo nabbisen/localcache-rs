@@ -924,6 +924,7 @@ fn migrates_v3_database_to_v4() {
                 encoding TEXT NOT NULL DEFAULT 'raw',
                 FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
             );
+            CREATE INDEX idx_files_namespace_path ON files(namespace, path);
             INSERT INTO files (namespace, path, mtime, file_size, updated_at)
             VALUES ('default', '/v3/legacy.txt', 1000, 10, 1000);
             ",

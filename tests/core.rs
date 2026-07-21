@@ -421,6 +421,7 @@ fn migrates_v1_database() {
                 content BLOB NOT NULL,
                 FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
             );
+            CREATE INDEX idx_files_path ON files(path);
             INSERT INTO files (path, mtime, file_size, updated_at)
             VALUES ('/legacy/file.txt', 1000, 42, 1000);
             ",
