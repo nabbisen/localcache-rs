@@ -37,13 +37,18 @@ the 2026-07-17 independent architecture review before new feature work resumes.
 | Milestone | Target | Outcome |
 |---|---|---|
 | M0 | Jul 17–22 | Roadmap approved and detailed RFC queue reviewed |
-| M1 | Jul 23–27 | Current source and extracted release archive are buildable |
+| M1 ✅ | Jul 23–27 | Current source and extracted release archive are buildable |
 | M2 | Jul 28–Aug 5 | Historical migrations preserve payloads and SQLite identifiers are safe |
 | M3 | Aug 6–14 | Read-only boundaries and Unicode/path handling are non-bypassable and non-panicking |
 | M4 | Aug 15–21 | Declared MSRV and dependency-security policy are verified |
 | M5 | Aug 22–28 | Async/watcher failure handling and highest-risk maintainability debt are addressed |
 | M6 | Aug 29–Sep 5 | CI, documentation, release gates, and fresh RC evidence agree |
 | M7 | Sep 8–12 | Independent architecture review and owner release decision |
+
+M1 completed on 2026-07-21 at implementation commit `e54cfe2` after focused
+independent review and correction of its review record. Archive verification in
+CI and the remaining release-control hardening are explicitly deferred to M6;
+M1 completion is not release authorization.
 
 The detailed scope, RFC mapping, dependencies, and exit gates are maintained in
 the repository-root

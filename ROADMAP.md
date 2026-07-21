@@ -114,13 +114,20 @@ has an independent **Go** review.
 | Milestone | Target window | Scope | Exit gate |
 |---|---|---|---|
 | **M0 — Plan and design** | Jul 17–22 | Approve this schedule; resolve archive-layout and canonical-producer authority; adopt a durable Accepted RFC state; draft RFCs 009–015 | Roadmap accepted; RFC review order agreed; owner decisions recorded; no implementation starts without an Accepted RFC |
-| **M1 — Buildable source and archive** | Jul 23–27 | Author or remove the declared benchmark coherently; create source-context and artifact-context runners; make the source archive self-buildable and safely verifiable | Current checkout and extracted archive pass their applicable RFC-defined smoke gates; exact export manifest and malicious archive fixtures pass |
+| **M1 — Buildable source and archive ✅** | Jul 23–27 | Author or remove the declared benchmark coherently; create source-context and artifact-context runners; make the source archive self-buildable and safely verifiable | Current checkout and extracted archive pass their applicable RFC-defined smoke gates; exact export manifest and malicious archive fixtures pass |
 | **M2 — Data integrity and SQL safety** | Jul 28–Aug 5 | Preserve v1 payloads through v1-to-v5 migration; make migrations atomic; constrain and safely handle SQLite identifiers | Historical fixture and rollback tests pass; hostile identifier tests pass; focused security review accepted |
 | **M3 — Mutation boundaries and input safety** | Aug 6–14 | Enforce read-only schema/mutation rules; prevent watcher privilege bypass; make glob/path/CLI handling Unicode-safe and non-panicking; align deleted-path behavior | Negative read-only and Unicode/property tests pass; public behavior matches approved RFCs |
 | **M4 — MSRV and supply-chain recovery** | Aug 15–21 | Select a Rust-1.85-compatible SQLite stack or approve a new MSRV; update vulnerable dependencies; define advisory deny/warn/exception policy | Full declared-MSRV build succeeds; security policy gate is green or has approved, expiring exceptions |
 | **M5 — Async and maintainability hardening** | Aug 22–28 | Remove unnecessary unsafe generic casts; unify runtime panic/poison handling; surface watcher setup failures; perform only risk-reducing module splits | Runtime-backend tests and mutex-panic tests pass; no unexplained unsafe remains; focused review accepted |
 | **M6 — Release controls, docs, and RC** | Aug 29–Sep 5 | Correct CI/Makefile feature matrices; enforce warning policy; reconcile archive rules; refresh docs/RFC final prose; assemble fresh evidence | Stable and MSRV gates, tests, clippy, docs, package/archive smoke, and advisory gate all pass on the RC |
 | **M7 — Independent review and release decision** | Sep 8–12 | Independent architecture re-review of the RC and extracted archive | Every blocker closed; reviewer verdict **Accept** or **Accept with notes**; owner authorizes release |
+
+M1 completed on 2026-07-21 at implementation commit `e54cfe2` after focused
+independent review and correction of its review record. CI archive construction,
+portable noncanonical producer policy, externally attested RC eligibility,
+post-smoke layout re-validation, failure-summary finalization, and direct
+canonical-wrapper execution remain M6 work. M1 completion authorizes no release
+action.
 
 ### RFC design queue
 
