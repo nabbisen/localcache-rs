@@ -867,6 +867,11 @@ and explicit owner authorization on 2026-07-21. Implementation must not be
 delegated until this transition is committed and the implementation/fixture QA
 handoff is created with references to this RFC and both architecture reviews.
 
+Companion implementation documents:
+
+- [implementation handoff](../handoffs/010-transactional-payload-preserving-schema-migrations/implementation-handoff.md);
+- [acceptance and QA checklist](../handoffs/010-transactional-payload-preserving-schema-migrations/acceptance-qa-checklist.md).
+
 Acceptance does not supply fixture, migration, test, M2, or release evidence.
 The RFC moves to `done/` only after the implementation ships under the
 project's lifecycle policy.
