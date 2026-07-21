@@ -69,4 +69,6 @@ The "Background" section is optional in both templates.
 
 ### Proposed
 
-*(none yet)*
+| RFC | Title | Target |
+|-----|-------|--------|
+| [011](./proposed/011-safe-sqlite-identifier-boundary.md) | Safe SQLite Identifier Boundary | Phase 21 M2 |
