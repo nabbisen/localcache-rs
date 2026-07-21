@@ -1,76 +1,119 @@
-//! Database schema initialisation and migration.
-//!
-//! | user_version | Description                                              |
-//! |--------------|----------------------------------------------------------|
-//! | 0            | Empty / pre-migration                                    |
-//! | 1            | v0.1 — no namespace                                      |
-//! | 2            | v0.2 — namespace column                                  |
-//! | 3            | v0.4 — `files.payload_version`, `payloads.encoding`      |
-//! | 4            | v0.6 — `files.last_accessed_at`                          |
-//! | 5            | v0.20 — `files.mtime` precision: seconds → nanoseconds   |
+//! Database schema initialization and RFC 010 migration coordination.
 
-use rusqlite::Connection;
+use rusqlite::{Connection, TransactionBehavior};
 
-use crate::error::LocalFileCacheError;
+use crate::{JournalMode, SynchronousMode, error::LocalFileCacheError};
 
 mod classifier;
+mod configuration;
+mod migration;
 
 use classifier::SchemaState;
+use migration::{MigrationPoint, StartingSnapshot};
 
-const CURRENT_VERSION: u32 = 5;
+const CURRENT_VERSION: i64 = 5;
 
-/// Reject unrecognized or temporarily guarded schemas before caller runtime
-/// PRAGMAs can persistently reconfigure the database.
-pub(crate) fn preflight_before_runtime_config(
-    conn: &Connection,
-) -> Result<(), LocalFileCacheError> {
-    let physical_version = classifier::read_user_version(conn)?;
-    let state = classifier::classify(conn, physical_version)?;
-    reject_temporarily_guarded_historical(physical_version, state)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct InitializationOutcome {
+    pub(crate) schema_migration_committed: bool,
 }
 
-/// Apply the current schema to `conn`, running any necessary migrations.
-pub(crate) fn initialize(conn: &Connection) -> Result<(), LocalFileCacheError> {
-    conn.execute_batch("PRAGMA foreign_keys = ON;")?;
-    let foreign_keys: i64 = conn.query_row("PRAGMA foreign_keys", [], |row| row.get(0))?;
-    if foreign_keys != 1 {
-        return Err(LocalFileCacheError::UnsupportedFeature(
-            "SQLite foreign-key enforcement could not be enabled".into(),
-        ));
+/// Initialize or migrate a writable database.
+///
+/// Existing v5 databases use a consistent read transaction. Fresh databases
+/// and versions 1 through 4 use one typed `Immediate` transaction containing
+/// authoritative classification, all schema work, postconditions, and commit.
+pub(crate) fn initialize(
+    conn: &mut Connection,
+    is_memory: bool,
+) -> Result<InitializationOutcome, LocalFileCacheError> {
+    initialize_with_hook(conn, is_memory, &mut |_| Ok(()))
+}
+
+fn initialize_with_hook(
+    conn: &mut Connection,
+    is_memory: bool,
+    hook: &mut dyn FnMut(MigrationPoint) -> Result<(), LocalFileCacheError>,
+) -> Result<InitializationOutcome, LocalFileCacheError> {
+    enable_foreign_keys(conn)?;
+
+    let preliminary_version = classifier::read_user_version(conn)?;
+    hook(MigrationPoint::AfterPreliminaryVersionRead)?;
+
+    if preliminary_version == CURRENT_VERSION {
+        validate_current_read_snapshot(conn)?;
+        return Ok(InitializationOutcome {
+            schema_migration_committed: false,
+        });
+    }
+    if !(0..CURRENT_VERSION).contains(&preliminary_version) {
+        // Reuse the classifier's stable fail-closed error contract.
+        classifier::classify(conn, preliminary_version)?;
+        unreachable!("unsupported version unexpectedly classified")
     }
 
-    let version = classifier::read_user_version(conn)?;
-    if version == i64::from(CURRENT_VERSION) {
-        return validate_current_read_snapshot(conn);
+    if !is_memory {
+        configuration::prepare_file_migration(conn)?;
     }
-    let state = classifier::classify(conn, version)?;
-    reject_temporarily_guarded_historical(version, state)?;
+
+    let transaction = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let authoritative_version = classifier::read_user_version(&transaction)?;
+    let state = classifier::classify(&transaction, authoritative_version)?;
+    hook(MigrationPoint::AfterAuthoritativeClassification)?;
+
+    if matches!(state, SchemaState::Version { version: 5, .. }) {
+        hook(MigrationPoint::ImmediatelyBeforeCommit)?;
+        transaction.commit()?;
+        return Ok(InitializationOutcome {
+            schema_migration_committed: false,
+        });
+    }
+
+    let mut snapshot = StartingSnapshot::capture(&transaction, state)?;
     match state {
-        SchemaState::Fresh => create_fresh(conn)?,
-        SchemaState::Version { version: 1, .. } => {
-            migrate_v1_to_v2(conn)?;
-            migrate_v2_to_v3(conn)?;
-            migrate_v3_to_v4(conn)?;
-            migrate_v4_to_v5(conn)?;
+        SchemaState::Fresh => migration::create_fresh(&transaction)?,
+        SchemaState::Version {
+            version: 1,
+            files_high_water,
+        } => {
+            migration::migrate_v1_to_v2(&transaction, files_high_water, hook)?;
+            migration::migrate_v2_to_v3(&transaction, hook)?;
+            migration::migrate_v3_to_v4(&transaction, hook)?;
+            migration::migrate_v4_to_v5(&transaction, hook)?;
         }
         SchemaState::Version { version: 2, .. } => {
-            migrate_v2_to_v3(conn)?;
-            migrate_v3_to_v4(conn)?;
-            migrate_v4_to_v5(conn)?;
+            migration::migrate_v2_to_v3(&transaction, hook)?;
+            migration::migrate_v3_to_v4(&transaction, hook)?;
+            migration::migrate_v4_to_v5(&transaction, hook)?;
         }
         SchemaState::Version { version: 3, .. } => {
-            migrate_v3_to_v4(conn)?;
-            migrate_v4_to_v5(conn)?;
+            migration::migrate_v3_to_v4(&transaction, hook)?;
+            migration::migrate_v4_to_v5(&transaction, hook)?;
         }
-        SchemaState::Version { version: 4, .. } => migrate_v4_to_v5(conn)?,
-        SchemaState::Version { version: 5, .. } => validate_current_read_snapshot(conn)?,
-        SchemaState::Version { .. } => unreachable!("classifier returned unsupported version"),
+        SchemaState::Version { version: 4, .. } => {
+            migration::migrate_v4_to_v5(&transaction, hook)?;
+        }
+        SchemaState::Version { .. } => {
+            unreachable!("classifier returned an unsupported migration state")
+        }
     }
-    Ok(())
+
+    transaction.execute_batch("PRAGMA user_version = 5;")?;
+    hook(MigrationPoint::AfterFinalUserVersionWrite)?;
+
+    snapshot.validate_and_remove(&transaction)?;
+    migration::validate_final_postconditions(&transaction)?;
+    hook(MigrationPoint::AfterFinalPostconditions)?;
+    hook(MigrationPoint::ImmediatelyBeforeCommit)?;
+    transaction.commit()?;
+
+    Ok(InitializationOutcome {
+        schema_migration_committed: true,
+    })
 }
 
-fn validate_current_read_snapshot(conn: &Connection) -> Result<(), LocalFileCacheError> {
-    let transaction = conn.unchecked_transaction()?;
+fn validate_current_read_snapshot(conn: &mut Connection) -> Result<(), LocalFileCacheError> {
+    let transaction = conn.transaction_with_behavior(TransactionBehavior::Deferred)?;
     let version = classifier::read_user_version(&transaction)?;
     match classifier::classify(&transaction, version)? {
         SchemaState::Version { version: 5, .. } => transaction.commit()?,
@@ -84,151 +127,30 @@ fn validate_current_read_snapshot(conn: &Connection) -> Result<(), LocalFileCach
     Ok(())
 }
 
-fn reject_temporarily_guarded_historical(
-    physical_version: i64,
-    state: SchemaState,
+pub(crate) fn apply_runtime_configuration(
+    conn: &Connection,
+    journal_mode: JournalMode,
+    synchronous: SynchronousMode,
+    schema_migration_committed: bool,
 ) -> Result<(), LocalFileCacheError> {
-    if physical_version == 0 && matches!(state, SchemaState::Version { version: 1, .. }) {
+    configuration::apply_runtime_configuration(
+        conn,
+        journal_mode,
+        synchronous,
+        schema_migration_committed,
+    )
+}
+
+pub(crate) fn enable_foreign_keys(conn: &Connection) -> Result<(), LocalFileCacheError> {
+    conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+    let enabled: i64 = conn.query_row("PRAGMA foreign_keys", [], |row| row.get(0))?;
+    if enabled != 1 {
         return Err(LocalFileCacheError::UnsupportedFeature(
-            "recognized historical unversioned v0.1 database requires the transactional \
-             migration path; migration is temporarily unavailable and database was not modified"
-                .into(),
+            "SQLite foreign-key enforcement could not be enabled".into(),
         ));
     }
     Ok(())
 }
 
-// Slice 2 replaces these legacy migration helpers with one typed Immediate
-// transaction. At the Slice 1 boundary, the classifier prevents malformed or
-// unrelated schemas from reaching their existing behavior.
-
-pub(crate) fn enable_foreign_keys(conn: &Connection) -> Result<(), LocalFileCacheError> {
-    conn.execute_batch("PRAGMA foreign_keys = ON;")?;
-    Ok(())
-}
-
-fn set_user_version(conn: &Connection, v: u32) -> Result<(), LocalFileCacheError> {
-    conn.execute_batch(&format!("PRAGMA user_version = {v};"))?;
-    Ok(())
-}
-
-fn create_fresh(conn: &Connection) -> Result<(), LocalFileCacheError> {
-    conn.execute_batch(
-        "
-        CREATE TABLE IF NOT EXISTS files (
-            id                INTEGER PRIMARY KEY AUTOINCREMENT,
-            namespace         TEXT    NOT NULL DEFAULT 'default',
-            path              TEXT    NOT NULL,
-            mtime             INTEGER NOT NULL,
-            file_size         INTEGER NOT NULL,
-            hash              TEXT,
-            updated_at        INTEGER NOT NULL,
-            payload_version   INTEGER NOT NULL DEFAULT 0,
-            last_accessed_at  INTEGER NOT NULL DEFAULT 0,
-            UNIQUE(namespace, path)
-        );
-
-        CREATE TABLE IF NOT EXISTS payloads (
-            file_id  INTEGER PRIMARY KEY,
-            content  BLOB    NOT NULL,
-            encoding TEXT    NOT NULL DEFAULT 'raw',
-            FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_files_namespace_path
-            ON files(namespace, path);
-        CREATE INDEX IF NOT EXISTS idx_files_lru
-            ON files(namespace, last_accessed_at, updated_at);
-        ",
-    )?;
-    set_user_version(conn, CURRENT_VERSION)?;
-    Ok(())
-}
-
-fn migrate_v1_to_v2(conn: &Connection) -> Result<(), LocalFileCacheError> {
-    conn.execute_batch(
-        "
-        BEGIN;
-        CREATE TABLE files_v2 (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            namespace   TEXT    NOT NULL DEFAULT 'default',
-            path        TEXT    NOT NULL,
-            mtime       INTEGER NOT NULL,
-            file_size   INTEGER NOT NULL,
-            hash        TEXT,
-            updated_at  INTEGER NOT NULL,
-            UNIQUE(namespace, path)
-        );
-        INSERT INTO files_v2 (id, namespace, path, mtime, file_size, hash, updated_at)
-        SELECT id, 'default', path, mtime, file_size, hash, updated_at FROM files;
-        DROP TABLE payloads;
-        DROP TABLE files;
-        ALTER TABLE files_v2 RENAME TO files;
-        CREATE TABLE payloads (
-            file_id INTEGER PRIMARY KEY,
-            content BLOB    NOT NULL,
-            FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
-        );
-        CREATE INDEX IF NOT EXISTS idx_files_namespace_path ON files(namespace, path);
-        COMMIT;
-        ",
-    )?;
-    set_user_version(conn, 2)?;
-    Ok(())
-}
-
-fn migrate_v2_to_v3(conn: &Connection) -> Result<(), LocalFileCacheError> {
-    conn.execute_batch(
-        "
-        ALTER TABLE files    ADD COLUMN payload_version INTEGER NOT NULL DEFAULT 0;
-        ALTER TABLE payloads ADD COLUMN encoding        TEXT    NOT NULL DEFAULT 'raw';
-        ",
-    )?;
-    set_user_version(conn, 3)?;
-    Ok(())
-}
-
-/// Add `last_accessed_at` to `files` and an LRU composite index.
-fn migrate_v3_to_v4(conn: &Connection) -> Result<(), LocalFileCacheError> {
-    conn.execute_batch(
-        "
-        ALTER TABLE files ADD COLUMN last_accessed_at INTEGER NOT NULL DEFAULT 0;
-        CREATE INDEX IF NOT EXISTS idx_files_lru
-            ON files(namespace, last_accessed_at, updated_at);
-        ",
-    )?;
-    set_user_version(conn, 4)?;
-    Ok(())
-}
-
-/// Convert `files.mtime` from whole-second precision to nanosecond precision.
-///
-/// Prior to v5, `mtime` stored `modified().as_secs()`.  From v5 onwards it
-/// stores `modified().as_nanos()`.  Multiplying existing values by
-/// `1_000_000_000` converts them to nanoseconds.
-///
-/// # Migration note for users of v0.19 and earlier
-///
-/// On first open after this upgrade, every existing entry's `mtime` is
-/// multiplied by 10⁹.  The converted value (e.g. `1718000000000000000 ns`)
-/// will differ from the file's actual sub-second mtime (`1718000000500000000 ns`)
-/// for files whose mtime is not exactly on a second boundary.
-///
-/// - Under `MetadataOnly` or `MetadataThenHash`: this appears as a one-time
-///   "stale" per entry on first access after upgrade.  `MetadataThenHash`
-///   modes re-hash and serve the cached payload (one extra hash per entry);
-///   `MetadataOnly` returns `Stale` and lets the caller recompute.
-/// - The effect is a single cold-start pass per entry — after the first
-///   `set()` call on the new binary the entry is stored with ns precision
-///   and detection is exact from that point forward.
-fn migrate_v4_to_v5(conn: &Connection) -> Result<(), LocalFileCacheError> {
-    conn.execute_batch(
-        "
-        BEGIN;
-        UPDATE files SET mtime = mtime * 1000000000;
-        COMMIT;
-        ",
-    )?;
-    set_user_version(conn, 5)?;
-    Ok(())
-}
+#[cfg(test)]
+mod tests;

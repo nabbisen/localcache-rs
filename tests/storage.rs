@@ -456,6 +456,8 @@ fn migrates_v2_database_to_v3() {
 
     let dir = TempDir::new().unwrap();
     let db_path = dir.path().join("v2tov3.sqlite3");
+    let payload_bytes =
+        bincode::serde::encode_to_vec(vec![2.0_f32, 3.0, 5.0], bincode::config::legacy()).unwrap();
 
     // Build a v2-style database by hand.
     {
@@ -484,11 +486,16 @@ fn migrates_v2_database_to_v3() {
             ",
         )
         .unwrap();
+        conn.execute(
+            "INSERT INTO payloads(file_id, content) VALUES (1, ?1)",
+            [&payload_bytes],
+        )
+        .unwrap();
     }
 
     // Opening must migrate transparently.
     let engine: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
-        database_path: db_path,
+        database_path: db_path.clone(),
         ..CacheOptions::default()
     })
     .unwrap();
@@ -497,6 +504,18 @@ fn migrates_v2_database_to_v3() {
     assert_eq!(
         engine.check_status("/v2/legacy.txt").unwrap(),
         CacheStatus::Missing
+    );
+    let entries = engine.query().run().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].payload, vec![2.0, 3.0, 5.0]);
+    drop(engine);
+    let conn = Connection::open(db_path).unwrap();
+    assert_eq!(
+        conn.query_row("SELECT content FROM payloads", [], |row| {
+            row.get::<_, Vec<u8>>(0)
+        })
+        .unwrap(),
+        payload_bytes
     );
 }
 

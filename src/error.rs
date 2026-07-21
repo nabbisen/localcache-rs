@@ -21,7 +21,8 @@ pub enum LocalFileCacheError {
     #[error("file does not exist: {path}")]
     FileNotFound { path: PathBuf },
 
-    /// A feature is defined but not yet fully implemented.
+    /// A requested feature/configuration is unsupported or failed a safety
+    /// precondition.
     #[error("unsupported feature: {0}")]
     UnsupportedFeature(String),
 

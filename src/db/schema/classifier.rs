@@ -85,6 +85,20 @@ pub(super) fn classify(
     })
 }
 
+/// Validate an intermediate schema shape inside RFC 010's outer migration
+/// transaction without changing `user_version` between steps.
+pub(super) fn validate_effective_version(
+    conn: &Connection,
+    version: u8,
+) -> Result<SchemaState, LocalFileCacheError> {
+    let objects = application_objects(conn)?;
+    let files_high_water = validate_version(conn, i64::from(version), version, &objects)?;
+    Ok(SchemaState::Version {
+        version,
+        files_high_water,
+    })
+}
+
 fn validate_version(
     conn: &Connection,
     physical_version: i64,
@@ -793,7 +807,7 @@ mod tests {
 
     #[test]
     fn current_validation_is_query_only_and_has_zero_row_changes() {
-        let conn = v5();
+        let mut conn = v5();
         conn.execute_batch(
             "INSERT INTO files
                 (namespace, path, mtime, file_size, hash, updated_at, payload_version, last_accessed_at)
@@ -830,7 +844,7 @@ mod tests {
         let before_changes = conn.total_changes();
         conn.execute_batch("PRAGMA query_only = ON;").unwrap();
 
-        super::super::initialize(&conn).unwrap();
+        super::super::initialize(&mut conn, true).unwrap();
 
         let after_schema: String = conn
             .query_row(
@@ -988,6 +1002,7 @@ mod tests {
             "CREATE TRIGGER unexpected AFTER INSERT ON files BEGIN SELECT 1; END",
             "CREATE INDEX lc_user_wrong ON files(path)",
             "CREATE INDEX extra ON files(namespace, path)",
+            "CREATE TABLE __localcache_rfc010_files_v2(id INTEGER)",
         ];
         for sql in cases {
             let conn = v5();

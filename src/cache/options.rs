@@ -68,16 +68,6 @@ pub enum JournalMode {
     Memory,
 }
 
-impl JournalMode {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            JournalMode::Wal => "WAL",
-            JournalMode::Delete => "DELETE",
-            JournalMode::Memory => "MEMORY",
-        }
-    }
-}
-
 /// SQLite `synchronous` pragma.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SynchronousMode {
@@ -86,17 +76,6 @@ pub enum SynchronousMode {
     Normal,
     Full,
     Extra,
-}
-
-impl SynchronousMode {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            SynchronousMode::Off => "OFF",
-            SynchronousMode::Normal => "NORMAL",
-            SynchronousMode::Full => "FULL",
-            SynchronousMode::Extra => "EXTRA",
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------

@@ -9,6 +9,21 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed
+
+- Schema upgrades from supported historical databases are now one atomic
+  `IMMEDIATE` transaction. The v0.1/v1 migration preserves payload BLOBs,
+  file relationships, IDs, metadata, and AUTOINCREMENT high-water state
+  instead of dropping cached payloads.
+- Real localcache 0.1.0 databases, whose released schema reports physical
+  `user_version = 0`, are classified separately from empty databases and
+  migrated through the complete preserving path.
+- Historical schema validation now fails closed on malformed/co-located
+  objects, invalid sequence state, and unsafe v4 timestamp storage/ranges.
+  Caller journal/synchronous settings are delayed until migration commit, and
+  post-commit configuration errors explicitly report whether migration
+  committed and the requested/observed settings.
+
 ### Changed
 
 - Project source archives now place project files directly at the archive

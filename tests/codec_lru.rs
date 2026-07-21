@@ -901,6 +901,8 @@ fn migrates_v3_database_to_v4() {
 
     let dir = TempDir::new().unwrap();
     let db_path = dir.path().join("v3tov4.sqlite3");
+    let payload_bytes =
+        bincode::serde::encode_to_vec(vec![3.0_f32, 4.0, 7.0], bincode::config::legacy()).unwrap();
 
     {
         let conn = Connection::open(&db_path).unwrap();
@@ -930,11 +932,16 @@ fn migrates_v3_database_to_v4() {
             ",
         )
         .unwrap();
+        conn.execute(
+            "INSERT INTO payloads(file_id, content, encoding) VALUES (1, ?1, 'raw')",
+            [&payload_bytes],
+        )
+        .unwrap();
     }
 
     // Opening must migrate v3 → v4 transparently.
     let engine: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
-        database_path: db_path,
+        database_path: db_path.clone(),
         ..CacheOptions::default()
     })
     .unwrap();
@@ -943,6 +950,18 @@ fn migrates_v3_database_to_v4() {
     assert_eq!(
         engine.check_status("/v3/legacy.txt").unwrap(),
         CacheStatus::Missing
+    );
+    let entries = engine.query().run().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].payload, vec![3.0, 4.0, 7.0]);
+    drop(engine);
+    let conn = Connection::open(db_path).unwrap();
+    assert_eq!(
+        conn.query_row("SELECT content FROM payloads", [], |row| {
+            row.get::<_, Vec<u8>>(0)
+        })
+        .unwrap(),
+        payload_bytes
     );
 }
 

@@ -9,6 +9,9 @@ use tempfile::TempDir;
 
 use localcache::{CacheEngine, JournalMode, SynchronousMode};
 
+#[path = "fixture_integrity/public_boundaries.rs"]
+mod public_boundaries;
+
 const V0_1_PATH: &str = "tests/fixtures/compat-v0_1.sqlite3";
 const V0_1_SHA256: &str = "bd0bb9ffb9e07abafebde2c8a492618bf23ba8cf0e8c29cd8a9a76a4f5153aac";
 const V0_19_INDEX_PATH: &str = "tests/fixtures/compat-v0_19-user-index.sqlite3";
@@ -110,6 +113,85 @@ fn released_v4_user_index_fixture_has_exact_digest_and_shape() {
     assert!(query_plan.contains("lc_user_rfc010"), "{query_plan}");
 }
 
+#[test]
+fn released_v4_user_index_and_payload_survive_public_migration() {
+    assert_sha256(V0_19_INDEX_PATH, V0_19_INDEX_SHA256);
+    let directory = TempDir::new().unwrap();
+    let copied = directory.path().join("compat-v0_19-user-index.sqlite3");
+    fs::copy(V0_19_INDEX_PATH, &copied).unwrap();
+
+    let before = Connection::open(&copied).unwrap();
+    let index_sql: String = before
+        .query_row(
+            "SELECT sql FROM sqlite_schema
+             WHERE type = 'index' AND name = 'lc_user_rfc010'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let (old_mtime, payload): (i64, Vec<u8>) = before
+        .query_row(
+            "SELECT files.mtime, payloads.content
+             FROM files JOIN payloads ON payloads.file_id = files.id",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    drop(before);
+
+    let engine = CacheEngine::<Vec<f32>>::builder()
+        .database(&copied)
+        .journal_mode(JournalMode::Delete)
+        .build()
+        .unwrap();
+    let entries = engine.query().run().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].payload, vec![21.0, 34.0]);
+    drop(engine);
+
+    let after = Connection::open(&copied).unwrap();
+    assert_eq!(
+        after
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        5
+    );
+    assert_eq!(
+        after
+            .query_row("SELECT mtime FROM files", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        old_mtime * 1_000_000_000
+    );
+    assert_eq!(
+        after
+            .query_row("SELECT content FROM payloads", [], |row| {
+                row.get::<_, Vec<u8>>(0)
+            })
+            .unwrap(),
+        payload
+    );
+    assert_eq!(
+        after
+            .query_row(
+                "SELECT sql FROM sqlite_schema
+                 WHERE type = 'index' AND name = 'lc_user_rfc010'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap(),
+        index_sql
+    );
+    let query_plan: String = after
+        .query_row(
+            "EXPLAIN QUERY PLAN SELECT id FROM files INDEXED BY lc_user_rfc010
+             WHERE namespace = 'default' AND path = '/fixture/input-user-index.bin'",
+            [],
+            |row| row.get(3),
+        )
+        .unwrap();
+    assert!(query_plan.contains("lc_user_rfc010"), "{query_plan}");
+}
+
 #[derive(Debug, PartialEq)]
 struct V0_1Snapshot {
     version: i64,
@@ -189,7 +271,7 @@ fn v0_1_snapshot(path: &Path) -> V0_1Snapshot {
 }
 
 #[test]
-fn public_open_refuses_v0_1_before_destructive_migration_and_preserves_state() {
+fn public_open_migrates_v0_1_atomically_for_every_runtime_option() {
     assert_sha256(V0_1_PATH, V0_1_SHA256);
     for journal_mode in [JournalMode::Wal, JournalMode::Delete, JournalMode::Memory] {
         for synchronous in [
@@ -203,77 +285,114 @@ fn public_open_refuses_v0_1_before_destructive_migration_and_preserves_state() {
             fs::copy(V0_1_PATH, &copied).unwrap();
             let before = v0_1_snapshot(&copied);
 
-            let error = match CacheEngine::<Vec<f32>>::builder()
+            let engine = CacheEngine::<Vec<f32>>::builder()
                 .database(&copied)
                 .journal_mode(journal_mode)
                 .synchronous(synchronous)
                 .build()
-            {
-                Ok(_) => panic!("historical v0.1 database unexpectedly entered legacy migration"),
-                Err(error) => error,
-            };
-
-            let message = error.to_string();
-            assert!(message.contains("recognized historical unversioned v0.1 database"));
-            assert!(message.contains("database was not modified"));
+                .unwrap_or_else(|error| {
+                    panic!("migration failed for {journal_mode:?}/{synchronous:?}: {error}")
+                });
+            let mut decoded = engine
+                .query()
+                .run()
+                .unwrap()
+                .into_iter()
+                .map(|entry| entry.payload)
+                .collect::<Vec<_>>();
+            decoded.sort_by(|left, right| left.partial_cmp(right).unwrap());
             assert_eq!(
-                v0_1_snapshot(&copied),
-                before,
-                "state changed for {journal_mode:?}/{synchronous:?}"
+                decoded,
+                [vec![1.25, -2.5, 3.75], vec![8.5, 13.0]],
+                "decoded payload mismatch for {journal_mode:?}/{synchronous:?}"
             );
+            drop(engine);
+
+            let conn = Connection::open(&copied).unwrap();
+            assert_eq!(
+                conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                    .unwrap(),
+                5
+            );
+            let files = conn
+                .prepare(
+                    "SELECT id, path, mtime, file_size, hash, updated_at
+                     FROM files ORDER BY id",
+                )
+                .unwrap()
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, i64>(5)?,
+                    ))
+                })
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            let expected_files = before
+                .files
+                .iter()
+                .map(|(id, path, mtime, size, hash, updated)| {
+                    (
+                        *id,
+                        path.clone(),
+                        mtime * 1_000_000_000,
+                        *size,
+                        hash.clone(),
+                        *updated,
+                    )
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(files, expected_files);
+            let payloads = conn
+                .prepare("SELECT file_id, content FROM payloads ORDER BY file_id")
+                .unwrap()
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .unwrap()
+                .collect::<Result<Vec<(i64, Vec<u8>)>, _>>()
+                .unwrap();
+            assert_eq!(payloads, before.payloads);
+            assert_eq!(
+                conn.query_row(
+                    "SELECT seq FROM sqlite_sequence WHERE name = 'files'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+                3
+            );
+            assert_eq!(
+                conn.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+                0
+            );
+            assert_eq!(
+                conn.query_row(
+                    "SELECT count(*) FROM sqlite_schema
+                     WHERE name LIKE '__localcache_rfc010_%'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+                0
+            );
+            let observed_journal: String = conn
+                .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+                .unwrap();
+            let expected_journal = match journal_mode {
+                JournalMode::Wal => "wal",
+                JournalMode::Delete | JournalMode::Memory => "delete",
+            };
+            assert_eq!(observed_journal, expected_journal);
+            drop(conn);
             assert!(!directory.path().join("compat-v0_1.sqlite3-wal").exists());
             assert!(!directory.path().join("compat-v0_1.sqlite3-shm").exists());
         }
     }
-}
-
-#[test]
-fn released_public_mixed_case_user_index_reopens_successfully() {
-    let directory = TempDir::new().unwrap();
-    let database = directory.path().join("mixed-case-index.sqlite3");
-    let engine = CacheEngine::<Vec<f32>>::builder()
-        .database(&database)
-        .build()
-        .unwrap();
-    for suffix in ["MixedCase_9", "dollar$sign", "éclair"] {
-        assert_eq!(
-            engine.create_path_index(suffix).unwrap(),
-            format!("lc_user_{suffix}")
-        );
-    }
-    drop(engine);
-
-    let reopened = CacheEngine::<Vec<f32>>::builder()
-        .database(&database)
-        .build();
-    assert!(
-        reopened.is_ok(),
-        "valid released mixed-case index was rejected"
-    );
-    drop(reopened);
-
-    let conn = Connection::open_with_flags(
-        &database,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )
-    .unwrap();
-    let indexes = conn
-        .prepare(
-            "SELECT name FROM sqlite_schema
-             WHERE type = 'index' AND name LIKE 'lc_user_%'
-             ORDER BY name",
-        )
-        .unwrap()
-        .query_map([], |row| row.get::<_, String>(0))
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
-    assert_eq!(
-        indexes,
-        [
-            "lc_user_MixedCase_9",
-            "lc_user_dollar$sign",
-            "lc_user_éclair"
-        ]
-    );
 }

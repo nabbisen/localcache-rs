@@ -99,7 +99,7 @@ where
         // would be permanently empty).
         let read_only = options.read_only || (options.shared_cache && !is_memory);
 
-        let conn = if options.shared_cache {
+        let mut conn = if options.shared_cache {
             if is_memory {
                 // Named shared in-memory database: every connection opened
                 // with this URI within the process sees the same data.
@@ -141,15 +141,15 @@ where
         };
 
         if is_memory || !read_only {
+            let outcome = schema::initialize(&mut conn, is_memory)?;
             if !is_memory {
-                schema::preflight_before_runtime_config(&conn)?;
-                conn.execute_batch(&format!(
-                    "PRAGMA journal_mode = {}; PRAGMA synchronous = {};",
-                    options.journal_mode.as_str(),
-                    options.synchronous.as_str(),
-                ))?;
+                schema::apply_runtime_configuration(
+                    &conn,
+                    options.journal_mode,
+                    options.synchronous,
+                    outcome.schema_migration_committed,
+                )?;
             }
-            schema::initialize(&conn)?;
         } else {
             schema::enable_foreign_keys(&conn)?;
         }

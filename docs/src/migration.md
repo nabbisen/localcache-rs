@@ -95,7 +95,10 @@ Both are equivalent — the builder simply populates a `CacheOptions` struct.
 ## Schema migrations
 
 `localcache` handles schema upgrades automatically on `open()`.  Databases
-from any version back to v0.1 are migrated transparently.
+from any supported version back to v0.1 are migrated transparently. Schema
+migration and payload wire compatibility are separate guarantees: migration
+changes SQLite tables while preserving payload bytes; the wire-format
+guarantee below controls how those bytes decode.
 
 | DB version | localcache version | Change |
 |---|---|---|
@@ -104,6 +107,66 @@ from any version back to v0.1 are migrated transparently.
 | 3 | 0.4 | Added `payload_version`, `encoding` |
 | 4 | 0.6 | Added `last_accessed_at` + LRU index |
 | 5 | 0.20 | `mtime` precision: whole seconds → **nanoseconds** |
+
+### Atomic and payload-preserving upgrades
+
+Fresh schema creation and every supported v1-through-v4 upgrade run in one
+SQLite `IMMEDIATE` transaction. The transaction classifies the starting
+schema, performs every required step, advances `user_version` once, validates
+the final schema and foreign keys, and then commits. Any returned error or
+normal panic unwind before commit rolls the complete operation back.
+
+The v1-to-v2 step copies parent and child rows into paired shadow tables and
+proves bidirectional equivalence before dropping either old table. File IDs,
+metadata, missing-payload relationships, payload BLOBs, and the
+AUTOINCREMENT high-water mark are preserved. Payloads are copied as raw bytes;
+the migration does not need to decode them.
+
+localcache 0.1.0 did not set `PRAGMA user_version`, so its real databases
+report version 0. Initialization distinguishes that exact historical schema
+from a truly empty database by read-only schema inspection. A non-empty
+version-0 database with any other shape is rejected without localcache
+mutation.
+
+Schema recognition is deliberately strict. Missing or changed columns,
+constraints, indexes, foreign keys, sequence state, triggers, views, and
+unrelated co-located application objects are rejected. Because
+`user_version` applies to the whole SQLite database, localcache does not guess
+how to migrate a database shared with an unrecognized schema. Version-4
+timestamps must use SQLite INTEGER storage and fall within
+`-9_223_372_036..=9_223_372_036` seconds; invalid, already-nanosecond, or
+partially converted values are rejected unchanged rather than coerced or
+multiplied twice.
+
+### Durability and runtime SQLite settings
+
+Caller-selected journal and synchronous modes are delayed until schema
+migration commits or an existing v5 schema passes no-write validation. A
+file-backed migration requires an existing WAL or disk-backed rollback journal
+and uses verified `synchronous=FULL` during the transaction. Requested
+`synchronous` is applied and verified after commit, followed by requested
+`journal_mode` as the last fallible configuration operation. Caller requests
+for MEMORY journaling or synchronous OFF therefore cannot weaken the
+migration transaction itself.
+
+If post-commit runtime configuration fails, `open()` returns
+`LocalFileCacheError::UnsupportedFeature` with the stable prefix
+`database runtime configuration failed:`. Its fields include
+`schema_migration_committed=true|false`, requested values, and observed values.
+When the field is `true`, schema version 5 is already committed even though
+engine construction failed; inspect the reported observed configuration and
+retry opening rather than assuming the old schema remains.
+
+`SQLITE_BUSY` while acquiring the migration transaction is returned without
+an internal retry loop. Once the competing writer releases its transaction,
+retry the complete `open()` call. Merely opening SQLite can perform SQLite's
+normal journal or WAL recovery; that engine-owned recovery is outside
+localcache's claim that rejected classification performs no migration.
+
+In-memory databases receive transactional error atomicity but make no
+process-crash durability claim. Keep normal application backups appropriate
+to the value of your cache data; atomic migration is not a replacement for a
+backup and does not create one automatically.
 
 ## Wire-format stability guarantee (v0.18.0+)
 
