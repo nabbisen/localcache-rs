@@ -50,6 +50,11 @@ independent review and correction of its review record. Archive verification in
 CI and the remaining release-control hardening are explicitly deferred to M6;
 M1 completion is not release authorization.
 
+RFC 010 implementation was independently accepted on 2026-07-21 at commit
+`95fd1a0`, closing B-02. M2 remains in progress until RFC 011 and the remaining
+milestone exit gates are accepted; RFC 010 remains under `rfcs/accepted/`, and
+this closure is not release authorization.
+
 The detailed scope, RFC mapping, dependencies, and exit gates are maintained in
 the repository-root
 [ROADMAP.md](https://github.com/nabbisen/localcache-rs/blob/main/ROADMAP.md).

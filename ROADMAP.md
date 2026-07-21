@@ -129,6 +129,11 @@ post-smoke layout re-validation, failure-summary finalization, and direct
 canonical-wrapper execution remain M6 work. M1 completion authorizes no release
 action.
 
+RFC 010 implementation was independently accepted on 2026-07-21 at commit
+`95fd1a0`, closing B-02. M2 remains in progress until RFC 011's identifier-safety
+work and the milestone's remaining exit gates are accepted. This closure does
+not authorize a release action or move RFC 010 from `rfcs/accepted/`.
+
 ### RFC design queue
 
 RFC numbers are provisional until each file is created and indexed according
@@ -137,7 +142,7 @@ to RFC 000.
 | RFC | Working title | Primary review findings | Planned implementation milestone | Handoff expectation |
 |---|---|---|---|---|
 | **009** | Reproducible Source Archives and Release Gates | B-01, B-07 | M1, completed in M6 | Required implementation and QA handoff after acceptance |
-| **[010](rfcs/accepted/010-transactional-payload-preserving-schema-migrations.md)** | Transactional, Payload-Preserving Schema Migrations | B-02 | M2 | Recommended implementation and fixture handoff |
+| **[010](rfcs/accepted/010-transactional-payload-preserving-schema-migrations.md)** | Transactional, Payload-Preserving Schema Migrations | B-02 (closed by `95fd1a0`) | M2 | Implementation and fixture handoffs accepted |
 | **011** | Safe SQLite Identifier Boundary | B-03 | M2 | Optional hostile-input QA checklist |
 | **012** | Read-only Schema and Mutation Contract | B-04 | M3 | Recommended API-boundary handoff |
 | **013** | Panic-free Path, Glob, and CLI Text Handling | B-05 and related path findings | M3 | Optional property-test handoff |
