@@ -5,6 +5,9 @@ use std::path::Path;
 
 use rusqlite::Connection;
 use sha2::{Digest, Sha256};
+use tempfile::TempDir;
+
+use localcache::{CacheEngine, JournalMode};
 
 const V0_1_PATH: &str = "tests/fixtures/compat-v0_1.sqlite3";
 const V0_1_SHA256: &str = "bd0bb9ffb9e07abafebde2c8a492618bf23ba8cf0e8c29cd8a9a76a4f5153aac";
@@ -105,4 +108,101 @@ fn released_v4_user_index_fixture_has_exact_digest_and_shape() {
         )
         .unwrap();
     assert!(query_plan.contains("lc_user_rfc010"), "{query_plan}");
+}
+
+#[derive(Debug, PartialEq)]
+struct V0_1Snapshot {
+    version: i64,
+    schema: Vec<(String, String, String, Option<String>)>,
+    files: Vec<(i64, String, i64, i64, Option<String>, i64)>,
+    payloads: Vec<(i64, Vec<u8>)>,
+    sequence: Vec<(String, rusqlite::types::Value)>,
+}
+
+fn v0_1_snapshot(path: &Path) -> V0_1Snapshot {
+    let conn = Connection::open_with_flags(
+        path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .unwrap();
+
+    let schema = conn
+        .prepare(
+            "SELECT type, name, tbl_name, sql
+             FROM sqlite_schema
+             ORDER BY type, name",
+        )
+        .unwrap()
+        .query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    let files = conn
+        .prepare(
+            "SELECT id, path, mtime, file_size, hash, updated_at
+             FROM files ORDER BY id",
+        )
+        .unwrap()
+        .query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+            ))
+        })
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    let payloads = conn
+        .prepare("SELECT file_id, content FROM payloads ORDER BY file_id")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    let sequence = conn
+        .prepare("SELECT name, seq FROM sqlite_sequence ORDER BY name")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    V0_1Snapshot {
+        version: conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap(),
+        schema,
+        files,
+        payloads,
+        sequence,
+    }
+}
+
+#[test]
+fn public_open_refuses_v0_1_before_destructive_migration_and_preserves_state() {
+    assert_sha256(V0_1_PATH, V0_1_SHA256);
+    let directory = TempDir::new().unwrap();
+    let copied = directory.path().join("compat-v0_1.sqlite3");
+    fs::copy(V0_1_PATH, &copied).unwrap();
+    let before = v0_1_snapshot(&copied);
+
+    let error = match CacheEngine::<Vec<f32>>::builder()
+        .database(&copied)
+        .journal_mode(JournalMode::Delete)
+        .build()
+    {
+        Ok(_) => panic!("historical v0.1 database unexpectedly entered legacy migration"),
+        Err(error) => error,
+    };
+
+    let message = error.to_string();
+    assert!(message.contains("recognized historical unversioned v0.1 database"));
+    assert!(message.contains("database was not modified"));
+    assert_eq!(v0_1_snapshot(&copied), before);
 }

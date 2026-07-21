@@ -36,6 +36,13 @@ pub(crate) fn initialize(conn: &Connection) -> Result<(), LocalFileCacheError> {
     let state = classifier::classify(conn, version)?;
     match state {
         SchemaState::Fresh => create_fresh(conn)?,
+        SchemaState::Version(1) if version == 0 => {
+            return Err(LocalFileCacheError::UnsupportedFeature(
+                "recognized historical unversioned v0.1 database requires the transactional \
+                 migration path; migration is temporarily unavailable and database was not modified"
+                    .into(),
+            ));
+        }
         SchemaState::Version(1) => {
             migrate_v1_to_v2(conn)?;
             migrate_v2_to_v3(conn)?;
