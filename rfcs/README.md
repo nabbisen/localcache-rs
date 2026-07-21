@@ -68,4 +68,6 @@ The "Background" section is optional in both templates.
 
 ### Proposed
 
-*(none yet)*
+| RFC | Title | Target |
+|-----|-------|--------|
+| [010](./proposed/010-transactional-payload-preserving-schema-migrations.md) | Transactional, Payload-Preserving Schema Migrations | Phase 21 M2 |

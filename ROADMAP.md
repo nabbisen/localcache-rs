@@ -137,7 +137,7 @@ to RFC 000.
 | RFC | Working title | Primary review findings | Planned implementation milestone | Handoff expectation |
 |---|---|---|---|---|
 | **009** | Reproducible Source Archives and Release Gates | B-01, B-07 | M1, completed in M6 | Required implementation and QA handoff after acceptance |
-| **010** | Transactional, Payload-Preserving Schema Migrations | B-02 | M2 | Recommended implementation and fixture handoff |
+| **[010](rfcs/proposed/010-transactional-payload-preserving-schema-migrations.md)** | Transactional, Payload-Preserving Schema Migrations | B-02 | M2 | Recommended implementation and fixture handoff |
 | **011** | Safe SQLite Identifier Boundary | B-03 | M2 | Optional hostile-input QA checklist |
 | **012** | Read-only Schema and Mutation Contract | B-04 | M3 | Recommended API-boundary handoff |
 | **013** | Panic-free Path, Glob, and CLI Text Handling | B-05 and related path findings | M3 | Optional property-test handoff |
