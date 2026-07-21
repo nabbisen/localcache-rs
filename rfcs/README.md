@@ -65,9 +65,8 @@ The "Background" section is optional in both templates.
 | RFC | Title | Target |
 |-----|-------|--------|
 | [009](./accepted/009-reproducible-source-archives-and-release-gates.md) | Reproducible Source Archives and Release Gates | Phase 21 M1/M6 |
+| [010](./accepted/010-transactional-payload-preserving-schema-migrations.md) | Transactional, Payload-Preserving Schema Migrations | Phase 21 M2 |
 
 ### Proposed
 
-| RFC | Title | Target |
-|-----|-------|--------|
-| [010](./proposed/010-transactional-payload-preserving-schema-migrations.md) | Transactional, Payload-Preserving Schema Migrations | Phase 21 M2 |
+*(none yet)*

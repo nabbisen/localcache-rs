@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed |
+| Status | Accepted |
 | Feature | *(core database compatibility; no Cargo feature)* |
 | Touches | `src/db/schema.rs`, `src/cache/engine.rs`, migration tests, `tests/fixtures/`, `docs/src/migration.md`, `CHANGELOG.md` |
 | Finding | Architect review B-02 |
@@ -812,6 +812,14 @@ verdict was **Accept with changes; remain Proposed**. This revision addresses:
 The reviewer found the four proposed owner decisions reasonable after these
 edits. The owner approved all four on 2026-07-21; they are recorded below.
 
+The focused re-review at
+`.git-exclude/reviewed/architect-rfc-010-focused-rereview-2026-07-21.md`
+returned **Accept** with no blocking findings. The owner authorized the
+repository-visible Accepted transition on 2026-07-21. The RFC moved to
+`rfcs/accepted/` with its Status, index, and inbound roadmap link updated
+together. This accepts the design; it does not claim implementation evidence,
+M2 completion, or release authorization.
+
 ## Acceptance criteria
 
 RFC 010 may move from Proposed to Accepted only after independent review finds
@@ -836,8 +844,9 @@ review all pass on one identified commit.
 ## Owner decisions
 
 The owner approved all four decisions on 2026-07-21. This approval resolves
-the design questions for focused re-review; it does not move the RFC to
-Accepted or authorize implementation.
+the design questions for focused re-review. At that point it did not by itself
+move the RFC to Accepted or authorize implementation; the later focused
+acceptance and owner-authorized transition are recorded above.
 
 1. **Version-0 policy:** An empty database is fresh, the exact released v0.1
    shape is effective v1, and every other non-empty version-0 shape fails
@@ -851,10 +860,13 @@ Accepted or authorize implementation.
 4. **Automatic backups:** Keep backup creation outside RFC 010 and document
    normal backup practice instead. **Decision: approved.**
 
-## Review and authorization boundary
+## Acceptance and implementation boundary
 
-While this file remains under `rfcs/proposed/`, it is design material only.
-After an independent acceptance recommendation and explicit owner approval,
-move it to `rfcs/accepted/`, update its Status and the RFC index in the same
-commit, and create the implementation/fixture QA handoff before delegating any
-code changes.
+RFC 010 is Accepted for implementation following independent focused review
+and explicit owner authorization on 2026-07-21. Implementation must not be
+delegated until this transition is committed and the implementation/fixture QA
+handoff is created with references to this RFC and both architecture reviews.
+
+Acceptance does not supply fixture, migration, test, M2, or release evidence.
+The RFC moves to `done/` only after the implementation ships under the
+project's lifecycle policy.
