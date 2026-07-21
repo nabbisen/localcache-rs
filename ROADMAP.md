@@ -119,7 +119,7 @@ has an independent **Go** review.
 | **M3 — Mutation boundaries and input safety** | Aug 6–14 | Enforce read-only schema/mutation rules; prevent watcher privilege bypass; make glob/path/CLI handling Unicode-safe and non-panicking; align deleted-path behavior | Negative read-only and Unicode/property tests pass; public behavior matches approved RFCs |
 | **M4 — MSRV and supply-chain recovery** | Aug 15–21 | Select a Rust-1.85-compatible SQLite stack or approve a new MSRV; update vulnerable dependencies; define advisory deny/warn/exception policy | Full declared-MSRV build succeeds; security policy gate is green or has approved, expiring exceptions |
 | **M5 — Async and maintainability hardening** | Aug 22–28 | Remove unnecessary unsafe generic casts; unify runtime panic/poison handling; surface watcher setup failures; perform only risk-reducing module splits | Runtime-backend tests and mutex-panic tests pass; no unexplained unsafe remains; focused review accepted |
-| **M6 — Release controls, docs, and RC** | Aug 29–Sep 5 | Correct CI/Makefile feature matrices; enforce warning policy; reconcile archive rules; refresh docs/RFC final prose; assemble fresh evidence | Stable and MSRV gates, tests, clippy, docs, package/archive smoke, and advisory gate all pass on the RC |
+| **M6 — Release controls, docs, and RC** | Aug 29–Sep 5 | Correct CI/Makefile feature matrices; enforce warning policy; reconcile archive and published-crate legal-file rules; refresh docs/RFC final prose; assemble fresh evidence | Stable and MSRV gates, tests, clippy, docs, package/archive smoke, legal-file content, and advisory gate all pass on the RC |
 | **M7 — Independent review and release decision** | Sep 8–12 | Independent architecture re-review of the RC and extracted archive | Every blocker closed; reviewer verdict **Accept** or **Accept with notes**; owner authorizes release |
 
 M1 completed on 2026-07-21 at implementation commit `e54cfe2` after focused
@@ -133,6 +133,12 @@ RFC 010 implementation was independently accepted on 2026-07-21 at commit
 `95fd1a0`, closing B-02. M2 remains in progress until RFC 011's identifier-safety
 work and the milestone's remaining exit gates are accepted. This closure does
 not authorize a release action or move RFC 010 from `rfcs/accepted/`.
+
+The virtual-workspace relocation at `fe9fe88` was accepted for continued
+development on 2026-07-21. Publication remains blocked until M6 supplies and
+verifies the root-authoritative `LICENSE` and `NOTICE` content in each generated
+`.crate` artifact. These files must never be placed in member crate directories;
+the repository-root files remain the sole authoritative copies.
 
 ### RFC design queue
 

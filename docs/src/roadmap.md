@@ -42,7 +42,7 @@ the 2026-07-17 independent architecture review before new feature work resumes.
 | M3 | Aug 6–14 | Read-only boundaries and Unicode/path handling are non-bypassable and non-panicking |
 | M4 | Aug 15–21 | Declared MSRV and dependency-security policy are verified |
 | M5 | Aug 22–28 | Async/watcher failure handling and highest-risk maintainability debt are addressed |
-| M6 | Aug 29–Sep 5 | CI, documentation, release gates, and fresh RC evidence agree |
+| M6 | Aug 29–Sep 5 | CI, documentation, package legal files, release gates, and fresh RC evidence agree |
 | M7 | Sep 8–12 | Independent architecture review and owner release decision |
 
 M1 completed on 2026-07-21 at implementation commit `e54cfe2` after focused
@@ -54,6 +54,11 @@ RFC 010 implementation was independently accepted on 2026-07-21 at commit
 `95fd1a0`, closing B-02. M2 remains in progress until RFC 011 and the remaining
 milestone exit gates are accepted; RFC 010 remains under `rfcs/accepted/`, and
 this closure is not release authorization.
+
+The virtual-workspace relocation at `fe9fe88` was accepted for continued
+development. Publication remains blocked until M6 includes and verifies the
+root-authoritative `LICENSE` and `NOTICE` content in generated `.crate`
+artifacts without placing copies in member crate directories.
 
 The detailed scope, RFC mapping, dependencies, and exit gates are maintained in
 the repository-root
