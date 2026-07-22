@@ -68,6 +68,7 @@ The "Background" section is optional in both templates.
 | [010](./accepted/010-transactional-payload-preserving-schema-migrations.md) | Transactional, Payload-Preserving Schema Migrations | Phase 21 M2 |
 | [011](./accepted/011-safe-sqlite-identifier-boundary.md) | Safe SQLite Identifier Boundary | Phase 21 M2 |
 | [012](./accepted/012-read-only-schema-and-mutation-contract.md) | Read-only Schema and Mutation Contract | Phase 21 M3 |
+| [013](./accepted/013-panic-free-path-glob-and-cli-text-handling.md) | Panic-free Path, Glob, and CLI Text Handling | Phase 21 M3 |
 
 ### Proposed
 
