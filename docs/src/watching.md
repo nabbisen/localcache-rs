@@ -8,6 +8,11 @@ modified, renamed, or deleted, the corresponding cache entry is
 automatically removed from the database and a `WatchEvent` is sent on
 the event channel.
 
+Watcher construction is a mutating capability because event handling removes
+cache rows. Calling `watcher()` or `debounced_watcher()` on a read-only engine
+returns `LocalFileCacheError::ReadOnly` before any OS registration, helper
+connection, or callback thread is created.
+
 ## Basic usage
 
 ```rust

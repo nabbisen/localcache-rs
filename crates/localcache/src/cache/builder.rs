@@ -136,7 +136,13 @@ where
         self
     }
 
-    /// Open the database in read-only mode.
+    /// Open an existing file-backed database in read-only mode.
+    ///
+    /// The database must already have the exact current localcache schema;
+    /// this mode never initializes or migrates it. Every mutating operation,
+    /// including `touch` and watcher construction, returns
+    /// [`LocalFileCacheError::ReadOnly`]. Explicit read-only in-memory
+    /// databases are unsupported.
     pub fn read_only(mut self) -> Self {
         self.opts.read_only = true;
         self

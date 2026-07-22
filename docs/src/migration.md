@@ -148,6 +148,19 @@ timestamps must use SQLite INTEGER storage and fall within
 partially converted values are rejected unchanged rather than coerced or
 multiplied twice.
 
+### Read-only opens do not migrate
+
+An effective read-only open accepts only the exact current schema. It runs the
+same strict classifier in one read snapshot but never creates tables, changes
+`user_version`, migrates historical data, or applies journal and synchronous
+configuration. Empty and recognized historical databases are therefore
+rejected with `UnsupportedFeature`; future and malformed schemas retain the
+normal fail-closed classifier error. A missing file remains missing.
+
+Use a writable open only when an upgrade is intentional. The CLI `migrate`
+command opens its source writable and may upgrade that source before copying,
+so apply the same backup and maintenance-window planning described above.
+
 ### Durability and runtime SQLite settings
 
 Caller-selected journal and synchronous modes are delayed until schema

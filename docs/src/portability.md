@@ -88,6 +88,10 @@ localcache migrate \
     --dst-db new.sqlite3 --dst-ns embeddings
 ```
 
+`copy` opens its source read-only and its destination writable. `migrate`
+opens both sides writable and may upgrade its source schema before copying;
+back up the source and plan migration downtime accordingly.
+
 ## Preloading a directory
 
 Cache an entire directory at once, skipping files that are already fresh:

@@ -1100,6 +1100,7 @@ dependencies = [
  "clap",
  "localcache",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

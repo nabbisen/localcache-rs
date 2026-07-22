@@ -12,13 +12,22 @@ All `localcache` operations return `Result<T, LocalFileCacheError>`.
 | `FileNotFound { path }` | Source file does not exist | Normal — check with `check_status` first |
 | `UnsupportedFeature(String)` | Feature or operation not available | Check Cargo features; read the message |
 | `InvalidPath { path }` | Path cannot be canonicalised | Ensure the path string is valid UTF-8 |
-| `ReadOnly` | Write on a read-only engine | Open without `.read_only()` |
+| `ReadOnly` | Mutation requested on a read-only engine | Use a deliberately writable engine if mutation is intended |
 | `UnknownEncoding(String)` | Stored encoding tag not recognised | Wrong feature enabled for decoding |
 | `PayloadVersionMismatch { stored, expected }` | Version tag mismatch | Call `purge_stale_versions()` |
 | `EncryptionError(String)` *(encryption)* | Wrong key or corrupt data | Verify encryption key |
 | `AsyncTaskPanicked` *(async / async-std / smol)* | `spawn_blocking` task panicked | Check payload type and encoding |
 
 ## Common patterns
+
+### Read-only open
+
+Read-only mode accepts only an existing database with the exact current
+schema. It does not create an empty database or migrate a historical one.
+Recognized historical or empty schemas return `UnsupportedFeature`; future or
+malformed schemas retain the strict unrecognized-schema error. Reopen writable
+only when initialization or migration is intentional and normal backup and
+migration planning has been completed.
 
 ### Graceful miss handling
 

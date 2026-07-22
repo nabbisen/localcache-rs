@@ -1,21 +1,24 @@
 [package]
 name        = "localcache-cli"
+description = "CLI inspection and maintenance tool for localcache databases"
 version.workspace      = true
 edition.workspace      = true
 rust-version.workspace = true
 authors.workspace      = true
 license.workspace      = true
 repository.workspace   = true
-description = "CLI inspection and maintenance tool for localcache databases"
 
 [[bin]]
 name = "localcache"
 path = "src/main.rs"
 
-[dependencies]
-localcache = { workspace = true, features = ["compression", "json"] }
-clap       = { workspace = true }
-serde_json = { workspace = true }
-
 [features]
 watching = ["localcache/watching"]
+
+[dependencies]
+localcache      = { workspace = true, features = ["compression", "json"] }
+clap            = { workspace = true }
+serde_json      = { workspace = true }
+
+[dev-dependencies]
+tempfile        = { workspace = true }

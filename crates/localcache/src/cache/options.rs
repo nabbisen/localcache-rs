@@ -140,7 +140,12 @@ pub struct CacheOptions {
     /// Logical namespace for cache entries.  Defaults to `"default"`.
     pub namespace: String,
 
-    /// Open the database in read-only mode.
+    /// Open an existing file-backed database in read-only mode.
+    ///
+    /// The database must already have the exact current localcache schema;
+    /// this mode never initializes or migrates it. Every mutating operation
+    /// returns [`crate::LocalFileCacheError::ReadOnly`]. Explicit read-only
+    /// in-memory databases are unsupported.
     pub read_only: bool,
 
     /// Payload schema version.

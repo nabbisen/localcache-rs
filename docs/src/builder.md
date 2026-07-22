@@ -95,8 +95,16 @@ let engine = CacheEngine::<Vec<f32>>::builder()
 
 ### `read_only()`
 
-Opens the database in read-only mode.  Write operations (`set`, `remove`,
-etc.) return `LocalFileCacheError::ReadOnly`.
+Opens an existing file-backed database in read-only mode. The database must
+already have the exact current localcache schema: read-only open never creates
+or migrates a schema. Empty, historical, future, and malformed databases are
+rejected unchanged, and explicit read-only `":memory:"` use is unsupported.
+
+Every operation that can mutate database state returns
+`LocalFileCacheError::ReadOnly` before validating other arguments or doing
+other work. This includes `touch`, maintenance and index operations, imports,
+preload, and both watcher constructors. Reads remain available; `get` and
+`get_if_fresh` skip the normal LRU timestamp update.
 
 ### `shared_cache()`
 

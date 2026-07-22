@@ -76,6 +76,7 @@ where
     /// Acquire the mutex and call `f` with a reference to the inner engine.
     ///
     /// This is the escape hatch for operations not yet exposed on the pool.
+    /// A read-only engine retains its normal mutation guards inside `f`.
     pub fn with<R, F>(&self, f: F) -> Result<R, LocalFileCacheError>
     where
         F: FnOnce(&CacheEngine<T>) -> Result<R, LocalFileCacheError>,
@@ -86,6 +87,11 @@ where
 
     /// Acquire the mutex and call `f` with a mutable reference to the inner
     /// engine.
+    ///
+    /// A read-only engine retains its normal mutation guards inside `f`.
+    /// Because the closure receives `&mut CacheEngine<T>`, deliberately
+    /// replacing the complete engine can change authority and is the caller's
+    /// explicit responsibility rather than a pool operation.
     pub fn with_mut<R, F>(&self, f: F) -> Result<R, LocalFileCacheError>
     where
         F: FnOnce(&mut CacheEngine<T>) -> Result<R, LocalFileCacheError>,

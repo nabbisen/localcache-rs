@@ -90,8 +90,18 @@ where
     // ------------------------------------------------------------------
 
     /// Open (or create) a [`CacheEngine`] using `options`.
+    ///
+    /// Effective read-only opens accept only an existing database with the
+    /// exact current schema. They never initialize or migrate a database, and
+    /// an explicit read-only in-memory request is rejected.
     pub fn open(options: CacheOptions) -> Result<Self, LocalFileCacheError> {
         let is_memory = is_memory_path(&options.database_path);
+
+        if options.read_only && is_memory {
+            return Err(LocalFileCacheError::UnsupportedFeature(
+                "read-only mode does not support in-memory databases".into(),
+            ));
+        }
 
         // `shared_cache` on a file-backed database implies read-only.
         // On `:memory:` it opens a named shared in-memory database in
@@ -117,17 +127,13 @@ where
                     }
                 })?;
                 let uri = format!("file:{}?mode=ro&cache=shared", uri_encode_path(path_str));
-                let conn = Connection::open_with_flags(
+                Connection::open_with_flags(
                     uri,
                     OpenFlags::SQLITE_OPEN_URI
                         | OpenFlags::SQLITE_OPEN_READ_ONLY
                         | OpenFlags::SQLITE_OPEN_SHARED_CACHE
                         | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-                )?;
-                // Defence in depth: refuse writes at the SQLite level too,
-                // even if `guard_write` were to malfunction.
-                conn.execute_batch("PRAGMA query_only = ON;")?;
-                conn
+                )?
             }
         } else if is_memory {
             Connection::open_in_memory()?
@@ -140,7 +146,9 @@ where
             Connection::open(&options.database_path)?
         };
 
-        if is_memory || !read_only {
+        if read_only {
+            schema::validate_read_only(&mut conn)?;
+        } else {
             let outcome = schema::initialize(&mut conn, is_memory)?;
             if !is_memory {
                 schema::apply_runtime_configuration(
@@ -150,8 +158,6 @@ where
                     outcome.schema_migration_committed,
                 )?;
             }
-        } else {
-            schema::enable_foreign_keys(&conn)?;
         }
 
         let compress = {
@@ -979,6 +985,10 @@ where
     ///
     /// Requires the `watching` Cargo feature.
     ///
+    /// Returns [`LocalFileCacheError::ReadOnly`] before creating a watcher or
+    /// helper connection when this engine is read-only, because watcher events
+    /// invalidate database rows.
+    ///
     /// # Example
     ///
     /// ```no_run
@@ -999,6 +1009,7 @@ where
     where
         T: Send + 'static,
     {
+        self.guard_write()?;
         use std::sync::{Arc, Mutex};
         // Build a minimal shared state for the watcher: it only needs to open
         // its own DB connection to delete stale entries.  We pass an
@@ -1153,6 +1164,10 @@ where
     ///
     /// Requires the `watching` Cargo feature.
     ///
+    /// Returns [`LocalFileCacheError::ReadOnly`] before creating a watcher or
+    /// helper connection when this engine is read-only, because watcher events
+    /// invalidate database rows.
+    ///
     /// # Example
     ///
     /// ```no_run
@@ -1177,6 +1192,7 @@ where
     where
         T: Send + 'static,
     {
+        self.guard_write()?;
         let paths = self.keys(None)?;
         crate::cache::watcher::CacheDebouncedWatcher::new_with_paths(
             self.database_path.clone(),
@@ -1335,7 +1351,10 @@ where
     ///
     /// Useful for warming entries that should not be evicted by the LRU
     /// policy.  Returns `true` if the entry existed and was updated.
+    /// Returns [`LocalFileCacheError::ReadOnly`] before path validation when
+    /// this engine is read-only.
     pub fn touch<P: AsRef<Path>>(&self, path: P) -> Result<bool, LocalFileCacheError> {
+        self.guard_write()?;
         let canonical = match normalize_path(path.as_ref()) {
             Ok(p) => p,
             Err(LocalFileCacheError::FileNotFound { .. }) => return Ok(false),

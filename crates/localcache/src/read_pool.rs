@@ -8,6 +8,8 @@
 //!
 //! Write methods are **absent from this type** — read-onlyness is a
 //! compile-time property, not a runtime guard.
+//! Every slot requires an existing database with the exact current schema;
+//! opening a pool never initializes or migrates the database.
 //!
 //! # When to use ReadPool vs ConnectionPool
 //!
@@ -105,6 +107,8 @@ where
     /// - `size == 0` → [`LocalFileCacheError::UnsupportedFeature`].
     /// - `:memory:` database → [`LocalFileCacheError::UnsupportedFeature`]
     ///   (N independent in-memory connections each see a different DB).
+    /// - A fresh, historical, future, or malformed schema is rejected without
+    ///   initialization or migration.
     pub fn open(options: CacheOptions, size: usize) -> Result<Self, LocalFileCacheError> {
         if size == 0 {
             return Err(LocalFileCacheError::UnsupportedFeature(

@@ -30,6 +30,33 @@ pub(crate) fn initialize(
     initialize_with_hook(conn, is_memory, &mut |_| Ok(()))
 }
 
+/// Configure and validate a read-only connection without initializing or
+/// migrating its schema.
+pub(crate) fn validate_read_only(conn: &mut Connection) -> Result<(), LocalFileCacheError> {
+    conn.execute_batch("PRAGMA query_only = ON;")?;
+    let query_only: i64 = conn.query_row("PRAGMA query_only", [], |row| row.get(0))?;
+    if query_only != 1 {
+        return Err(LocalFileCacheError::UnsupportedFeature(
+            "SQLite query-only enforcement could not be enabled".into(),
+        ));
+    }
+
+    enable_foreign_keys(conn)?;
+
+    let transaction = conn.transaction_with_behavior(TransactionBehavior::Deferred)?;
+    let physical_version = classifier::read_user_version(&transaction)?;
+    match classifier::classify(&transaction, physical_version)? {
+        SchemaState::Version { version: 5, .. } => transaction.commit()?,
+        SchemaState::Fresh | SchemaState::Version { .. } => {
+            return Err(LocalFileCacheError::UnsupportedFeature(
+                "read-only open requires the current database schema; initialization or migration is not permitted; database was not modified"
+                    .into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn initialize_with_hook(
     conn: &mut Connection,
     is_memory: bool,

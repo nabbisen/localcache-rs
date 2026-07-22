@@ -98,6 +98,8 @@ enum Commands {
     /// new database, optionally changing namespace.
     ///
     /// Useful for moving data between database files or bumping schema versions.
+    /// The source is opened writable and may be upgraded to the current
+    /// localcache schema before its entries are copied.
     Migrate(MigrateArgs),
 
     /// Query cached entries by path prefix or suffix.
@@ -229,6 +231,32 @@ struct InspectArgs {
     path: PathBuf,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DatabaseAuthority {
+    ReadOnly,
+    Writable,
+}
+
+fn command_database_authority(command: &Commands) -> DatabaseAuthority {
+    match command {
+        Commands::List(_)
+        | Commands::Stats
+        | Commands::Check(_)
+        | Commands::Scan(_)
+        | Commands::Export(_)
+        | Commands::Query(_)
+        | Commands::Inspect(_)
+        | Commands::Namespaces => DatabaseAuthority::ReadOnly,
+        Commands::Cleanup
+        | Commands::Vacuum
+        | Commands::PurgeVersion(_)
+        | Commands::Import(_)
+        | Commands::Copy(_)
+        | Commands::Migrate(_)
+        | Commands::Watch => DatabaseAuthority::Writable,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
@@ -242,10 +270,11 @@ fn main() {
 }
 
 fn run(cli: Cli) -> Result<(), LocalFileCacheError> {
+    let authority = command_database_authority(&cli.command);
     let opts = CacheOptions {
         database_path: cli.database,
         namespace: cli.namespace,
-        // Read-only for safe inspection (except write commands which open r/w).
+        read_only: authority == DatabaseAuthority::ReadOnly,
         ..CacheOptions::default()
     };
 
@@ -541,13 +570,15 @@ fn cmd_import(opts: CacheOptions, args: ImportArgs) -> Result<(), LocalFileCache
 fn cmd_copy(opts: CacheOptions, args: CopyArgs) -> Result<(), LocalFileCacheError> {
     let dst_ns = args.to.unwrap_or_else(|| opts.namespace.clone());
 
-    let src: CacheEngine<Vec<u8>> = CacheEngine::open(CacheOptions {
-        namespace: args.from.clone(),
+    let dst: CacheEngine<Vec<u8>> = CacheEngine::open(CacheOptions {
+        namespace: dst_ns.clone(),
+        read_only: false,
         ..opts.clone()
     })?;
 
-    let dst: CacheEngine<Vec<u8>> = CacheEngine::open(CacheOptions {
-        namespace: dst_ns.clone(),
+    let src: CacheEngine<Vec<u8>> = CacheEngine::open(CacheOptions {
+        namespace: args.from.clone(),
+        read_only: true,
         ..opts
     })?;
 
@@ -569,12 +600,14 @@ fn cmd_migrate(opts: CacheOptions, args: MigrateArgs) -> Result<(), LocalFileCac
     let src: CacheEngine<Vec<u8>> = CacheEngine::open(CacheOptions {
         database_path: args.src_db.clone(),
         namespace: args.src_ns.clone(),
+        read_only: false,
         ..CacheOptions::default()
     })?;
 
     let dst: CacheEngine<Vec<u8>> = CacheEngine::open(CacheOptions {
         database_path: dst_db.clone(),
         namespace: dst_ns.clone(),
+        read_only: false,
         ..CacheOptions::default()
     })?;
 
@@ -854,4 +887,63 @@ fn libc_isatty(fd: i32) -> bool {
     // SAFETY: `isatty` is a POSIX function and always safe to call with a
     // valid file descriptor.
     unsafe { isatty(fd) != 0 }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::CommandFactory;
+
+    use super::*;
+
+    #[test]
+    fn every_command_has_explicit_database_authority() {
+        let cases: &[(&[&str], DatabaseAuthority)] = &[
+            (&["localcache", "list"], DatabaseAuthority::ReadOnly),
+            (&["localcache", "stats"], DatabaseAuthority::ReadOnly),
+            (
+                &["localcache", "check", "file"],
+                DatabaseAuthority::ReadOnly,
+            ),
+            (&["localcache", "scan", "."], DatabaseAuthority::ReadOnly),
+            (&["localcache", "export"], DatabaseAuthority::ReadOnly),
+            (&["localcache", "query"], DatabaseAuthority::ReadOnly),
+            (
+                &["localcache", "inspect", "file"],
+                DatabaseAuthority::ReadOnly,
+            ),
+            (&["localcache", "namespaces"], DatabaseAuthority::ReadOnly),
+            (&["localcache", "cleanup"], DatabaseAuthority::Writable),
+            (&["localcache", "vacuum"], DatabaseAuthority::Writable),
+            (
+                &["localcache", "purge-version", "1"],
+                DatabaseAuthority::Writable,
+            ),
+            (&["localcache", "import"], DatabaseAuthority::Writable),
+            (
+                &["localcache", "copy", "--from", "source"],
+                DatabaseAuthority::Writable,
+            ),
+            (
+                &["localcache", "migrate", "--src-db", "source.sqlite3"],
+                DatabaseAuthority::Writable,
+            ),
+            (&["localcache", "watch"], DatabaseAuthority::Writable),
+        ];
+
+        for (arguments, expected) in cases {
+            let cli = Cli::try_parse_from(*arguments).unwrap();
+            assert_eq!(command_database_authority(&cli.command), *expected);
+        }
+    }
+
+    #[test]
+    fn migrate_help_discloses_source_schema_upgrade() {
+        let mut command = Cli::command();
+        let migrate = command
+            .find_subcommand_mut("migrate")
+            .expect("migrate subcommand");
+        let help = migrate.render_long_help().to_string();
+        assert!(help.contains("source is opened writable"), "{help}");
+        assert!(help.contains("may be upgraded"), "{help}");
+    }
 }

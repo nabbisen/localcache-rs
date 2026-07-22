@@ -172,6 +172,12 @@ localcache migrate \
   --dst-db new.sqlite3 --dst-ns default
 ```
 
+`migrate` opens both databases writable. Its source may be upgraded to the
+current schema before entries are copied, so back it up and plan any required
+maintenance window first. Observational commands (`list`, `stats`, `check`,
+`scan`, `export`, `query`, `inspect`, and `namespaces`) open read-only and
+therefore never create or migrate the cache.
+
 ### `watch` *(requires `watching` feature)*
 
 Watch cached files for changes and print invalidation events in real time.

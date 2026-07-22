@@ -11,6 +11,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+- Read-only engines now validate an exact current schema without initializing
+  or migrating it, reject explicit in-memory use, and enforce SQLite read-only
+  flags plus `query_only`. All public mutation paths—including `touch`,
+  watcher construction, pools, and async adapters—now return the stable
+  `ReadOnly` error before other work.
 - SQLite path-index identifiers are now constrained and encoded before they
   reach DDL or `INDEXED BY`. Runtime authorization inspects complete index
   shape in the `main` schema within one snapshot, excluding TEMP, attached,
@@ -30,6 +35,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
+- Observational CLI commands now open the cache read-only, so inspection cannot
+  create or upgrade a database. `copy` keeps its source read-only and opens its
+  destination writable first; `migrate` explicitly opens both sides writable
+  and may upgrade its source before copying.
 - New `create_path_index` suffixes are limited to 1–64 ASCII letters, digits,
   or underscores. Existing structurally valid legacy names remain listable,
   usable, idempotently discoverable, and removable, but out-of-grammar names
