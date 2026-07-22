@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed |
+| Status | Accepted |
 | Feature | *(core database safety; no Cargo feature)* |
 | Touches | `crates/localcache/src/cache/engine.rs`, `crates/localcache/src/cache/query.rs`, `crates/localcache/src/db/repository.rs`, shared index-metadata helpers, query/index tests, API documentation |
 | Finding | Architect review B-03 |
@@ -26,9 +26,9 @@ This RFC corrects and supersedes the security assumption in
 because it came from calling code rather than a request handler. Bind
 parameters protect values, not SQL grammar positions such as an index name.
 
-This RFC does not authorize implementation while Proposed, does not change the
-database schema version, does not complete M2 by itself, and does not authorize
-a release.
+Accepted status authorizes implementation planning under this design. It does
+not change the database schema version, close B-03, complete M2 by itself, or
+authorize a release.
 
 ## Motivation
 
@@ -634,13 +634,19 @@ verdict was **Accept with changes; remain Proposed**. This revision addresses:
 
 The review's non-blocking identifier-equivalence request is also incorporated
 as an explicit ASCII-byte algorithm which forbids Unicode folding,
-normalization, `LIKE`, and overridable collations. RFC 011 remains Proposed
-pending focused independent re-review and explicit owner approval.
+normalization, `LIKE`, and overridable collations.
+
+The focused independent re-review at
+`.git-exclude/reviewed/architect-rfc-011-focused-rereview-2026-07-21.md`
+returned **Accept** with no remaining design defects. The owner explicitly
+authorized the Accepted transition on 2026-07-21. This acceptance authorizes
+implementation planning, but does not close B-03, complete M2, or authorize a
+release.
 
 ## Acceptance and completion gates
 
-The design may move from Proposed to Accepted only after independent review
-confirms the grammar, quoting algorithm, main-scoped one-snapshot
+The design moved from Proposed to Accepted only after independent review
+confirmed the grammar, quoting algorithm, main-scoped one-snapshot
 catalog/ownership predicate, released-name compatibility, post-DDL rollback
 proof, error behavior, and RFC 010 boundary, followed by explicit owner
 approval.

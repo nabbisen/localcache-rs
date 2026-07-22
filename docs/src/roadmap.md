@@ -52,9 +52,9 @@ M1 completion is not release authorization.
 
 RFC 010 implementation was independently accepted on 2026-07-21 at commit
 `95fd1a0`, closing B-02. M2 remains in progress until
-[RFC 011](https://github.com/nabbisen/localcache-rs/blob/main/rfcs/proposed/011-safe-sqlite-identifier-boundary.md)
-and the remaining milestone exit gates are accepted; RFC 010 remains under
-`rfcs/accepted/`, and this closure is not release authorization.
+[RFC 011](https://github.com/nabbisen/localcache-rs/blob/main/rfcs/accepted/011-safe-sqlite-identifier-boundary.md)
+implementation and the remaining milestone exit gates are accepted; RFC 010
+remains under `rfcs/accepted/`, and this closure is not release authorization.
 
 The virtual-workspace relocation at `fe9fe88` was accepted for continued
 development. Publication remains blocked until M6 includes and verifies the

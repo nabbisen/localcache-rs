@@ -66,9 +66,8 @@ The "Background" section is optional in both templates.
 |-----|-------|--------|
 | [009](./accepted/009-reproducible-source-archives-and-release-gates.md) | Reproducible Source Archives and Release Gates | Phase 21 M1/M6 |
 | [010](./accepted/010-transactional-payload-preserving-schema-migrations.md) | Transactional, Payload-Preserving Schema Migrations | Phase 21 M2 |
+| [011](./accepted/011-safe-sqlite-identifier-boundary.md) | Safe SQLite Identifier Boundary | Phase 21 M2 |
 
 ### Proposed
 
-| RFC | Title | Target |
-|-----|-------|--------|
-| [011](./proposed/011-safe-sqlite-identifier-boundary.md) | Safe SQLite Identifier Boundary | Phase 21 M2 |
+*(none yet)*
