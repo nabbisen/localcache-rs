@@ -38,7 +38,7 @@ the 2026-07-17 independent architecture review before new feature work resumes.
 |---|---|---|
 | M0 | Jul 17–22 | Roadmap approved and detailed RFC queue reviewed |
 | M1 ✅ | Jul 23–27 | Current source and extracted release archive are buildable |
-| M2 | Jul 28–Aug 5 | Historical migrations preserve payloads and SQLite identifiers are safe |
+| M2 ✅ | Jul 28–Aug 5 | Historical migrations preserve payloads and SQLite identifiers are safe |
 | M3 | Aug 6–14 | Read-only boundaries and Unicode/path handling are non-bypassable and non-panicking |
 | M4 | Aug 15–21 | Declared MSRV and dependency-security policy are verified |
 | M5 | Aug 22–28 | Async/watcher failure handling and highest-risk maintainability debt are addressed |
@@ -51,10 +51,10 @@ CI and the remaining release-control hardening are explicitly deferred to M6;
 M1 completion is not release authorization.
 
 RFC 010 implementation was independently accepted on 2026-07-21 at commit
-`95fd1a0`, closing B-02. M2 remains in progress until
-[RFC 011](https://github.com/nabbisen/localcache-rs/blob/main/rfcs/accepted/011-safe-sqlite-identifier-boundary.md)
-implementation and the remaining milestone exit gates are accepted; RFC 010
-remains under `rfcs/accepted/`, and this closure is not release authorization.
+`95fd1a0`, closing B-02. RFC 011 implementation was independently accepted on
+2026-07-22 at commit `d4fe505`, closing B-03 and completing M2. Both RFCs remain
+under `rfcs/accepted/` until their implementation ships; this milestone closure
+is not release authorization.
 
 The virtual-workspace relocation at `fe9fe88` was accepted for continued
 development. Publication remains blocked until M6 includes and verifies the
