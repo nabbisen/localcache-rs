@@ -151,7 +151,7 @@ to RFC 000.
 | **009** | Reproducible Source Archives and Release Gates | B-01, B-07 | M1, completed in M6 | Required implementation and QA handoff after acceptance |
 | **[010](rfcs/accepted/010-transactional-payload-preserving-schema-migrations.md)** | Transactional, Payload-Preserving Schema Migrations | B-02 (closed by `95fd1a0`) | M2 | Implementation and fixture handoffs accepted |
 | **[011](rfcs/accepted/011-safe-sqlite-identifier-boundary.md)** | Safe SQLite Identifier Boundary | B-03 (closed by `d4fe505`) | M2 | Hostile-input QA checklist accepted |
-| **[012](rfcs/proposed/012-read-only-schema-and-mutation-contract.md)** | Read-only Schema and Mutation Contract | B-04 | M3 | Design includes API-boundary implementation matrix |
+| **[012](rfcs/accepted/012-read-only-schema-and-mutation-contract.md)** | Read-only Schema and Mutation Contract | B-04 | M3 | Accepted API-boundary implementation matrix |
 | **013** | Panic-free Path, Glob, and CLI Text Handling | B-05 and related path findings | M3 | Optional property-test handoff |
 | **014** | MSRV and Dependency Security Policy | B-06, B-08 | M4 | Recommended dependency-verification handoff |
 | **015** | Async Runtime and Watcher Failure Safety | Runtime/watcher non-blocking findings | M5 | Recommended runtime test-matrix handoff |

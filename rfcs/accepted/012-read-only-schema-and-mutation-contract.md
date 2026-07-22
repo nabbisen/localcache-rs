@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed |
+| Status | Accepted |
 | Feature | *(core; parity for `watching` and async runtime features)* |
 | Touches | `crates/localcache/src/cache/engine.rs`, schema validation, watcher construction, pool/async forwarding tests, `crates/cli/src/main.rs`, read-only documentation |
 | Finding | Architect review B-04 and CLI read-only observation |
@@ -27,8 +27,8 @@ which only observe the cache must explicitly open the database read-only so
 that listing or diagnosis cannot create or migrate it.
 
 This is a corrective patch-release contract. It changes no schema, payload
-format, or public method signature. Proposed status does not authorize
-implementation, close B-04, complete M3, or authorize a release.
+format, or public method signature. Accepted status authorizes implementation
+under this design; it does not close B-04, complete M3, or authorize a release.
 
 ## Motivation
 
@@ -119,6 +119,11 @@ connection-local defence in depth; it does not replace the operating-system
 open flags or the public API guard. Foreign-key enforcement must likewise be
 enabled and verified without applying caller-selected journal or synchronous
 configuration.
+
+Under the current public path contract, in-memory mode means exact `:memory:`
+or the library's own fixed shared-memory URI; arbitrary caller-supplied SQLite
+memory URIs are not supported. If that changes later, capability detection must
+be extended before the new form can reach this branch.
 
 An explicit read-only request for an in-memory database is rejected with
 `UnsupportedFeature`. There is no pre-existing private `:memory:` database to
@@ -230,7 +235,12 @@ RFC 015 work.
 `ConnectionPool<T>` may be built from read-only options. Its forwarding
 methods must expose the engine's same guard and error precedence; in particular
 pooled `touch` must return `ReadOnly`. `with` and `with_mut` do not grant access
-to private connections or bypass guards on public engine operations.
+to private connections or bypass guards on public operations of the supplied
+engine. A caller can deliberately replace the entire value through `with_mut`,
+just as a caller can discard a standalone reader and independently open a
+writer. That replacement is separately authorized by the caller and is outside
+the original engine's capability guarantee; documentation must not claim that
+a pool remains read-only after deliberate whole-value replacement.
 
 `ReadPool<T>` continues to force read-only and expose no mutation methods. All
 of its slots must pass R1 and R2, so constructing a pool over an old, future,
@@ -399,7 +409,10 @@ pretending that an explicit warming request succeeded.
 ### Wrapper and CLI matrix
 
 - Open a read-only `ConnectionPool` and prove pooled `touch` and representative
-  writes return `ReadOnly` unchanged.
+  writes return `ReadOnly` unchanged. Exercise `with` and `with_mut` against
+  the originally supplied engine, and exercise a manual `shared_engine`
+  operation, without claiming protection after deliberate whole-value
+  replacement.
 - For Tokio, async-std, and smol, prove read success plus `touch` and a
   representative write rejection. The synchronous full matrix remains the
   authority for methods which are thin runtime wrappers.
@@ -525,10 +538,17 @@ required. Rejected.
 
 ## Design review and acceptance gates
 
-RFC 012 is Proposed and awaits one independent design review. If that review
-accepts the design and the owner explicitly approves it, move this file to
-`rfcs/accepted/` and update the RFC index in the same transition before
-implementation begins.
+The independent design review at
+`.git-exclude/reviewed/architect-rfc-012-design-review-2026-07-22.md` returned
+**Accept** with no blocking findings. The owner explicitly approved the
+Proposed-to-Accepted transition on 2026-07-22.
+
+The review's non-blocking clarifications are incorporated above: pool escape
+hatches are scoped to operations on the originally supplied engine, arbitrary
+caller memory URIs remain unsupported until deliberately classified, and CLI
+`migrate --help` must disclose possible source migration. No separate handoff
+or further design review is required unless implementation is delegated or the
+design changes materially.
 
 B-04 closes only after the implementation matrix and focused independent
 implementation review are accepted. M3 remains incomplete until RFC 013 and
