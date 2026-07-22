@@ -39,6 +39,13 @@ fn released_public_legacy_user_indexes_reopen_and_remain_usable() {
             "lc_user_éclair"
         ]
     );
+    for (suffix, catalog_name) in [
+        ("MixedCase_9", "lc_user_MixedCase_9"),
+        ("dollar$sign", "lc_user_dollar$sign"),
+        ("éclair", "lc_user_éclair"),
+    ] {
+        assert_eq!(reopened.create_path_index(suffix).unwrap(), catalog_name);
+    }
     for full_name in [
         "lc_user_MixedCase_9",
         "lc_user_dollar$sign",

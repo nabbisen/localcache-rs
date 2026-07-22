@@ -690,26 +690,100 @@ fn hostile_index_identifiers_fail_closed_without_mutation() {
                 |row| row.get::<_, String>(0),
             )
             .unwrap();
-        let file_count = observer
-            .query_row("SELECT count(*) FROM main.files", [], |row| {
-                row.get::<_, i64>(0)
-            })
+        let mut index_flags = observer
+            .prepare(
+                "SELECT name, \"unique\", origin, partial
+                 FROM pragma_index_list('files', 'main') ORDER BY name",
+            )
             .unwrap();
-        let payloads = observer
-            .prepare("SELECT content FROM main.payloads ORDER BY file_id")
-            .unwrap()
-            .query_map([], |row| row.get::<_, Vec<u8>>(0))
+        let index_flags = index_flags
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            })
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        (user_version, journal_mode, schema, file_count, payloads)
+        let mut index_terms = Vec::new();
+        for (name, _, _, _) in &index_flags {
+            let terms = observer
+                .prepare(
+                    "SELECT cid, name, \"desc\", coll, key
+                     FROM pragma_index_xinfo(?1, 'main') ORDER BY seqno",
+                )
+                .unwrap()
+                .query_map([name], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, i64>(4)?,
+                    ))
+                })
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            index_terms.push((name.clone(), terms));
+        }
+        let files = observer
+            .prepare(
+                "SELECT id, namespace, path, mtime, file_size, hash, updated_at,
+                        payload_version, last_accessed_at FROM main.files ORDER BY id",
+            )
+            .unwrap()
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, i64>(6)?,
+                    row.get::<_, i64>(7)?,
+                    row.get::<_, i64>(8)?,
+                ))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let payloads = observer
+            .prepare("SELECT file_id, content, encoding FROM main.payloads ORDER BY file_id")
+            .unwrap()
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, Vec<u8>>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        (
+            user_version,
+            journal_mode,
+            schema,
+            index_flags,
+            index_terms,
+            files,
+            payloads,
+        )
     };
     let before = snapshot();
 
     for suffix in [
         "",
+        " leading",
+        "trailing ",
         "has space",
         "line\nbreak",
+        "carriage\rreturn",
         "tab\tname",
         "control\u{1f}",
         "dollar$sign",
@@ -756,6 +830,12 @@ fn hostile_index_identifiers_fail_closed_without_mutation() {
         engine.get(&cached_path).unwrap().unwrap().payload,
         vec![1.25_f32, -2.5]
     );
+    let write_after_rejection = write_file(&directory, "hostile-write-after.txt", b"still safe");
+    engine.set(&write_after_rejection, &vec![9.0_f32]).unwrap();
+    assert_eq!(
+        engine.get(&write_after_rejection).unwrap().unwrap().payload,
+        vec![9.0_f32]
+    );
 }
 
 #[test]
@@ -781,12 +861,12 @@ fn read_only_precedes_identifier_validation_for_index_mutations() {
 
     let directory = TempDir::new().unwrap();
     let database = directory.path().join("read-only-index.sqlite3");
-    drop(
-        CacheEngine::<Vec<f32>>::builder()
-            .database(&database)
-            .build()
-            .unwrap(),
-    );
+    let writer = CacheEngine::<Vec<f32>>::builder()
+        .database(&database)
+        .build()
+        .unwrap();
+    writer.create_path_index("readonly").unwrap();
+    drop(writer);
     let engine = CacheEngine::<Vec<f32>>::builder()
         .database(&database)
         .read_only()
@@ -800,6 +880,15 @@ fn read_only_precedes_identifier_validation_for_index_mutations() {
         engine.drop_path_index("x\";--"),
         Err(LocalFileCacheError::ReadOnly)
     ));
+    assert_eq!(engine.list_path_indexes().unwrap(), ["lc_user_readonly"]);
+    assert!(engine.query().index_hint("lc_user_readonly").run().is_ok());
+    assert!(
+        engine
+            .query()
+            .index_hint("lc_user_readonly")
+            .dry_run()
+            .is_ok()
+    );
 }
 
 // ====================================================================
@@ -880,6 +969,21 @@ mod async_phase11_tests {
         let indexes = engine.list_path_indexes().await.unwrap();
         assert!(indexes.contains(&name));
 
+        let plan = engine
+            .query_dry_run(|query| query.index_hint("lc_user_asyncidx"))
+            .await
+            .unwrap();
+        assert!(plan.contains("lc_user_asyncidx"));
+        let error = engine
+            .query_dry_run(|query| query.index_hint("lc_user_missing"))
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            localcache::LocalFileCacheError::UnsupportedFeature(ref message)
+                if message == "SQLite index identifier is invalid or is not an allowed localcache index"
+        ));
+
         let dropped = engine.drop_path_index("asyncidx".to_owned()).await.unwrap();
         assert!(dropped);
     }
@@ -908,21 +1012,21 @@ mod async_phase11_tests {
 
 #[cfg(all(not(feature = "async"), feature = "async-std"))]
 #[test]
-fn async_std_index_identifier_rejection_matches_sync_contract() {
-    async_std::task::block_on(async_index_identifier_rejection());
+fn async_std_index_lifecycle_and_rejection_match_sync_contract() {
+    async_std::task::block_on(async_index_parity());
 }
 
 #[cfg(all(not(feature = "async"), not(feature = "async-std"), feature = "smol"))]
 #[test]
-fn smol_index_identifier_rejection_matches_sync_contract() {
-    smol::block_on(async_index_identifier_rejection());
+fn smol_index_lifecycle_and_rejection_match_sync_contract() {
+    smol::block_on(async_index_parity());
 }
 
 #[cfg(any(
     all(not(feature = "async"), feature = "async-std"),
     all(not(feature = "async"), not(feature = "async-std"), feature = "smol")
 ))]
-async fn async_index_identifier_rejection() {
+async fn async_index_parity() {
     use localcache::{AsyncCacheEngine, CacheOptions, LocalFileCacheError};
 
     let engine: AsyncCacheEngine<Vec<f32>> = AsyncCacheEngine::open(CacheOptions {
@@ -940,6 +1044,30 @@ async fn async_index_identifier_rejection() {
         LocalFileCacheError::UnsupportedFeature(ref message)
             if message == "SQLite index identifier is invalid or is not an allowed localcache index"
     ));
+    assert_eq!(
+        engine.create_path_index("parity".to_owned()).await.unwrap(),
+        "lc_user_parity"
+    );
+    assert_eq!(
+        engine.list_path_indexes().await.unwrap(),
+        ["lc_user_parity"]
+    );
+    let plan = engine
+        .query_dry_run(|query| query.index_hint("lc_user_parity"))
+        .await
+        .unwrap();
+    assert!(plan.contains("lc_user_parity"));
+    let error = engine
+        .query_dry_run(|query| query.index_hint("lc_user_missing"))
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        LocalFileCacheError::UnsupportedFeature(ref message)
+            if message == "SQLite index identifier is invalid or is not an allowed localcache index"
+    ));
+    assert!(engine.drop_path_index("parity".to_owned()).await.unwrap());
+    assert!(engine.list_path_indexes().await.unwrap().is_empty());
 }
 
 // ====================================================================
