@@ -36,6 +36,20 @@ ReadPool<T>             — N read-only connections; Clone + Send + Sync
   └── size()
 ```
 
+### Path-index identifier boundary
+
+`CacheEngine::create_path_index` accepts a 1–64 byte ASCII
+alphanumeric/underscore suffix and returns the full `lc_user_…` name.
+`drop_path_index` takes the suffix; `QueryBuilder::index_hint` takes a full
+name and validates it at both `run()` and `dry_run()`. Discover public names
+with `list_path_indexes()`. All operations authorize structurally valid
+indexes in SQLite's `main` schema only; identifier-policy failures return
+`LocalFileCacheError::UnsupportedFeature` without echoing caller input.
+
+Valid legacy public indexes remain listable, usable, and removable even when
+their names no longer satisfy the creation grammar. A removed legacy spelling
+cannot necessarily be recreated.
+
 ## Feature-gated types
 
 | Type | Feature | Description |

@@ -212,7 +212,7 @@ where
 
     /// Restrict to entries whose stored path matches a glob `pattern`.
     ///
-    /// Uses the same dialect as [`ScanOptions::glob_pattern`]:
+    /// Uses the same dialect as [`crate::ScanOptions::glob_pattern`]:
     /// - `*` — any sequence of characters (including none)
     /// - `?` — exactly one character
     /// - `{a,b,c}` — brace alternation (expanded before matching)
@@ -250,12 +250,17 @@ where
         self
     }
     ///
-    /// Generates `INDEXED BY <name>` in the path-listing SQL.  If the
-    /// named index does not exist, [`QueryBuilder::run`] returns
-    /// `Err(`[`LocalFileCacheError::Database`]`)`.
+    /// Requires the full name of an allowed main-schema index. Both terminal
+    /// operations validate its complete catalog shape before generating
+    /// `INDEXED BY <name>`; missing or unauthorized names return
+    /// [`LocalFileCacheError::UnsupportedFeature`] without planner fallback.
     ///
-    /// Use [`CacheEngine::list_path_indexes`] to discover available
-    /// user-created indexes.
+    /// Use [`crate::CacheEngine::list_path_indexes`] to discover available
+    /// user-created indexes. The schema-v5 built-ins
+    /// `idx_files_namespace_path` and `idx_files_lru` are also accepted while
+    /// their complete expected shapes remain intact. SQLite treats
+    /// `INDEXED BY` as a requirement, so this API never silently falls back
+    /// to automatic planning.
     ///
     /// # Example
     ///

@@ -80,7 +80,7 @@ use crate::error::LocalFileCacheError;
 
 /// A cloneable pool of read-only [`CacheEngine`] connections.
 ///
-/// See the [module documentation][crate::read_pool] for details.
+/// See the [`ReadPool`] type documentation for details.
 #[derive(Clone)]
 pub struct ReadPool<T> {
     slots: Arc<Vec<Mutex<CacheEngine<T>>>>,

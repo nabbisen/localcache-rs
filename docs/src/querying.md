@@ -149,10 +149,10 @@ let dst_engine = CacheEngine::<T>::builder()
 let copied = dst_engine.namespace_copy(&src_engine)?;
 ```
 
-## Index hints (v0.17.0)
+## Path indexes and index requirements
 
-For large namespaces (100k+ entries) where `create_path_index` has been
-used, tell the query planner which index to prefer:
+For large namespaces, create an additional index on `(namespace, path)` and
+require a query to use it:
 
 ```rust
 // Create a user index once:
@@ -161,11 +161,33 @@ let idx = engine.create_path_index("docs_idx")?;  // → "lc_user_docs_idx"
 // Use it in a query:
 let results = engine.query()
     .path_like("%/docs/%")
-    .index_hint(&idx)     // INDEXED BY lc_user_docs_idx
+    .index_hint(&idx)     // SQLite: INDEXED BY "lc_user_docs_idx"
     .run()?;
 ```
 
-An invalid index name causes `run()` to return `Err(Database(_))`.
+`create_path_index` takes only a suffix. New suffixes must contain 1–64 ASCII
+letters, digits, or underscores; the method adds `lc_user_` and returns the
+full catalog name. Treat this input as untrusted. `drop_path_index` also takes
+a suffix, while `index_hint` takes the full name. Use
+`list_path_indexes()` to discover valid public names.
+
+Despite the historical “hint” API name, SQLite `INDEXED BY` is a requirement:
+there is no silent planner fallback. Both `run()` and `dry_run()` validate the
+complete main-schema index shape immediately before preparing SQL. Missing,
+malformed, non-localcache, TEMP, and attached-database indexes return
+`LocalFileCacheError::UnsupportedFeature` with a non-echoing safety message.
+The built-in names `idx_files_namespace_path` and `idx_files_lru` may also be
+used when their expected schema-v5 shapes are intact. They are stable for the
+v0.20.1 schema but are implementation indexes, so prefer names returned by
+`list_path_indexes()` for application-controlled planning.
+
+Databases created by earlier releases may contain structurally valid
+`lc_user_` names outside the new creation grammar. Such legacy indexes remain
+listable, usable as full-name requirements, idempotently discoverable through
+`create_path_index`, and removable through `drop_path_index`. Once removed,
+an out-of-grammar legacy spelling cannot be recreated through the public API.
+Dropping a name absent from `main` returns `false`; same-named TEMP or attached
+objects are never dropped.
 
 ## Explain plan / dry_run (v0.17.0)
 

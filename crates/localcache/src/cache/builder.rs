@@ -227,7 +227,7 @@ where
         Ok(engine)
     }
 
-    /// Consume the builder and open a read-only [`ReadPool`] of `size`
+    /// Consume the builder and open a read-only [`crate::ReadPool`] of `size`
     /// connections.
     ///
     /// The `read_only` flag is forced `true`; all other options (namespace,

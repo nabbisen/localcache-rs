@@ -6,6 +6,7 @@ use std::time::UNIX_EPOCH;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use crate::cache::entry::EntryInfo;
+use crate::db::indexes::{self, QuotedIdentifier};
 use crate::detection::metadata::FileMetadata;
 use crate::error::LocalFileCacheError;
 
@@ -39,7 +40,7 @@ pub(crate) fn find_file(
 ) -> Result<Option<FileRow>, LocalFileCacheError> {
     let mut stmt = conn.prepare_cached(
         "SELECT id, path, mtime, file_size, hash, updated_at, payload_version, last_accessed_at
-         FROM files
+         FROM main.files
          WHERE namespace = ?1 AND path = ?2",
     )?;
     let row = stmt
@@ -66,7 +67,7 @@ pub(crate) fn load_payload(
     file_id: i64,
 ) -> Result<Option<PayloadRow>, LocalFileCacheError> {
     let mut stmt =
-        conn.prepare_cached("SELECT content, encoding FROM payloads WHERE file_id = ?1")?;
+        conn.prepare_cached("SELECT content, encoding FROM main.payloads WHERE file_id = ?1")?;
     let row = stmt
         .query_row(params![file_id], |r| {
             Ok(PayloadRow {
@@ -616,15 +617,27 @@ pub(crate) fn keys(
     path_in_dir: Option<(&str, bool)>,
     path_glob: Option<&[String]>,
 ) -> Result<Vec<std::path::PathBuf>, LocalFileCacheError> {
-    let (sql, params_vec) = build_path_sql(namespace, pattern, index_hint, path_in_dir, path_glob);
-    let mut stmt = conn.prepare(&sql)?;
+    let transaction =
+        rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Deferred)?;
+    let authorized = indexes::authorize_query_index_in_snapshot(&transaction, index_hint)?;
+    let (sql, params_vec) = build_path_sql(
+        namespace,
+        pattern,
+        authorized.as_ref(),
+        path_in_dir,
+        path_glob,
+    );
+    let mut stmt = transaction.prepare(&sql)?;
     let paths: Result<Vec<_>, _> = stmt
         .query_map(
             rusqlite::params_from_iter(params_vec.iter().map(String::as_str)),
             |r| Ok(std::path::PathBuf::from(r.get::<_, String>(0)?)),
         )?
         .collect();
-    Ok(paths?)
+    let paths = paths?;
+    drop(stmt);
+    transaction.commit()?;
+    Ok(paths)
 }
 
 /// Run `EXPLAIN QUERY PLAN <sql>` and return the human-readable plan as a
@@ -637,16 +650,28 @@ pub(crate) fn explain_query(
     path_in_dir: Option<(&str, bool)>,
     path_glob: Option<&[String]>,
 ) -> Result<String, LocalFileCacheError> {
-    let (sql, params_vec) = build_path_sql(namespace, pattern, index_hint, path_in_dir, path_glob);
+    let transaction =
+        rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Deferred)?;
+    let authorized = indexes::authorize_query_index_in_snapshot(&transaction, index_hint)?;
+    let (sql, params_vec) = build_path_sql(
+        namespace,
+        pattern,
+        authorized.as_ref(),
+        path_in_dir,
+        path_glob,
+    );
     let explain_sql = format!("EXPLAIN QUERY PLAN {sql}");
-    let mut stmt = conn.prepare(&explain_sql)?;
+    let mut stmt = transaction.prepare(&explain_sql)?;
     let rows: Result<Vec<String>, _> = stmt
         .query_map(
             rusqlite::params_from_iter(params_vec.iter().map(String::as_str)),
             |row| row.get::<_, String>(3),
         )?
         .collect();
-    Ok(rows?.join("\n"))
+    let plan = rows?.join("\n");
+    drop(stmt);
+    transaction.commit()?;
+    Ok(plan)
 }
 
 // ---------------------------------------------------------------------------
@@ -662,13 +687,13 @@ pub(crate) fn explain_query(
 fn build_path_sql(
     namespace: &str,
     pattern: Option<&str>,
-    index_hint: Option<&str>,
+    index_hint: Option<&QuotedIdentifier>,
     path_in_dir: Option<(&str, bool)>,
     path_glob: Option<&[String]>,
 ) -> (String, Vec<String>) {
     let table = match index_hint {
-        Some(idx) => format!("files INDEXED BY {idx}"),
-        None => "files".to_owned(),
+        Some(idx) => format!("main.files INDEXED BY {}", idx.as_sql()),
+        None => "main.files".to_owned(),
     };
 
     let mut clauses: Vec<String> = vec!["namespace = ?".to_owned()];

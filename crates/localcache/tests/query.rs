@@ -662,6 +662,146 @@ fn create_index_is_idempotent() {
     );
 }
 
+#[test]
+fn hostile_index_identifiers_fail_closed_without_mutation() {
+    use localcache::LocalFileCacheError;
+    use rusqlite::Connection;
+
+    const SAFETY_ERROR: &str =
+        "SQLite index identifier is invalid or is not an allowed localcache index";
+    let directory = TempDir::new().unwrap();
+    let database = directory.path().join("hostile-index.sqlite3");
+    let engine: CacheEngine<Vec<f32>> = CacheEngine::builder().database(&database).build().unwrap();
+    let cached_path = write_file(&directory, "hostile-survivor.txt", b"safe");
+    engine.set(&cached_path, &vec![1.25_f32, -2.5]).unwrap();
+    let snapshot = || {
+        let observer = Connection::open(&database).unwrap();
+        let user_version = observer
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .unwrap();
+        let journal_mode = observer
+            .query_row("PRAGMA journal_mode", [], |row| row.get::<_, String>(0))
+            .unwrap();
+        let schema = observer
+            .query_row(
+                "SELECT group_concat(type || ':' || name || ':' || coalesce(sql, ''), '|')
+                 FROM (SELECT type, name, sql FROM main.sqlite_schema ORDER BY type, name)",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap();
+        let file_count = observer
+            .query_row("SELECT count(*) FROM main.files", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        let payloads = observer
+            .prepare("SELECT content FROM main.payloads ORDER BY file_id")
+            .unwrap()
+            .query_map([], |row| row.get::<_, Vec<u8>>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        (user_version, journal_mode, schema, file_count, payloads)
+    };
+    let before = snapshot();
+
+    for suffix in [
+        "",
+        "has space",
+        "line\nbreak",
+        "tab\tname",
+        "control\u{1f}",
+        "dollar$sign",
+        "éclair",
+        "schema.name",
+        "bracket[name]",
+        "back`tick",
+        "single'quote",
+        "double\"quote",
+        "slash/*comment*/",
+        "x ON files(namespace,path); DROP TABLE files; --",
+        "x\"; DROP TABLE files;--",
+        "x'); PRAGMA user_version=99;--",
+        &"a".repeat(65),
+    ] {
+        let error = engine.create_path_index(suffix).unwrap_err();
+        assert!(matches!(
+            &error,
+            LocalFileCacheError::UnsupportedFeature(message) if message == SAFETY_ERROR
+        ));
+        if !suffix.is_empty() {
+            assert!(!error.to_string().contains(suffix));
+        }
+        assert!(!engine.drop_path_index(suffix).unwrap());
+
+        let full = format!("lc_user_{suffix}");
+        for error in [
+            engine.query().index_hint(&full).run().unwrap_err(),
+            engine.query().index_hint(&full).dry_run().unwrap_err(),
+        ] {
+            assert!(matches!(
+                &error,
+                LocalFileCacheError::UnsupportedFeature(message) if message == SAFETY_ERROR
+            ));
+            if !suffix.is_empty() {
+                assert!(!error.to_string().contains(suffix));
+            }
+        }
+        assert_eq!(snapshot(), before, "mutation for hostile suffix {suffix:?}");
+    }
+
+    assert!(engine.list_path_indexes().unwrap().is_empty());
+    assert_eq!(
+        engine.get(&cached_path).unwrap().unwrap().payload,
+        vec![1.25_f32, -2.5]
+    );
+}
+
+#[test]
+fn index_creation_grammar_accepts_boundaries_and_reserved_words() {
+    let engine: CacheEngine<Vec<f32>> =
+        CacheEngine::builder().database(":memory:").build().unwrap();
+    for suffix in ["a", "_", "9", "Mixed_Case_9", "select"] {
+        assert_eq!(
+            engine.create_path_index(suffix).unwrap(),
+            format!("lc_user_{suffix}")
+        );
+    }
+    let boundary = "a".repeat(64);
+    assert_eq!(
+        engine.create_path_index(&boundary).unwrap(),
+        format!("lc_user_{boundary}")
+    );
+}
+
+#[test]
+fn read_only_precedes_identifier_validation_for_index_mutations() {
+    use localcache::LocalFileCacheError;
+
+    let directory = TempDir::new().unwrap();
+    let database = directory.path().join("read-only-index.sqlite3");
+    drop(
+        CacheEngine::<Vec<f32>>::builder()
+            .database(&database)
+            .build()
+            .unwrap(),
+    );
+    let engine = CacheEngine::<Vec<f32>>::builder()
+        .database(&database)
+        .read_only()
+        .build()
+        .unwrap();
+    assert!(matches!(
+        engine.create_path_index("x\";--"),
+        Err(LocalFileCacheError::ReadOnly)
+    ));
+    assert!(matches!(
+        engine.drop_path_index("x\";--"),
+        Err(LocalFileCacheError::ReadOnly)
+    ));
+}
+
 // ====================================================================
 // Phase 11 — Async touch / keys / index
 // ====================================================================
@@ -743,6 +883,63 @@ mod async_phase11_tests {
         let dropped = engine.drop_path_index("asyncidx".to_owned()).await.unwrap();
         assert!(dropped);
     }
+
+    #[tokio::test]
+    async fn async_index_identifier_rejection_matches_sync_contract() {
+        use localcache::LocalFileCacheError;
+
+        let engine: AsyncCacheEngine<Vec<f32>> = AsyncCacheEngine::open(CacheOptions {
+            database_path: ":memory:".into(),
+            ..CacheOptions::default()
+        })
+        .await
+        .unwrap();
+        let error = engine
+            .create_path_index("x\"; DROP TABLE files;--".to_owned())
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            LocalFileCacheError::UnsupportedFeature(ref message)
+                if message == "SQLite index identifier is invalid or is not an allowed localcache index"
+        ));
+    }
+}
+
+#[cfg(all(not(feature = "async"), feature = "async-std"))]
+#[test]
+fn async_std_index_identifier_rejection_matches_sync_contract() {
+    async_std::task::block_on(async_index_identifier_rejection());
+}
+
+#[cfg(all(not(feature = "async"), not(feature = "async-std"), feature = "smol"))]
+#[test]
+fn smol_index_identifier_rejection_matches_sync_contract() {
+    smol::block_on(async_index_identifier_rejection());
+}
+
+#[cfg(any(
+    all(not(feature = "async"), feature = "async-std"),
+    all(not(feature = "async"), not(feature = "async-std"), feature = "smol")
+))]
+async fn async_index_identifier_rejection() {
+    use localcache::{AsyncCacheEngine, CacheOptions, LocalFileCacheError};
+
+    let engine: AsyncCacheEngine<Vec<f32>> = AsyncCacheEngine::open(CacheOptions {
+        database_path: ":memory:".into(),
+        ..CacheOptions::default()
+    })
+    .await
+    .unwrap();
+    let error = engine
+        .create_path_index("x\"; DROP TABLE files;--".to_owned())
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        LocalFileCacheError::UnsupportedFeature(ref message)
+            if message == "SQLite index identifier is invalid or is not an allowed localcache index"
+    ));
 }
 
 // ====================================================================

@@ -1,20 +1,27 @@
 use super::*;
 
 #[test]
-fn released_public_mixed_case_user_index_reopens_successfully() {
+fn released_public_legacy_user_indexes_reopen_and_remain_usable() {
     let directory = TempDir::new().unwrap();
     let database = directory.path().join("mixed-case-index.sqlite3");
     let engine = CacheEngine::<Vec<f32>>::builder()
         .database(&database)
         .build()
         .unwrap();
-    for suffix in ["MixedCase_9", "dollar$sign", "éclair"] {
-        assert_eq!(
-            engine.create_path_index(suffix).unwrap(),
-            format!("lc_user_{suffix}")
-        );
-    }
     drop(engine);
+
+    // These spellings were accepted by the released pre-RFC-011 API. Create
+    // their exact, structurally valid legacy shapes directly so this fixture
+    // remains a compatibility test without asking the narrowed creation API
+    // to recreate them.
+    let conn = Connection::open(&database).unwrap();
+    conn.execute_batch(
+        "CREATE INDEX \"lc_user_MixedCase_9\" ON files(namespace, path);
+         CREATE INDEX \"lc_user_dollar$sign\" ON files(namespace, path);
+         CREATE INDEX \"lc_user_éclair\" ON files(namespace, path);",
+    )
+    .unwrap();
+    drop(conn);
 
     let reopened = CacheEngine::<Vec<f32>>::builder()
         .database(&database)
@@ -23,6 +30,29 @@ fn released_public_mixed_case_user_index_reopens_successfully() {
         reopened.is_ok(),
         "valid released mixed-case index was rejected"
     );
+    let reopened = reopened.unwrap();
+    assert_eq!(
+        reopened.list_path_indexes().unwrap(),
+        [
+            "lc_user_MixedCase_9",
+            "lc_user_dollar$sign",
+            "lc_user_éclair"
+        ]
+    );
+    for full_name in [
+        "lc_user_MixedCase_9",
+        "lc_user_dollar$sign",
+        "lc_user_éclair",
+    ] {
+        assert!(reopened.query().index_hint(full_name).dry_run().is_ok());
+        assert!(reopened.query().index_hint(full_name).run().is_ok());
+    }
+    for suffix in ["MixedCase_9", "dollar$sign", "éclair"] {
+        assert!(reopened.drop_path_index(suffix).unwrap());
+    }
+    for suffix in ["dollar$sign", "éclair"] {
+        assert!(reopened.create_path_index(suffix).is_err());
+    }
     drop(reopened);
 
     let conn = Connection::open_with_flags(
@@ -41,14 +71,7 @@ fn released_public_mixed_case_user_index_reopens_successfully() {
         .unwrap()
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    assert_eq!(
-        indexes,
-        [
-            "lc_user_MixedCase_9",
-            "lc_user_dollar$sign",
-            "lc_user_éclair"
-        ]
-    );
+    assert!(indexes.is_empty());
 }
 
 #[test]

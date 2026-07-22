@@ -12,7 +12,7 @@ use crate::cache::entry::{CacheEntry, CacheStatus, EntryInfo, PreloadReport};
 use crate::cache::options::{
     CacheOptions, ChangeDetectionMode, Codec, ScanOptions, is_memory_path,
 };
-use crate::db::{repository, schema};
+use crate::db::{indexes, repository, schema};
 use crate::detection::hash::{compute_full_hash, compute_partial_hash};
 use crate::detection::metadata::collect_metadata;
 use crate::detection::strategy::detect_change;
@@ -521,7 +521,7 @@ where
         Ok(status)
     }
 
-    /// Return a detailed [`Diagnosis`] for `path`.
+    /// Return a detailed [`crate::Diagnosis`] for `path`.
     ///
     /// Unlike [`check_status`](Self::check_status), `explain` returns rich
     /// structured information about *why* an entry is in its current state:
@@ -796,7 +796,7 @@ where
             .collect())
     }
 
-    /// Import a slice of [`ExportRecord`]s into the current namespace.
+    /// Import a slice of [`crate::ExportRecord`]s into the current namespace.
     ///
     /// Existing entries for the same path are replaced atomically inside a
     /// single transaction.  Returns the number of entries imported.
@@ -974,7 +974,7 @@ where
     /// The watcher monitors source files using OS-native events (`inotify` on
     /// Linux, `kqueue` on macOS, `ReadDirectoryChanges` on Windows).  When a
     /// watched file is modified, renamed, or deleted, the corresponding cache
-    /// entry is automatically removed from the database and a [`WatchEvent`]
+    /// entry is automatically removed from the database and a [`crate::WatchEvent`]
     /// is sent on the event channel.
     ///
     /// Requires the `watching` Cargo feature.
@@ -1147,7 +1147,7 @@ where
     /// Start a **debounced** background watcher for all currently cached entries.
     ///
     /// Like [`watcher()`](Self::watcher) but file events within `window` of
-    /// each other are merged into a single [`WatchEvent`].  This prevents
+    /// each other are merged into a single [`crate::WatchEvent`].  This prevents
     /// rapid back-to-back writes (e.g. editors that save incrementally) from
     /// generating a flood of invalidation events.
     ///
@@ -1355,43 +1355,33 @@ where
 
     /// Create an additional SQLite index on `files(namespace, path)`.
     ///
-    /// The full index name is prefixed with `"lc_user_"`.  If an index with
-    /// the same name already exists this is a no-op.  Returns the full name.
+    /// `name` is a suffix of 1–64 ASCII alphanumeric/underscore bytes. The
+    /// full index name is prefixed with `"lc_user_"` and returned. Existing
+    /// structurally valid legacy indexes remain idempotently discoverable,
+    /// but an out-of-grammar legacy spelling cannot be recreated after drop.
+    /// Rejected names return [`LocalFileCacheError::UnsupportedFeature`].
     pub fn create_path_index(&self, name: &str) -> Result<String, LocalFileCacheError> {
         self.guard_write()?;
-        let full = format!("lc_user_{name}");
-        self.conn.execute_batch(&format!(
-            "CREATE INDEX IF NOT EXISTS {full} ON files(namespace, path);"
-        ))?;
-        Ok(full)
+        indexes::create_path_index(&self.conn, name)
     }
 
-    /// Drop a user-created index.  Returns `true` if it existed and was dropped.
+    /// Drop an owned main-schema user index by suffix.
+    ///
+    /// Returns `true` if it existed in `main` and was dropped, or `false` if
+    /// no matching main-schema object exists. Structurally authorized legacy
+    /// names can be removed safely; TEMP and attached-schema objects are
+    /// never targets.
     pub fn drop_path_index(&self, name: &str) -> Result<bool, LocalFileCacheError> {
         self.guard_write()?;
-        let full = format!("lc_user_{name}");
-        let exists: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?1",
-            rusqlite::params![full],
-            |r| r.get(0),
-        )?;
-        if exists == 0 {
-            return Ok(false);
-        }
-        self.conn
-            .execute_batch(&format!("DROP INDEX IF EXISTS {full};"))?;
-        Ok(true)
+        indexes::drop_path_index(&self.conn, name)
     }
 
-    /// List all user-created indexes (`lc_user_*` prefix) in alphabetical order.
+    /// List structurally valid main-schema user indexes in alphabetical order.
+    ///
+    /// Each result is valid for the catalog snapshot used by this call. A
+    /// later operation revalidates the index before using it.
     pub fn list_path_indexes(&self) -> Result<Vec<String>, LocalFileCacheError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT name FROM sqlite_master
-             WHERE type='index' AND name LIKE 'lc_user_%'
-             ORDER BY name",
-        )?;
-        let names: Result<Vec<String>, _> = stmt.query_map([], |r| r.get(0))?.collect();
-        Ok(names?)
+        indexes::list_path_indexes(&self.conn)
     }
 
     // ------------------------------------------------------------------

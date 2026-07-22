@@ -500,18 +500,17 @@ mod rfc003_opentelemetry_spans {
         };
 
         let dir = TempDir::new().unwrap();
-        tracing::subscriber::with_default(recorder, || {
-            let engine: CacheEngine<Vec<f32>> = CacheEngine::builder()
-                .database(":memory:")
-                .namespace("rfc003_ns")
-                .build()
-                .unwrap();
+        tracing::subscriber::set_global_default(recorder).unwrap();
+        let engine: CacheEngine<Vec<f32>> = CacheEngine::builder()
+            .database(":memory:")
+            .namespace("rfc003_ns")
+            .build()
+            .unwrap();
 
-            let path = write_file(&dir, "otel.txt", b"data");
-            engine.set(&path, &vec![1.0_f32]).unwrap();
-            let _ = engine.get(&path).unwrap();
-            let _ = engine.check_status(&path).unwrap();
-        });
+        let path = write_file(&dir, "otel.txt", b"data");
+        engine.set(&path, &vec![1.0_f32]).unwrap();
+        let _ = engine.get(&path).unwrap();
+        let _ = engine.check_status(&path).unwrap();
 
         let recorded = names.lock().unwrap().clone();
         assert!(

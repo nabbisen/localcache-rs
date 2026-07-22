@@ -11,6 +11,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+- SQLite path-index identifiers are now constrained and encoded before they
+  reach DDL or `INDEXED BY`. Runtime authorization inspects complete index
+  shape in the `main` schema within one snapshot, excluding TEMP, attached,
+  lookalike, and malformed objects and closing the public SQL-injection path.
 - Schema upgrades from supported historical databases are now one atomic
   `IMMEDIATE` transaction. The v0.1/v1 migration preserves payload BLOBs,
   file relationships, IDs, metadata, and AUTOINCREMENT high-water state
@@ -26,6 +30,12 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
+- New `create_path_index` suffixes are limited to 1–64 ASCII letters, digits,
+  or underscores. Existing structurally valid legacy names remain listable,
+  usable, idempotently discoverable, and removable, but out-of-grammar names
+  cannot be recreated after removal. Unauthorized query requirements now
+  return a stable, non-echoing `UnsupportedFeature` error instead of a SQLite
+  `Database` error.
 - The repository now uses a virtual Cargo workspace with the `localcache` and
   `localcache-cli` packages under `crates/localcache` and `crates/cli`.
 - Project source archives now place project files directly at the archive

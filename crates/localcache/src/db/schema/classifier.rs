@@ -4,6 +4,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rusqlite::{Connection, OptionalExtension, types::Value};
 
+#[cfg(test)]
+use crate::db::indexes::IndexXinfoRow;
+use crate::db::indexes::{main_file_indexes, main_index_xinfo, validate_index_terms};
 use crate::error::LocalFileCacheError;
 
 const CURRENT_VERSION: i64 = 5;
@@ -30,23 +33,6 @@ struct Column {
     default: Option<String>,
     primary_key_position: i64,
     hidden: i64,
-}
-
-#[derive(Debug)]
-struct IndexListRow {
-    name: String,
-    unique: bool,
-    origin: String,
-    partial: bool,
-}
-
-#[derive(Debug, Clone)]
-struct IndexXinfoRow {
-    cid: i64,
-    name: Option<String>,
-    descending: bool,
-    collation: Option<String>,
-    key: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -508,21 +494,7 @@ fn validate_indexes(
     physical_version: i64,
     version: u8,
 ) -> Result<(), LocalFileCacheError> {
-    let mut statement = conn.prepare(
-        "SELECT name, \"unique\", origin, partial
-         FROM pragma_index_list('files')
-         ORDER BY name",
-    )?;
-    let indexes = statement
-        .query_map([], |row| {
-            Ok(IndexListRow {
-                name: row.get(0)?,
-                unique: row.get::<_, i64>(1)? != 0,
-                origin: row.get(2)?,
-                partial: row.get::<_, i64>(3)? != 0,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
+    let indexes = main_file_indexes(conn)?;
 
     let expected_builtins: BTreeMap<&str, &[&str]> = match version {
         1 => BTreeMap::from([("idx_files_path", &["path"][..])]),
@@ -545,7 +517,7 @@ fn validate_indexes(
     let mut seen_builtins = BTreeSet::new();
 
     for index in &indexes {
-        let xinfo = index_xinfo(conn, &index.name)?;
+        let xinfo = main_index_xinfo(conn, &index.name)?;
         if index.origin == "u" {
             unique_count += 1;
             if !index.unique || index.partial {
@@ -586,60 +558,12 @@ fn validate_indexes(
     }
 
     let payload_index_count: i64 = conn.query_row(
-        "SELECT count(*) FROM pragma_index_list('payloads')",
+        "SELECT count(*) FROM pragma_index_list('payloads', 'main')",
         [],
         |row| row.get(0),
     )?;
     if payload_index_count != 0 {
         return Err(unrecognized(physical_version, "unexpected payload index"));
-    }
-    Ok(())
-}
-
-fn index_xinfo(
-    conn: &Connection,
-    index_name: &str,
-) -> Result<Vec<IndexXinfoRow>, LocalFileCacheError> {
-    let mut statement = conn.prepare(
-        "SELECT cid, name, \"desc\", coll, key
-         FROM pragma_index_xinfo(?1)
-         ORDER BY seqno",
-    )?;
-    let rows = statement.query_map([index_name], |row| {
-        Ok(IndexXinfoRow {
-            cid: row.get(0)?,
-            name: row.get(1)?,
-            descending: row.get::<_, i64>(2)? != 0,
-            collation: row.get(3)?,
-            key: row.get::<_, i64>(4)? != 0,
-        })
-    })?;
-    Ok(rows.collect::<Result<Vec<_>, _>>()?)
-}
-
-fn validate_index_terms(rows: &[IndexXinfoRow], expected: &[&str]) -> Result<(), &'static str> {
-    let key_rows: Vec<&IndexXinfoRow> = rows.iter().filter(|row| row.key).collect();
-    if key_rows.len() != expected.len() {
-        return Err("index key-term count mismatch");
-    }
-    for (row, expected_name) in key_rows.into_iter().zip(expected) {
-        if row.cid < 0
-            || row.name.as_deref() != Some(*expected_name)
-            || row.descending
-            || !row
-                .collation
-                .as_deref()
-                .is_some_and(|value| value.eq_ignore_ascii_case("BINARY"))
-        {
-            return Err("index key-term mismatch");
-        }
-    }
-
-    // SQLite reports the ordinary table row locator as a non-key auxiliary
-    // row (usually cid=-1/name=NULL). It is implementation-owned, not an
-    // expression or an additional user key term, so it must be tolerated.
-    if !rows.iter().any(|row| !row.key) {
-        return Err("index is missing SQLite auxiliary row locator");
     }
     Ok(())
 }
@@ -990,12 +914,37 @@ mod tests {
             key: true,
         });
         assert!(validate_index_terms(&extra_key, &["namespace", "path"]).is_err());
+
+        let invalid_auxiliary = vec![
+            IndexXinfoRow {
+                cid: 1,
+                name: Some("namespace".into()),
+                descending: false,
+                collation: Some("BINARY".into()),
+                key: true,
+            },
+            IndexXinfoRow {
+                cid: 2,
+                name: Some("path".into()),
+                descending: false,
+                collation: Some("BINARY".into()),
+                key: true,
+            },
+            IndexXinfoRow {
+                cid: -2,
+                name: None,
+                descending: false,
+                collation: Some("BINARY".into()),
+                key: false,
+            },
+        ];
+        assert!(validate_index_terms(&invalid_auxiliary, &["namespace", "path"]).is_err());
     }
 
     #[test]
     fn sqlite_reports_auxiliary_rows_for_ordinary_and_unique_indexes() {
         let conn = v5();
-        let ordinary = index_xinfo(&conn, "idx_files_namespace_path").unwrap();
+        let ordinary = main_index_xinfo(&conn, "idx_files_namespace_path").unwrap();
         validate_index_terms(&ordinary, &["namespace", "path"]).unwrap();
 
         let unique_name: String = conn
@@ -1005,7 +954,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        let unique = index_xinfo(&conn, &unique_name).unwrap();
+        let unique = main_index_xinfo(&conn, &unique_name).unwrap();
         validate_index_terms(&unique, &["namespace", "path"]).unwrap();
         assert!(ordinary.iter().any(|row| !row.key));
         assert!(unique.iter().any(|row| !row.key));
