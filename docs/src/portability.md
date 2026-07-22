@@ -123,7 +123,9 @@ for (path, err) in &report.errors {
 
 ## Glob patterns
 
-`ScanOptions` supports glob patterns with `*`, `?`, and `{a,b}` expansion:
+`ScanOptions` supports `*`, `?`, and nested/multiple `{a,b}` alternatives.
+Wildcards match Unicode scalar values, case-sensitively on every platform,
+without Unicode normalization:
 
 ```rust
 use localcache::ScanOptions;
@@ -141,3 +143,8 @@ let opts2 = ScanOptions {
     ..Default::default()
 };
 ```
+
+Malformed braces, NUL, patterns over 16,384 UTF-8 bytes, nesting over 32
+levels, and expansion beyond 256 alternatives return `UnsupportedFeature`
+before directory iteration. File names that are not valid UTF-8 return
+`InvalidPath` rather than being skipped or converted lossily.

@@ -26,7 +26,8 @@ pub enum LocalFileCacheError {
     #[error("unsupported feature: {0}")]
     UnsupportedFeature(String),
 
-    /// The provided path cannot be resolved to a valid, canonical path.
+    /// The provided path cannot be represented as an exact valid UTF-8
+    /// database key.
     #[error("invalid path: {path}")]
     InvalidPath { path: PathBuf },
 

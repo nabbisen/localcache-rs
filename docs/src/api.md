@@ -134,12 +134,12 @@ ScanOptions {
 
 ## Path handling
 
-### Canonicalization contract
+### Canonicalization and stored-key contract
 
-Every API method that accepts a file path (`set`, `get`, `get_if_fresh`,
-`remove`, `contains`, `check_status`, …) calls `Path::canonicalize()` on the
-input before touching the database.  The stored key is therefore the
-**canonical absolute path at write time**.
+When a source exists, path-taking APIs use its exact valid UTF-8 canonical
+path. Normal `set` operations therefore write a **canonical absolute path** as
+the database key. Portable records supplied to `import_entries` retain their
+exact valid UTF-8 stored key instead of being rewritten.
 
 Consequences:
 
@@ -149,26 +149,31 @@ Consequences:
   resolve to the on-disk casing, so `set("File.TXT")` and `get("file.txt")`
   refer to the same entry.
 
-### Fallback for deleted files
+### Exact access after deletion
 
-When the input file no longer exists on disk, canonicalization fails.
-`get`, `contains`, `remove`, and `check_status` fall back to the **raw path
-string** for the lookup, so entries for deleted files remain accessible:
+When a source no longer exists, `get`, `contains`, `remove`, and `explain`
+look up only the caller's **exact stored key**. They never guess using a
+basename, suffix, former symlink, relative alias, lossy conversion, or case
+variant. `get_if_fresh` returns `None`, `check_status` returns `Missing`, and
+`touch` returns `false` because freshness and warming require a source.
 
 ```rust
-let path = std::path::Path::new("/data/old_file.txt");
-engine.set(path, &payload)?;    // file exists, canonical path stored
-std::fs::remove_file(path)?;    // file gone from disk
+let path = std::path::Path::new("/data/old_file.txt").canonicalize()?;
+engine.set(&path, &payload)?; // canonical key stored
+std::fs::remove_file(&path)?;
 
-// Entry is still accessible via the raw path fallback:
-assert!(engine.contains(path)?);
-assert!(engine.remove(path)?);
+// The retained exact stored key still works:
+assert!(engine.contains(&path)?);
+assert!(engine.remove(&path)?);
 ```
 
-**Practical rule:** always go through the `localcache` API.  Do not compare
-stored path strings directly — your input paths are canonicalized before
-storage, and any future lookup with a different form (relative, symlinked,
-differently cased) will resolve correctly.
+**Practical rule:** retain the path returned by a cache entry, `keys`,
+`list_entries`, or a query when post-deletion access matters. While a source
+exists, relative and symlink paths still resolve to its canonical key. After
+deletion, aliases cannot be reconstructed because they were never stored.
+
+SQLite schema v5 stores path identities as `TEXT`. A path that is not valid
+UTF-8 returns `InvalidPath`; localcache never uses a lossy string as a key.
 
 ### `cleanup_missing_files` semantics
 

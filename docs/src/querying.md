@@ -74,7 +74,7 @@ let results = engine.query()
 |---|---|
 | `.path_like(pattern)` | SQL `LIKE` pattern on stored path (`%` = any sequence, `_` = one char) |
 | `.path_in_dir(dir, recursive)` | Exact directory scoping — no over-fetch, metacharacter-safe |
-| `.path_glob(pattern)` | Glob on stored path: `*`, `?`, `{a,b}` alternation |
+| `.path_glob(pattern)` | Case-sensitive Unicode-scalar glob on stored path: `*`, `?`, nested/multiple `{a,b}` alternatives |
 | `.index_hint(name)` | Nominate a SQLite index for the path-listing scan |
 | `.dry_run()` | Return `EXPLAIN QUERY PLAN` output without loading payloads |
 
@@ -248,8 +248,14 @@ let top = engine.query()
     .run()?;
 ```
 
-Supported: `*` (any sequence), `?` (one character), `{a,b}` alternation.
-A literal `[` in a pattern matches `[` (character classes are unsupported).
+Supported: `*` (any sequence of Unicode scalar values), `?` (one scalar), and
+nested or multiple `{a,b}` alternatives. Matching is case-sensitive on every
+platform and performs no Unicode normalization. A literal `[` matches `[`
+(character classes are unsupported).
+
+Unmatched braces, NUL, and bounded pattern-expansion violations return a
+stable `UnsupportedFeature` error from `run()` or `dry_run()` before database
+work. The fluent `path_glob` setter remains infallible.
 
 ### Combining predicates
 

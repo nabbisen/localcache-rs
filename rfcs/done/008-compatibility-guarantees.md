@@ -157,3 +157,12 @@ synthetic data.
    Proposed: no — `config::legacy()` makes current-release fixtures
    representative; multiplying binaries adds repo weight without new
    coverage.  Revisit if a schema migration ever lands.
+
+## Correction in RFC 013
+
+[RFC 013](../accepted/013-panic-free-path-glob-and-cli-text-handling.md)
+clarifies the deleted-source guarantee. Normal writes retain a canonical
+valid UTF-8 stored key; imported records may retain a portable key. After a
+source disappears, observation and removal use only the caller's exact stored
+key. Basename, suffix, former-symlink, relative, and lossy aliases are not
+recoverable and are never guessed.

@@ -174,9 +174,9 @@ fn path_relative_and_absolute_resolve_to_same_entry() {
 }
 
 #[test]
-fn deleted_file_entry_reachable_by_raw_path_fallback() {
+fn deleted_file_entry_reachable_by_exact_stored_key() {
     // After a file is deleted from disk, its cache entry is still
-    // accessible via contains() and remove() using the raw stored path.
+    // accessible via contains() and remove() using its exact stored key.
     let dir = TempDir::new().unwrap();
     let engine: CacheEngine<Vec<f32>> =
         CacheEngine::builder().database(":memory:").build().unwrap();
@@ -189,11 +189,11 @@ fn deleted_file_entry_reachable_by_raw_path_fallback() {
     fs::remove_file(&path).unwrap();
     assert!(!path.exists());
 
-    // contains() must still find the entry (raw-path fallback).
+    // contains() must still find the exact stored key.
     let found = engine.contains(&path).unwrap();
     assert!(found, "entry must remain after file deletion");
 
-    // remove() must succeed via raw-path fallback.
+    // remove() must succeed via the exact stored key.
     let removed = engine.remove(&path).unwrap();
     assert!(removed, "remove() must find and delete the entry");
     assert_eq!(engine.entry_count().unwrap(), 0);

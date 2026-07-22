@@ -143,10 +143,10 @@ pub struct QueryBuilder<'e, T> {
     pub(crate) path_like: Option<String>,
     /// Nominates a specific SQLite index for the `files` table scan.
     pub(crate) index_hint: Option<String>,
-    /// Directory prefix filter: (normalized prefix including trailing separator, recursive).
-    pub(crate) path_in_dir: Option<(String, bool)>,
-    /// SQLite GLOB alternatives (after brace expansion and `[`→`[[]` translation).
-    pub(crate) path_glob: Option<Vec<String>>,
+    /// Raw directory filter; resolution is deferred to fallible terminals.
+    pub(crate) path_in_dir: Option<(PathBuf, bool)>,
+    /// Raw glob pattern; bounded compilation is deferred to fallible terminals.
+    pub(crate) path_glob: Option<String>,
     /// Multiple sort keys applied in order (primary, secondary, …).
     pub(crate) order_by: Vec<OrderBy>,
 }
@@ -170,9 +170,10 @@ where
     /// `recursive = false` matches only **direct children** of `dir` (no
     /// subdirectories).  `recursive = true` matches the entire subtree.
     ///
-    /// `dir` is canonicalized when it exists on disk; when it does not exist
-    /// (e.g. a deleted directory) the path string is used verbatim, so the
-    /// query still matches whatever entries were stored under it.
+    /// `dir` is resolved at `run()`/`dry_run()`: it is canonicalized when it
+    /// exists, while a missing directory uses its exact path string so stored
+    /// entries remain queryable. Other I/O failures propagate, and paths that
+    /// cannot be represented as valid UTF-8 return `InvalidPath`.
     ///
     /// Characters that are special in SQL `LIKE` (backslash, `%`, `_`) are
     /// escaped automatically — directory names containing those characters
@@ -195,31 +196,25 @@ where
     /// # Ok::<(), localcache::LocalFileCacheError>(())
     /// ```
     pub fn path_in_dir(mut self, dir: impl AsRef<std::path::Path>, recursive: bool) -> Self {
-        let dir_path = dir.as_ref();
-        let resolved = match crate::path::normalize_path(dir_path) {
-            Ok(p) => p,
-            // Directory gone from disk — use raw path so stored entries can still be found.
-            Err(LocalFileCacheError::FileNotFound { .. }) | Err(_) => dir_path.to_path_buf(),
-        };
-        // Build the prefix string: canonical dir path + platform separator.
-        let mut prefix = resolved.to_string_lossy().into_owned();
-        if !prefix.ends_with(std::path::MAIN_SEPARATOR) {
-            prefix.push(std::path::MAIN_SEPARATOR);
-        }
-        self.path_in_dir = Some((prefix, recursive));
+        self.path_in_dir = Some((dir.as_ref().to_path_buf(), recursive));
         self
     }
 
     /// Restrict to entries whose stored path matches a glob `pattern`.
     ///
     /// Uses the same dialect as [`crate::ScanOptions::glob_pattern`]:
-    /// - `*` — any sequence of characters (including none)
-    /// - `?` — exactly one character
-    /// - `{a,b,c}` — brace alternation (expanded before matching)
+    /// - `*` — any sequence of Unicode scalar values (including none)
+    /// - `?` — exactly one Unicode scalar value
+    /// - `{a,b,c}` — nested and multiple brace alternatives
     ///
-    /// The match is applied to the **full stored path**, case-sensitively.
+    /// The match is applied to the **full stored path**, case-sensitively on
+    /// every platform, without Unicode normalization.
     /// A literal `[` in a pattern is matched as-is; unlike the SQLite
     /// `GLOB` operator, character classes (`[abc]`) are not supported.
+    ///
+    /// Pattern validation is deferred to `run()`/`dry_run()`. Unmatched braces,
+    /// NUL, and bounded safety-limit violations return `UnsupportedFeature`
+    /// before database work.
     ///
     /// > Note: `*` and `?` in the pattern always act as wildcards.  If you
     /// > need a literal `*` or `?` in a path segment, use `path_like` with
@@ -237,16 +232,7 @@ where
     /// # Ok::<(), localcache::LocalFileCacheError>(())
     /// ```
     pub fn path_glob(mut self, pattern: impl Into<String>) -> Self {
-        let pattern = pattern.into();
-        // Expand `{a,b}` into individual alternatives, then translate
-        // the `*`/`?` subset to SQLite GLOB syntax.  The only translation
-        // needed is escaping `[` as `[[]` so it matches literally (our
-        // dialect does not support character classes).
-        let alternatives: Vec<String> = crate::cache::engine::expand_braces(&pattern)
-            .into_iter()
-            .map(|alt| alt.replace('[', "[[]"))
-            .collect();
-        self.path_glob = Some(alternatives);
+        self.path_glob = Some(pattern.into());
         self
     }
     ///
@@ -300,13 +286,14 @@ where
     /// ```
     pub fn dry_run(self) -> Result<String, LocalFileCacheError> {
         use crate::db::repository;
+        let prepared = self.prepare_path_filters()?;
         repository::explain_query(
             &self.engine.conn,
             &self.engine.namespace,
             self.path_like.as_deref(),
             self.index_hint.as_deref(),
-            self.path_in_dir.as_ref().map(|(s, r)| (s.as_str(), *r)),
-            self.path_glob.as_deref(),
+            prepared.path_in_dir(),
+            prepared.path_glob(),
         )
     }
 
@@ -495,6 +482,55 @@ where
     pub fn run(self) -> Result<Vec<CacheEntry<T>>, LocalFileCacheError> {
         execute_query(self)
     }
+
+    fn prepare_path_filters(&self) -> Result<PreparedPathFilters, LocalFileCacheError> {
+        let path_in_dir = self
+            .path_in_dir
+            .as_ref()
+            .map(|(dir, recursive)| {
+                let resolved = match crate::path::normalize_path(dir) {
+                    Ok(canonical) => canonical,
+                    Err(LocalFileCacheError::FileNotFound { .. }) => dir.clone(),
+                    Err(error) => return Err(error),
+                };
+                let mut prefix = crate::path::path_to_str(&resolved)?.to_owned();
+                if !prefix.ends_with(std::path::MAIN_SEPARATOR) {
+                    prefix.push(std::path::MAIN_SEPARATOR);
+                }
+                Ok((prefix, *recursive))
+            })
+            .transpose()?;
+
+        let path_glob = self
+            .path_glob
+            .as_deref()
+            .map(crate::cache::glob::compile)
+            .transpose()?;
+
+        Ok(PreparedPathFilters {
+            path_in_dir,
+            path_glob,
+        })
+    }
+}
+
+struct PreparedPathFilters {
+    path_in_dir: Option<(String, bool)>,
+    path_glob: Option<crate::cache::glob::CompiledGlob>,
+}
+
+impl PreparedPathFilters {
+    fn path_in_dir(&self) -> Option<(&str, bool)> {
+        self.path_in_dir
+            .as_ref()
+            .map(|(prefix, recursive)| (prefix.as_str(), *recursive))
+    }
+
+    fn path_glob(&self) -> Option<&[String]> {
+        self.path_glob
+            .as_ref()
+            .map(crate::cache::glob::CompiledGlob::sqlite_alternatives)
+    }
 }
 
 pub(crate) fn execute_query<T>(
@@ -505,13 +541,15 @@ where
 {
     use crate::db::repository;
 
+    let prepared = q.prepare_path_filters()?;
+
     let paths = repository::keys(
         &q.engine.conn,
         &q.engine.namespace,
         q.path_like.as_deref(),
         q.index_hint.as_deref(),
-        q.path_in_dir.as_ref().map(|(s, r)| (s.as_str(), *r)),
-        q.path_glob.as_deref(),
+        prepared.path_in_dir(),
+        prepared.path_glob(),
     )?;
 
     // Tuple: (entry, json_value_or_null, last_accessed_at)

@@ -81,8 +81,9 @@ pub struct CacheStats {
 /// record can be round-tripped through JSON.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ExportRecord {
-    /// Canonical path stored in the database (may differ from the current
-    /// on-disk path if the file was moved).
+    /// Exact valid UTF-8 path key stored in the database. Normal `set` writes
+    /// use a canonical absolute path; imported records retain this supplied
+    /// portable key.
     pub path: String,
 
     /// Serialised payload in Base64 encoding.

@@ -11,6 +11,16 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+- Glob compilation is now bounded and panic-free for Unicode input, malformed
+  braces, nested/multiple alternatives, and oversized expansion. Directory
+  scans and SQLite path queries share one case-sensitive Unicode-scalar
+  dialect and reject invalid patterns before filesystem/database work.
+- Deleted-source reads, observation, and removal now use only an exact valid
+  UTF-8 stored key. Ambiguous basename/suffix deletion and lossy path identity
+  conversion are removed; imported portable keys remain unchanged.
+- CLI path truncation now preserves UTF-8 boundaries, and `inspect` renders
+  schema-v5 modification times as signed nanoseconds with nine fractional
+  digits. Seconds/nanoseconds formatting is total across each `i64` domain.
 - Read-only engines now validate an exact current schema without initializing
   or migrating it, reject explicit in-memory use, and enforce SQLite read-only
   flags plus `query_only`. All public mutation paths—including `touch`,

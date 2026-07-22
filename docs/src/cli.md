@@ -68,7 +68,7 @@ Entry exists:  true
 File exists:   true
 TTL:           not configured
 --- Metadata ---
-  mtime:     2025-01-01 00:00:00  current=2026-05-03 10:22:11  changed=true
+  mtime:     stored=2025-01-01 00:00:00.123456789 current=2026-05-03 10:22:11.987654321 changed=true
   file_size: 4.0 KiB              current=4.1 KiB              changed=true
 
 Summary: Both mtime and file_size differ.
@@ -91,6 +91,14 @@ localcache -d cache.sqlite3 scan ./data --recursive
 localcache -d cache.sqlite3 scan ./data --extensions txt,md
 localcache -d cache.sqlite3 scan ./data --glob "report_*.pdf"
 ```
+
+Glob matching is case-sensitive on every platform. `*` and `?` operate on
+Unicode scalar values, and nested/multiple `{a,b}` alternatives are supported.
+Malformed or over-limit patterns produce an error without starting the scan.
+
+`list` truncates long paths at Unicode scalar boundaries. `inspect` renders
+file modification times as UTC nanoseconds with nine fractional digits;
+entry update/access times remain Unix-second timestamps.
 
 ### `query`
 

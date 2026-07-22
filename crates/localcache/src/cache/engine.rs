@@ -17,7 +17,7 @@ use crate::detection::hash::{compute_full_hash, compute_partial_hash};
 use crate::detection::metadata::collect_metadata;
 use crate::detection::strategy::detect_change;
 use crate::error::LocalFileCacheError;
-use crate::path::normalize_path;
+use crate::path::{normalize_path, path_to_str, resolve_path_key};
 use crate::serialization::{decode_payload, encode_payload};
 
 /// Type alias for the LRU eviction callback stored in [`CacheEngine`].
@@ -212,6 +212,10 @@ where
 
     /// Return the cached entry for `path`, if one exists.
     ///
+    /// Existing sources resolve through canonicalization. If the source is
+    /// missing, only the caller's exact valid UTF-8 stored key is used; no
+    /// relative, symlink, basename, or suffix alias is guessed.
+    ///
     /// Updates `last_accessed_at` on a cache hit (LRU tracking).
     /// No change-detection or version check is performed.
     pub fn get<P>(&self, path: P) -> Result<Option<CacheEntry<T>>, LocalFileCacheError>
@@ -227,8 +231,8 @@ where
             "namespace" => self.namespace.clone())
         .increment(1);
 
-        let canonical = normalize_path(path.as_ref())?;
-        let path_str = path_to_str(&canonical)?;
+        let resolved = resolve_path_key(path.as_ref())?;
+        let path_str = resolved.key();
 
         let Some(row) = repository::find_file(&self.conn, &self.namespace, path_str)? else {
             #[cfg(feature = "tracing")]
@@ -270,12 +274,12 @@ where
     where
         P: AsRef<Path>,
     {
-        let canonical = match normalize_path(path.as_ref()) {
-            Ok(p) => p,
-            Err(LocalFileCacheError::FileNotFound { .. }) => return Ok(None),
-            Err(e) => return Err(e),
-        };
-        let path_str = path_to_str(&canonical)?;
+        let resolved = resolve_path_key(path.as_ref())?;
+        if !resolved.exists() {
+            return Ok(None);
+        }
+        let canonical = resolved.path();
+        let path_str = resolved.key();
 
         let Some(row) = repository::find_file(&self.conn, &self.namespace, path_str)? else {
             return Ok(None);
@@ -286,7 +290,7 @@ where
         if self.payload_version > 0 && row.payload_version != self.payload_version {
             return Ok(None);
         }
-        match detect_change(&canonical, &row.metadata, self.mode)? {
+        match detect_change(canonical, &row.metadata, self.mode)? {
             CacheStatus::Stale | CacheStatus::Missing => return Ok(None),
             CacheStatus::Fresh => {}
         }
@@ -453,26 +457,8 @@ where
         P: AsRef<Path>,
     {
         self.guard_write()?;
-        match normalize_path(path.as_ref()) {
-            Ok(canonical) => {
-                let path_str = path_to_str(&canonical)?;
-                return repository::delete_by_path(&self.conn, &self.namespace, path_str);
-            }
-            Err(LocalFileCacheError::FileNotFound { .. }) => {}
-            Err(e) => return Err(e),
-        }
-        let raw = path.as_ref().to_string_lossy();
-        let stored = repository::all_paths_in_namespace(&self.conn, &self.namespace)?;
-        for s in &stored {
-            if s.as_str() == raw.as_ref()
-                || (s.ends_with(raw.as_ref())
-                    && Path::new(s).file_name().and_then(|n| n.to_str())
-                        == Path::new(raw.as_ref()).file_name().and_then(|n| n.to_str()))
-            {
-                return repository::delete_by_path(&self.conn, &self.namespace, s);
-            }
-        }
-        repository::delete_by_path(&self.conn, &self.namespace, raw.as_ref())
+        let resolved = resolve_path_key(path.as_ref())?;
+        repository::delete_by_path(&self.conn, &self.namespace, resolved.key())
     }
 
     // ------------------------------------------------------------------
@@ -491,16 +477,14 @@ where
         )
         .entered();
 
-        let canonical = match normalize_path(path.as_ref()) {
-            Ok(p) => p,
-            Err(LocalFileCacheError::FileNotFound { .. }) => {
-                #[cfg(feature = "tracing")]
-                tracing::debug!(status = "Missing");
-                return Ok(CacheStatus::Missing);
-            }
-            Err(e) => return Err(e),
-        };
-        let path_str = path_to_str(&canonical)?;
+        let resolved = resolve_path_key(path.as_ref())?;
+        if !resolved.exists() {
+            #[cfg(feature = "tracing")]
+            tracing::debug!(status = "Missing");
+            return Ok(CacheStatus::Missing);
+        }
+        let canonical = resolved.path();
+        let path_str = resolved.key();
         let Some(row) = repository::find_file(&self.conn, &self.namespace, path_str)? else {
             #[cfg(feature = "tracing")]
             tracing::debug!(status = "Missing");
@@ -521,7 +505,7 @@ where
             );
             return Ok(CacheStatus::Stale);
         }
-        let status = detect_change(&canonical, &row.metadata, self.mode)?;
+        let status = detect_change(canonical, &row.metadata, self.mode)?;
         #[cfg(feature = "tracing")]
         tracing::debug!(status = ?status);
         Ok(status)
@@ -544,27 +528,16 @@ where
         use crate::detection::metadata::collect_metadata;
 
         let path = path.as_ref();
-
-        // Try to canonicalise; record whether the file exists.
-        let (canonical, file_exists) = match normalize_path(path) {
-            Ok(p) => (p, true),
-            Err(LocalFileCacheError::FileNotFound { .. }) => (path.to_path_buf(), false),
-            Err(e) => return Err(e),
-        };
-        let path_str = canonical.to_str().unwrap_or("");
-
-        let entry_row = if file_exists {
-            repository::find_file(&self.conn, &self.namespace, path_str)?
-        } else {
-            // Try raw path string when file is gone.
-            repository::find_file(&self.conn, &self.namespace, &path.to_string_lossy())?
-        };
+        let resolved = resolve_path_key(path)?;
+        let file_exists = resolved.exists();
+        let canonical = resolved.path();
+        let entry_row = repository::find_file(&self.conn, &self.namespace, resolved.key())?;
 
         let entry_exists = entry_row.is_some();
 
         if !entry_exists {
             return Ok(Diagnosis {
-                path: canonical.clone(),
+                path: canonical.to_path_buf(),
                 status: CacheStatus::Missing,
                 entry_exists: false,
                 file_exists,
@@ -607,7 +580,7 @@ where
 
         // Metadata + hash diff (only if file exists).
         let (metadata_diff, hash_match) = if file_exists {
-            let current = collect_metadata(&canonical)?;
+            let current = collect_metadata(canonical)?;
             let diff = MetadataDiff {
                 stored_mtime: row.metadata.mtime,
                 current_mtime: current.mtime,
@@ -618,7 +591,7 @@ where
             };
             // Compare hash if one was stored.
             let hm = if let Some(stored_hash) = &row.metadata.hash {
-                let current_hash = compute_full_hash(&canonical).ok();
+                let current_hash = compute_full_hash(canonical).ok();
                 current_hash.map(|h| {
                     let stored_base = stored_hash
                         .strip_prefix(crate::detection::hash::PARTIAL_PREFIX)
@@ -668,7 +641,7 @@ where
         };
 
         Ok(Diagnosis {
-            path: canonical,
+            path: canonical.to_path_buf(),
             status,
             entry_exists,
             file_exists,
@@ -700,8 +673,9 @@ where
 
     /// Scan `dir` with fine-grained filtering via [`ScanOptions`].
     ///
-    /// Supports extension filtering, `max_depth`, and glob patterns on file
-    /// names (`*` matches any sequence; `?` matches exactly one character).
+    /// Supports extension filtering, `max_depth`, and case-sensitive glob
+    /// patterns on file names (`*`, `?`, and nested/multiple `{a,b}` groups).
+    /// Wildcards operate on Unicode scalar values on every platform.
     pub fn scan_dir_filtered<P: AsRef<Path>>(
         &self,
         dir: P,
@@ -718,7 +692,7 @@ where
         let glob = options
             .glob_pattern
             .as_deref()
-            .map(glob_to_regex)
+            .map(crate::cache::glob::compile)
             .transpose()?;
 
         let files = walk_dir_filtered(dir, &options, &glob, 0)?;
@@ -1217,8 +1191,8 @@ where
     ///
     /// # Path semantics
     ///
-    /// Stored paths are **canonical absolute paths** recorded at `set` time
-    /// (via `Path::canonicalize()`).  This method iterates those stored
+    /// Normal `set` paths are canonical absolute paths; imported records may
+    /// retain a portable valid UTF-8 key. This method iterates exact stored
     /// strings and calls `Path::exists()` on each one **without
     /// re-canonicalizing**.
     ///
@@ -1279,21 +1253,13 @@ where
     ///
     /// This is cheaper than `get()` because it does not load the payload.
     pub fn contains<P: AsRef<Path>>(&self, path: P) -> Result<bool, LocalFileCacheError> {
-        let canonical = match crate::path::normalize_path(path.as_ref()) {
-            Ok(p) => p,
-            Err(LocalFileCacheError::FileNotFound { .. }) => {
-                // File gone from disk — check by raw path string.
-                let raw = path.as_ref().to_string_lossy();
-                return repository::exists(&self.conn, &self.namespace, raw.as_ref());
-            }
-            Err(e) => return Err(e),
-        };
-        let path_str = path_to_str(&canonical)?;
-        repository::exists(&self.conn, &self.namespace, path_str)
+        let resolved = resolve_path_key(path.as_ref())?;
+        repository::exists(&self.conn, &self.namespace, resolved.key())
     }
 
-    /// Return the canonical paths of all entries in the current namespace,
-    /// sorted lexicographically.
+    /// Return the exact stored paths of all entries in the current namespace,
+    /// sorted lexicographically. Normal `set` entries are canonical; imported
+    /// records may retain portable keys.
     ///
     /// Optionally filter by a SQLite `LIKE` pattern applied to the stored
     /// path string (`%` matches any sequence, `_` matches one character).
@@ -1355,12 +1321,11 @@ where
     /// this engine is read-only.
     pub fn touch<P: AsRef<Path>>(&self, path: P) -> Result<bool, LocalFileCacheError> {
         self.guard_write()?;
-        let canonical = match normalize_path(path.as_ref()) {
-            Ok(p) => p,
-            Err(LocalFileCacheError::FileNotFound { .. }) => return Ok(false),
-            Err(e) => return Err(e),
-        };
-        let path_str = path_to_str(&canonical)?;
+        let resolved = resolve_path_key(path.as_ref())?;
+        if !resolved.exists() {
+            return Ok(false);
+        }
+        let path_str = resolved.key();
         let Some(row) = repository::find_file(&self.conn, &self.namespace, path_str)? else {
             return Ok(false);
         };
@@ -1472,13 +1437,6 @@ where
 // Free helpers (pub(crate) for async_engine)
 // ---------------------------------------------------------------------------
 
-pub(crate) fn path_to_str(path: &Path) -> Result<&str, LocalFileCacheError> {
-    path.to_str()
-        .ok_or_else(|| LocalFileCacheError::InvalidPath {
-            path: path.to_path_buf(),
-        })
-}
-
 pub(crate) fn compute_hash_for_mode(
     path: &Path,
     mode: ChangeDetectionMode,
@@ -1521,217 +1479,13 @@ fn uri_encode_path(path: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Glob matching (with brace expansion)
-// ---------------------------------------------------------------------------
-
-/// A compiled glob pattern that may represent multiple alternatives after
-/// brace expansion (`{a,b,c}` → three sub-patterns).
-struct GlobPattern {
-    /// One or more `*`/`?` patterns to match against.  A file name matches if
-    /// it matches **any** of these patterns.
-    alternatives: Vec<SingleGlob>,
-}
-
-/// A single compiled glob pattern (no brace expansion).
-struct SingleGlob {
-    _raw: String,
-    parts: Vec<String>,
-    trailing_star: bool,
-}
-
-/// Compile `pattern` into a [`GlobPattern`], expanding `{a,b,c}` brace groups.
-///
-/// Only the first brace group is expanded (non-recursive); nesting and
-/// multiple groups in one pattern are not yet supported.
-fn glob_to_regex(pattern: &str) -> Result<GlobPattern, LocalFileCacheError> {
-    let expanded = expand_braces(pattern);
-    let alternatives = expanded
-        .into_iter()
-        .map(|p| {
-            let parts: Vec<String> = p.split('*').map(|s| s.to_owned()).collect();
-            let trailing_star = p.ends_with('*');
-            SingleGlob {
-                _raw: p,
-                parts,
-                trailing_star,
-            }
-        })
-        .collect();
-    Ok(GlobPattern { alternatives })
-}
-
-impl GlobPattern {
-    fn matches(&self, text: &str) -> bool {
-        self.alternatives
-            .iter()
-            .any(|g| glob_match(&g.parts, g.trailing_star, text))
-    }
-}
-
-/// Expand **all** `{a,b,...}` brace groups in `pattern` recursively,
-/// producing the Cartesian product of all alternatives.
-///
-/// Nested brace groups within alternatives are supported:
-/// * `"{a,{b,c}}.txt"` → `["a.txt", "b.txt", "c.txt"]`
-/// * `"{pre,post}_{x,y}.txt"` → 4 combinations
-pub(crate) fn expand_braces(pattern: &str) -> Vec<String> {
-    // Find the first `{` and its *matching* `}` (tracking nesting depth).
-    let bytes = pattern.as_bytes();
-    if let Some(open) = bytes.iter().position(|&b| b == b'{') {
-        let mut depth = 0usize;
-        let mut close = None;
-        for (i, &b) in bytes.iter().enumerate().skip(open) {
-            match b {
-                b'{' => depth += 1,
-                b'}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        close = Some(i);
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-        if let Some(close) = close {
-            let prefix = &pattern[..open];
-            let suffix = &pattern[close + 1..];
-            let inner = &pattern[open + 1..close];
-            // Split on top-level commas (not inside nested braces).
-            let alternatives = split_top_level(inner);
-            return alternatives
-                .into_iter()
-                .flat_map(|alt| expand_braces(&format!("{prefix}{alt}{suffix}")))
-                .collect();
-        }
-    }
-    vec![pattern.to_owned()]
-}
-
-/// Split `s` on commas that are not inside any `{...}` group.
-pub(crate) fn split_top_level(s: &str) -> Vec<String> {
-    let mut parts = Vec::new();
-    let mut depth = 0usize;
-    let mut start = 0;
-    for (i, b) in s.bytes().enumerate() {
-        match b {
-            b'{' => depth += 1,
-            b'}' => depth -= 1,
-            b',' if depth == 0 => {
-                parts.push(s[start..i].to_owned());
-                start = i + 1;
-            }
-            _ => {}
-        }
-    }
-    parts.push(s[start..].to_owned());
-    parts
-}
-
-/// Recursive glob matcher.
-///
-/// `parts` are the substrings between consecutive `*` wildcards; `?` within
-/// each part matches exactly one character.
-fn glob_match(parts: &[String], trailing_star: bool, text: &str) -> bool {
-    if parts.is_empty() {
-        return trailing_star || text.is_empty();
-    }
-    if parts.len() == 1 && !trailing_star {
-        // No `*` in pattern → must match exactly (but `?` can vary).
-        return question_match(&parts[0], text);
-    }
-
-    // First part must match at the beginning of `text`.
-    let first = &parts[0];
-    if !text.starts_with_question(first) {
-        return false;
-    }
-    let after_first = &text[question_len(first)..];
-
-    // Each subsequent part must appear somewhere after the previous match.
-    let mut remaining = after_first;
-    for part in &parts[1..parts.len() - 1] {
-        if let Some(pos) = find_question(part, remaining) {
-            remaining = &remaining[pos + question_len(part)..];
-        } else {
-            return false;
-        }
-    }
-
-    // Last part.
-    let last = parts.last().unwrap();
-    if trailing_star {
-        // Last segment can match anywhere.
-        find_question(last, remaining).is_some()
-    } else {
-        // Last segment must match at the end.
-        remaining.len() >= question_len(last)
-            && question_match(last, &remaining[remaining.len() - question_len(last)..])
-    }
-}
-
-// Helper: length in chars of a `?`-containing pattern segment.
-fn question_len(pattern: &str) -> usize {
-    pattern.chars().count()
-}
-
-// Helper: does `text` exactly match `pattern` where `?` matches one char?
-fn question_match(pattern: &str, text: &str) -> bool {
-    let mut pt = pattern.chars();
-    let mut tt = text.chars();
-    loop {
-        match (pt.next(), tt.next()) {
-            (None, None) => return true,
-            (Some('?'), Some(_)) => {}
-            (Some(p), Some(t)) if p == t => {}
-            _ => return false,
-        }
-    }
-}
-
-// Helper: find the first position in `text` where `pattern` starts (question matching).
-fn find_question(pattern: &str, text: &str) -> Option<usize> {
-    let plen = question_len(pattern);
-    if plen == 0 {
-        return Some(0);
-    }
-    let chars: Vec<char> = text.chars().collect();
-    if chars.len() < plen {
-        return None;
-    }
-    for i in 0..=(chars.len() - plen) {
-        let slice: String = chars[i..i + plen].iter().collect();
-        if question_match(pattern, &slice) {
-            return Some(i);
-        }
-    }
-    None
-}
-
-// Extension trait for starts_with with `?` patterns.
-trait StartsWithQuestion {
-    fn starts_with_question(&self, pattern: &str) -> bool;
-}
-
-impl StartsWithQuestion for str {
-    fn starts_with_question(&self, pattern: &str) -> bool {
-        let plen = question_len(pattern);
-        if self.chars().count() < plen {
-            return false;
-        }
-        let prefix: String = self.chars().take(plen).collect();
-        question_match(pattern, &prefix)
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Directory walking
 // ---------------------------------------------------------------------------
 
 fn walk_dir_filtered(
     dir: &Path,
     opts: &ScanOptions,
-    glob: &Option<GlobPattern>,
+    glob: &Option<crate::cache::glob::CompiledGlob>,
     current_depth: usize,
 ) -> Result<Vec<PathBuf>, LocalFileCacheError> {
     let mut files = Vec::new();
@@ -1742,20 +1496,27 @@ fn walk_dir_filtered(
         let path = entry.path();
 
         if ft.is_file() {
+            // Validate the complete scan candidate before any filter can skip
+            // it. SQLite TEXT identity cannot represent a non-UTF-8 filename.
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or_else(|| LocalFileCacheError::InvalidPath { path: path.clone() })?;
             // Extension filter.
             if !opts.extensions.is_empty() {
-                let ext = path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or("")
-                    .to_lowercase();
+                let ext = match path.extension() {
+                    Some(extension) => extension
+                        .to_str()
+                        .ok_or_else(|| LocalFileCacheError::InvalidPath { path: path.clone() })?,
+                    None => "",
+                }
+                .to_lowercase();
                 if !opts.extensions.iter().any(|e| e.to_lowercase() == ext) {
                     continue;
                 }
             }
             // Glob filter (matched against file name, not full path).
             if let Some(pat) = glob {
-                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
                 if !pat.matches(name) {
                     continue;
                 }

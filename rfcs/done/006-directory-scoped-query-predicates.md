@@ -183,3 +183,11 @@ clause and `GLOB` keyword.  No injection surface beyond the existing
 2. Should `path_in_dir` accept multiple calls (OR semantics over several
    directories)?  Deferred — single-call AND semantics covers the known
    use cases; multi-dir can be a later additive change.
+
+## Correction in RFC 013
+
+[RFC 013](../accepted/013-panic-free-path-glob-and-cli-text-handling.md)
+defines the shared glob dialect precisely as case-sensitive Unicode-scalar
+matching, adds bounded brace validation/expansion, and defers fallible query
+preparation to `run()`/`dry_run()`. This corrects implementation details
+without changing this RFC's shipped `*`, `?`, and `{a,b}` public scope.

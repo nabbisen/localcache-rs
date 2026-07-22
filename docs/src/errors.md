@@ -11,7 +11,7 @@ All `localcache` operations return `Result<T, LocalFileCacheError>`.
 | `Serialization(String)` | bincode encode/decode failed | Payload type mismatch; check `payload_version` |
 | `FileNotFound { path }` | Source file does not exist | Normal — check with `check_status` first |
 | `UnsupportedFeature(String)` | Feature or operation not available | Check Cargo features; read the message |
-| `InvalidPath { path }` | Path cannot be canonicalised | Ensure the path string is valid UTF-8 |
+| `InvalidPath { path }` | Path cannot be represented as an exact SQLite `TEXT` key | Use a valid UTF-8 filesystem/database path |
 | `ReadOnly` | Mutation requested on a read-only engine | Use a deliberately writable engine if mutation is intended |
 | `UnknownEncoding(String)` | Stored encoding tag not recognised | Wrong feature enabled for decoding |
 | `PayloadVersionMismatch { stored, expected }` | Version tag mismatch | Call `purge_stale_versions()` |
@@ -41,8 +41,17 @@ match engine.get_if_fresh("file.txt") {
 
 ### Ignoring missing files
 
-`FileNotFound` is normal when a file has been deleted — it just means
-the cache has no entry for that path.
+`FileNotFound` is normal when a source-required operation such as `set` races
+with deletion. It means the operation could not read the source; it does not
+describe whether an exact stored cache key exists.
+
+Read/delete operations can still address a deleted source by its exact valid
+UTF-8 stored key. Freshness methods report it as missing. Relative, symlink,
+basename, and suffix aliases are not guessed after deletion.
+
+Malformed or resource-excessive glob patterns use `UnsupportedFeature` with a
+stable non-echoing message. Scan and query terminals validate these patterns
+before walking a directory or starting database work.
 
 ```rust
 use localcache::LocalFileCacheError;

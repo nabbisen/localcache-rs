@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::time::{Duration, UNIX_EPOCH};
 
 use localcache::{CacheEngine, CacheOptions};
 use tempfile::TempDir;
@@ -158,6 +159,88 @@ fn migrate_may_upgrade_its_source_and_populates_destination() {
         })
         .unwrap();
     }
+}
+
+#[test]
+fn list_truncates_long_unicode_paths_without_panicking() {
+    let directory = TempDir::new().unwrap();
+    let database = directory.path().join("unicode-list.sqlite3");
+    let name = format!("{}.bin", "é".repeat(70));
+    let source = write_file(&directory, &name, b"x");
+    {
+        let writer: CacheEngine<Vec<u8>> =
+            CacheEngine::builder().database(&database).build().unwrap();
+        writer.set(&source, &vec![1]).unwrap();
+    }
+
+    let output = localcache(&database, &["list"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let display = source.display().to_string();
+    let expected = format!(
+        "…{}",
+        display
+            .chars()
+            .skip(display.chars().count() - 54)
+            .collect::<String>()
+    );
+    assert!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .contains(&expected)
+    );
+}
+
+#[test]
+fn inspect_renders_mtime_as_nanoseconds() {
+    let directory = TempDir::new().unwrap();
+    let database = directory.path().join("mtime-inspect.sqlite3");
+    let source = write_file(&directory, "mtime.bin", b"x");
+    let file = fs::OpenOptions::new().write(true).open(&source).unwrap();
+    file.set_times(
+        fs::FileTimes::new().set_modified(UNIX_EPOCH + Duration::from_nanos(1_234_567_890)),
+    )
+    .unwrap();
+    {
+        let writer: CacheEngine<Vec<u8>> =
+            CacheEngine::builder().database(&database).build().unwrap();
+        writer.set(&source, &vec![1]).unwrap();
+    }
+
+    let output = localcache(&database, &["inspect", source.to_str().unwrap()]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("1970-01-01 00:00:01.234567890"), "{stdout}");
+}
+
+#[test]
+fn scan_reports_malformed_glob_without_panicking() {
+    let directory = TempDir::new().unwrap();
+    let database = directory.path().join("malformed-glob.sqlite3");
+    {
+        CacheEngine::<Vec<u8>>::builder()
+            .database(&database)
+            .build()
+            .unwrap();
+    }
+    let output = localcache(
+        &database,
+        &["scan", directory.path().to_str().unwrap(), "--glob", "}"],
+    );
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("invalid glob pattern: malformed brace syntax"),
+        "{stderr}"
+    );
+    assert!(!stderr.to_lowercase().contains("panicked"));
 }
 
 #[cfg(feature = "watching")]

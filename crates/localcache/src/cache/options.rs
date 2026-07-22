@@ -101,9 +101,11 @@ pub struct ScanOptions {
 
     /// Glob pattern matched against the **file name** (not the full path).
     ///
-    /// Supports `*` (any sequence of characters) and `?` (exactly one
-    /// character).  The match is case-sensitive on Unix and case-insensitive
-    /// on Windows, following platform conventions.
+    /// Supports `*` (any sequence of Unicode scalar values), `?` (exactly one
+    /// scalar), and nested/multiple `{a,b}` alternatives. Matching is
+    /// case-sensitive on every platform and performs no Unicode
+    /// normalization. Malformed or resource-excessive patterns are reported
+    /// by `scan_dir_filtered`/`preload` before directory iteration.
     ///
     /// Examples: `"*.txt"`, `"report_???.md"`, `"data_*"`.
     ///
