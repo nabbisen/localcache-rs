@@ -135,6 +135,12 @@ RFC 010 implementation was independently accepted on 2026-07-21 at commit
 closure does not authorize a release action or move RFC 010 or RFC 011 from
 `rfcs/accepted/`.
 
+RFC 012 implementation was independently accepted on 2026-07-22 at commit
+`6c14df3`, closing B-04. M3 remains open until RFC 013 and the combined
+mutation/input-safety exit gate are independently accepted. This finding
+closure does not authorize release work or move RFC 012 from
+`rfcs/accepted/`.
+
 The virtual-workspace relocation at `fe9fe88` was accepted for continued
 development on 2026-07-21. Publication remains blocked until M6 supplies and
 verifies the root-authoritative `LICENSE` and `NOTICE` content in each generated
@@ -151,7 +157,7 @@ to RFC 000.
 | **009** | Reproducible Source Archives and Release Gates | B-01, B-07 | M1, completed in M6 | Required implementation and QA handoff after acceptance |
 | **[010](rfcs/accepted/010-transactional-payload-preserving-schema-migrations.md)** | Transactional, Payload-Preserving Schema Migrations | B-02 (closed by `95fd1a0`) | M2 | Implementation and fixture handoffs accepted |
 | **[011](rfcs/accepted/011-safe-sqlite-identifier-boundary.md)** | Safe SQLite Identifier Boundary | B-03 (closed by `d4fe505`) | M2 | Hostile-input QA checklist accepted |
-| **[012](rfcs/accepted/012-read-only-schema-and-mutation-contract.md)** | Read-only Schema and Mutation Contract | B-04 | M3 | Accepted API-boundary implementation matrix |
+| **[012](rfcs/accepted/012-read-only-schema-and-mutation-contract.md)** | Read-only Schema and Mutation Contract | B-04 (closed by `6c14df3`) | M3 | API-boundary implementation matrix accepted; no handoff required |
 | **013** | Panic-free Path, Glob, and CLI Text Handling | B-05 and related path findings | M3 | Optional property-test handoff |
 | **014** | MSRV and Dependency Security Policy | B-06, B-08 | M4 | Recommended dependency-verification handoff |
 | **015** | Async Runtime and Watcher Failure Safety | Runtime/watcher non-blocking findings | M5 | Recommended runtime test-matrix handoff |
