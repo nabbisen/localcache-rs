@@ -70,4 +70,6 @@ The "Background" section is optional in both templates.
 
 ### Proposed
 
-*(none yet)*
+| RFC | Title | Target |
+|-----|-------|--------|
+| [012](./proposed/012-read-only-schema-and-mutation-contract.md) | Read-only Schema and Mutation Contract | Phase 21 M3 |
