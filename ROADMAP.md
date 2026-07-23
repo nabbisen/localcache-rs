@@ -99,9 +99,13 @@ has an independent **Go** review.
 
 ### Planning assumptions
 
-- Schedule baseline: **2026-07-17**, Asia/Tokyo.
+- Original schedule baseline: **2026-07-17**, Asia/Tokyo; remaining work was
+  rebaselined on **2026-07-23** after M1–M3 completed ahead of plan.
 - One primary implementer; independent architecture review is a separate gate.
 - Dates are targets, not permission to bypass an exit gate.
+- Target windows do not require idle time when the preceding acceptance gate
+  completes early; dependency and authorization gates, not calendar dates,
+  control when the next milestone may begin.
 - Non-trivial work is designed and approved in an RFC before implementation.
 - Because design review and implementation are separate roles, an approved RFC
   must have a durable repository-visible Accepted state before delegation;
@@ -113,14 +117,26 @@ has an independent **Go** review.
 
 | Milestone | Target window | Scope | Exit gate |
 |---|---|---|---|
-| **M0 — Plan and design** | Jul 17–22 | Approve this schedule; resolve archive-layout and canonical-producer authority; adopt a durable Accepted RFC state; draft RFCs 009–015 | Roadmap accepted; RFC review order agreed; owner decisions recorded; no implementation starts without an Accepted RFC |
-| **M1 — Buildable source and archive ✅** | Jul 23–27 | Author or remove the declared benchmark coherently; create source-context and artifact-context runners; make the source archive self-buildable and safely verifiable | Current checkout and extracted archive pass their applicable RFC-defined smoke gates; exact export manifest and malicious archive fixtures pass |
-| **M2 — Data integrity and SQL safety ✅** | Jul 28–Aug 5 | Preserve v1 payloads through v1-to-v5 migration; make migrations atomic; constrain and safely handle SQLite identifiers | Historical fixture and rollback tests pass; hostile identifier tests pass; focused security review accepted |
-| **M3 — Mutation boundaries and input safety ✅** | Aug 6–14 | Enforce read-only schema/mutation rules; prevent watcher privilege bypass; make glob/path/CLI handling Unicode-safe and non-panicking; align deleted-path behavior | Negative read-only and Unicode/property tests pass; public behavior matches approved RFCs |
-| **M4 — MSRV and supply-chain recovery** | Aug 15–21 | Select a Rust-1.85-compatible SQLite stack or approve a new MSRV; update vulnerable dependencies; define advisory deny/warn/exception policy | Full declared-MSRV build succeeds; security policy gate is green or has approved, expiring exceptions |
-| **M5 — Async and maintainability hardening** | Aug 22–28 | Remove unnecessary unsafe generic casts; unify runtime panic/poison handling; surface watcher setup failures; perform only risk-reducing module splits | Runtime-backend tests and mutex-panic tests pass; no unexplained unsafe remains; focused review accepted |
-| **M6 — Release controls, docs, and RC** | Aug 29–Sep 5 | Correct CI/Makefile feature matrices; enforce warning policy; reconcile archive and published-crate legal-file rules; refresh docs/RFC final prose; assemble fresh evidence | Stable and MSRV gates, tests, clippy, docs, package/archive smoke, legal-file content, and advisory gate all pass on the RC |
-| **M7 — Independent review and release decision** | Sep 8–12 | Independent architecture re-review of the RC and extracted archive | Every blocker closed; reviewer verdict **Accept** or **Accept with notes**; owner authorizes release |
+| **M0 — Plan and design ✅** | Completed Jul 17 | Approve the schedule; resolve initial archive-layout and canonical-producer authority; adopt a durable Accepted RFC state; establish the RFC 009–015 design queue | Roadmap accepted; RFC review order agreed; owner decisions recorded; no implementation starts without an Accepted RFC |
+| **M1 — Buildable source and archive ✅** | Completed Jul 21 | Author or remove the declared benchmark coherently; create source-context and artifact-context runners; make the source archive self-buildable and safely verifiable | Current checkout and extracted archive pass their applicable RFC-defined smoke gates; exact export manifest and malicious archive fixtures pass |
+| **M2 — Data integrity and SQL safety ✅** | Completed Jul 22 | Preserve v1 payloads through v1-to-v5 migration; make migrations atomic; constrain and safely handle SQLite identifiers | Historical fixture and rollback tests pass; hostile identifier tests pass; focused security review accepted |
+| **M3 — Mutation boundaries and input safety ✅** | Completed Jul 23 | Enforce read-only schema/mutation rules; prevent watcher privilege bypass; make glob/path/CLI handling Unicode-safe and non-panicking; align deleted-path behavior | Negative read-only and Unicode/property tests pass; public behavior matches approved RFCs |
+| **M4 — MSRV and supply-chain recovery** | Jul 24–Aug 4 | Select a Rust-1.85-compatible SQLite stack or approve a new MSRV; update vulnerable dependencies; define advisory deny/warn/exception policy | Full declared-MSRV build succeeds; security policy gate is green or has approved, expiring exceptions |
+| **M5 — Async and maintainability hardening** | Aug 5–12 | Remove unnecessary unsafe generic casts; unify runtime panic/poison handling; surface watcher setup failures; perform only risk-reducing module splits | Runtime-backend tests and mutex-panic tests pass; no unexplained unsafe remains; focused review accepted |
+| **M6 — Release controls, docs, and RC** | Aug 13–26 | Correct CI/Makefile feature matrices; enforce warning policy; reconcile archive and published-crate legal-file rules; refresh docs/RFC final prose; assemble fresh evidence | Stable and MSRV gates, tests, clippy, docs, package/archive smoke, legal-file content, and advisory gate all pass on the RC |
+| **M7 — Independent review and release decision** | Aug 27–Sep 4 | Independent architecture re-review of the RC and extracted archive | Every blocker closed; reviewer verdict **Accept** or **Accept with notes**; owner authorizes release |
+
+RFC 015 may be drafted near the end of M4, but its design review and acceptance
+must use the dependency and supported-toolchain baseline delivered by RFC 014.
+M5 implementation still requires RFC 015 to be durably Accepted. The residual
+pre-RC corrections below must be complete by **Aug 12**, before M6 begins RC
+construction. M6 performs coming-version housekeeping before it constructs or
+reviews the RC; it does not defer housekeeping until after an actual release.
+
+The M7 window includes independent-review availability and corrective-review
+buffer. It is not a promised release date. An actual tag, publication, or
+hosted release remains unset until M7 acceptance and explicit owner
+authorization.
 
 M1 completed on 2026-07-21 at implementation commit `e54cfe2` after focused
 independent review and correction of its review record. CI archive construction,
@@ -153,6 +169,28 @@ verifies the root-authoritative `LICENSE` and `NOTICE` content in each generated
 `.crate` artifact. These files must never be placed in member crate directories;
 the repository-root files remain the sole authoritative copies.
 
+### Residual pre-RC corrections
+
+The following correctness items were confirmed against the newer tree while
+reconciling the older 2026-07-18 architecture review. They are required before
+M6 constructs the release candidate, but they are not part of RFC 015's async
+runtime and watcher scope and do not require a separate RFC unless implementation
+uncovers a material compatibility or design decision:
+
+- [ ] Make `explain` compare partial stored hashes using the matching partial
+      hash strategy rather than comparing them with a full-file digest; cover
+      both unchanged and changed partially hashed files with regression tests.
+- [ ] Make the CLI import contract truthful while preserving the public
+      `--overwrite` spelling: implement and document distinct overwrite and
+      no-overwrite behavior, and cover both paths with regression tests.
+      Removing or renaming the option is a material CLI compatibility change
+      and requires explicit design and owner approval before implementation.
+
+These corrections may be implemented alongside M4 or M5 for scheduling
+convenience. Their completion is recorded separately and must not broaden RFC
+015. They do not create an additional review request; include their evidence in
+the next meaningful implementation or pre-RC acceptance package.
+
 ### RFC design queue
 
 RFC numbers are provisional until each file is created and indexed according
@@ -175,7 +213,7 @@ multi-developer task split. Handoffs remain companion documents under
 
 ### Review and commit points
 
-- **Design review 1:** roadmap and milestone acceptance (this change).
+- **Roadmap review:** initial milestone acceptance and any material rebaseline.
 - **Design review 2:** each RFC independently; RFC 009 first, then RFCs 010
   and 011, then the remaining queue.
 - **Design acceptance:** after an independent acceptance recommendation and
@@ -184,6 +222,9 @@ multi-developer task split. Handoffs remain companion documents under
 - **Implementation review 1:** M1 buildable-source and extracted-archive proof.
 - **Implementation review 2:** M2 migration-integrity and SQL-safety proof.
 - **Implementation review 3:** M4 declared-MSRV and advisory-policy proof.
+- **Implementation review 4:** one combined M5 runtime/watcher and residual
+  pre-RC correction proof; do not create a separate review request for the two
+  residual corrections.
 - **Release review:** M6 evidence bundle, followed by M7 independent review.
 
 Each accepted RFC and each completed milestone is a separate logical commit
@@ -201,6 +242,7 @@ Phase 21 is complete only when all of the following are true:
 - Stable Rust and the declared MSRV pass the complete target/feature policy.
 - Historical migration fixtures prove payload preservation from v1 and v4.
 - Security scanning passes the approved deny/warn/exception policy.
+- Every residual pre-RC correction is closed with regression evidence.
 - Public documentation, implemented RFC prose, Cargo metadata, CI, and release
   tooling describe one consistent contract.
 - A fresh evidence bundle identifies the exact commit, toolchains, commands,
