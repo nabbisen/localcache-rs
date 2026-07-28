@@ -74,4 +74,6 @@ The "Background" section is optional in both templates.
 
 ### Proposed
 
-*(none yet)*
+| RFC | Title | Target |
+|-----|-------|--------|
+| [016](./proposed/016-published-crate-legal-file-completeness.md) | Published Crate Legal-File Completeness | Phase 21 M6a |

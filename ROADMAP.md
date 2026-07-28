@@ -126,6 +126,24 @@ has an independent **Go** review.
 | **M6 — Release controls, docs, and RC** | Aug 13–26 | Correct CI/Makefile feature matrices; enforce warning policy; reconcile archive and published-crate legal-file rules; refresh docs/RFC final prose; assemble fresh evidence | Stable and MSRV gates, tests, clippy, docs, package/archive smoke, legal-file content, and advisory gate all pass on the RC |
 | **M7 — Independent review and release decision** | Aug 27–Sep 4 | Independent architecture re-review of the RC and extracted archive | Every blocker closed; reviewer verdict **Accept** or **Accept with notes**; owner authorizes release |
 
+#### M6 slice breakdown
+
+M6 carries the largest remaining surface and the last open blocker (B-07), so it is decomposed
+into five slices. The table gives **dependency order, not dates**; scheduling remains the owner's.
+Each slice is an independent implementation review point.
+
+| Slice | Scope | Authority | Depends on | Exit gate |
+|---|---|---|---|---|
+| **M6a — Published-crate legal files** | Ship `LICENSE`/`NOTICE` inside both `.crate` artifacts as verified mirrors; assert content within the generated archive | **RFC 016** (Proposed) | Owner decision on RFC 016 | Both crates contain both files, byte-identical to root; in-artifact check fails when a file is absent |
+| **M6b — Canonical gate consolidation** | One executable gate source of truth; `Makefile.toml`/CI become thin aliases; full package-scoped feature + doctest matrix; `-D warnings` everywhere; wire the RFC 014 security step; hash-pin `check_advisories.py` | RFC 009 R7, R12, R13; RFC 014 | — | Every gate row runs from the canonical source; **B-07 closed** |
+| **M6c — Canonical producer and CI provenance** | Execute `canonical-producer.sh` end-to-end; CI archive construction and fail-closed aggregation; least-privilege permissions and immutable action SHAs; external RC-eligibility attestation; post-smoke layout re-validation; failure-summary finalization; explicit noncanonical platform list | RFC 009 R3–R6, R14, R16 | M6b | Two canonical builds byte-identical; CI aggregates by run ID and commit; no self-asserted RC eligibility |
+| **M6d — Coming-version housekeeping** | Set the authorized coming version across manifests, docs, and CHANGELOG; add the version-reference consistency gate; refresh docs and implemented-RFC prose | RFC 009 R10, R11 | M6a, M6b, M6c | No stale version reference; library and CLI versions match; changelog section present |
+| **M6e — RC construction and evidence** | Joint workspace package verification including the M6a legal-file assertion; full gate run; canonical archive and digest; evidence bundle | RFC 009 R9, R14 | M6a–M6d | Complete evidence bundle satisfying R14; archive digest reproducible in the canonical producer |
+
+M6a is independent of M6b–M6c and may proceed in parallel once RFC 016 is Accepted. M6d must
+follow the others because R10 sets the coming version immediately before the final gates, and M6e
+consumes all of them. M7 begins only after M6e produces the evidence bundle.
+
 RFC 015 may be drafted near the end of M4, but its design review and acceptance
 must use the dependency and supported-toolchain baseline delivered by RFC 014.
 M5 implementation still requires RFC 015 to be durably Accepted. The residual
@@ -220,7 +238,8 @@ to RFC 000.
 | **[012](rfcs/accepted/012-read-only-schema-and-mutation-contract.md)** | Read-only Schema and Mutation Contract | B-04 (closed by `6c14df3`) | M3 | API-boundary implementation matrix accepted; no handoff required |
 | **[013](rfcs/accepted/013-panic-free-path-glob-and-cli-text-handling.md)** | Panic-free Path, Glob, and CLI Text Handling | B-05 (closed by `34fcc78`) and related path findings | M3 | Detailed RFC matrix; handoff only if delegated |
 | **[014](rfcs/accepted/014-declared-msrv-and-dependency-security-policy.md)** | Declared MSRV and Dependency Security Policy | B-06, B-08 (closed by `b5e85da`) | M4 | Detailed RFC matrix; handoff only if delegated |
-| **[015](rfcs/accepted/015-async-runtime-and-watcher-failure-safety.md)** | Async Runtime and Watcher Failure Safety | Runtime/watcher non-blocking findings | M5 | Recommended runtime test-matrix handoff |
+| **[015](rfcs/accepted/015-async-runtime-and-watcher-failure-safety.md)** | Async Runtime and Watcher Failure Safety | Runtime/watcher non-blocking findings | M5 (accepted at `772b3e5`) | Implementation and QA handoffs accepted |
+| **[016](rfcs/proposed/016-published-crate-legal-file-completeness.md)** | Published Crate Legal-File Completeness | Workspace-relocation review R1 (publication blocker) | M6a | Handoff after acceptance; carries one required owner decision |
 
 An implementation handoff is created only when the approved RFC still needs
 non-obvious sequencing, fixture provenance, cross-runtime validation, or a
