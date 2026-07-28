@@ -217,50 +217,107 @@ def verify_named_implementation(root: Path, name: str) -> str:
     return verify_implementation(root, name, policy)
 
 
+def current_platform_key() -> str:
+    return f"{platform.system().lower()}-{platform.machine().lower()}"
+
+
+def verify_tool_policy(name: str, policy: object, *, require_hash: bool) -> str:
+    """Verify one `command`/`version`(/`sha256`) tool policy entry.
+
+    `require_hash` is `True` only for `[canonical-tools]`, where R16 demands
+    exact byte identity with the pinned Docker image's binaries. Non-canonical
+    host tools (`[supported-host-tools.<platform>]`) verify command identity
+    and exact version only — the underlying bytes of a system package are
+    platform- and package-manager-specific and were never meant to be
+    portable across hosts.
+    """
+    if not isinstance(policy, dict):
+        raise ReleaseError(f"invalid tool policy: {name}")
+    command = policy.get("command")
+    expected_version = policy.get("version")
+    expected_sha256 = policy.get("sha256")
+    if not isinstance(command, str) or not isinstance(expected_version, str):
+        raise ReleaseError(f"incomplete tool policy: {name}")
+    if require_hash and not isinstance(expected_sha256, str):
+        raise ReleaseError(f"incomplete tool policy: {name}")
+    if not require_hash and expected_sha256 is not None:
+        raise ReleaseError(
+            f"non-canonical tool policy must not pin a binary hash: {name}"
+        )
+    executable = shutil.which(command)
+    if executable is None:
+        raise ReleaseError(f"required producer tool is unavailable: {command}")
+    try:
+        completed = subprocess.run(
+            [executable, "--version"],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise ReleaseError(f"cannot inspect producer tool: {command}") from error
+    version = completed.stdout.strip()
+    if version != expected_version:
+        raise ReleaseError(
+            f"producer tool version mismatch for {name}: {version!r}"
+        )
+    if require_hash:
+        digest = sha256_file(Path(executable).resolve())
+        if digest != expected_sha256:
+            raise ReleaseError(
+                f"producer tool hash mismatch for {name}: sha256={digest}"
+            )
+        return f"{version}; sha256={digest}"
+    return version
+
+
 def verify_tool_manifest(root: Path, *, canonical: bool) -> dict[str, str]:
     document = load_tool_manifest(root)
     producer = document.get("producer")
-    tool_table = "canonical-tools" if canonical else "supported-host-tools"
-    tools = document.get(tool_table)
     implementations = document.get("implementations")
-    if not all(isinstance(section, dict) for section in (producer, tools, implementations)):
-        raise ReleaseError(
-            f"producer-tool manifest is missing a required table: {tool_table}"
-        )
+    if not isinstance(producer, dict) or not isinstance(implementations, dict):
+        raise ReleaseError("producer-tool manifest is missing a required table")
 
     observed: dict[str, str] = {}
-    for name, policy in tools.items():
-        if not isinstance(policy, dict):
-            raise ReleaseError(f"invalid tool policy: {name}")
-        command = policy.get("command")
-        expected_version = policy.get("version")
-        expected_sha256 = policy.get("sha256")
-        if not all(
-            isinstance(value, str)
-            for value in (command, expected_version, expected_sha256)
-        ):
-            raise ReleaseError(f"incomplete tool policy: {name}")
-        executable = shutil.which(command)
-        if executable is None:
-            raise ReleaseError(f"required producer tool is unavailable: {command}")
-        try:
-            completed = subprocess.run(
-                [executable, "--version"],
-                check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-            )
-        except (OSError, subprocess.CalledProcessError) as error:
-            raise ReleaseError(f"cannot inspect producer tool: {command}") from error
-        version = completed.stdout.strip()
-        digest = sha256_file(Path(executable).resolve())
-        if version != expected_version or digest != expected_sha256:
+
+    if canonical:
+        tools = document.get("canonical-tools")
+        if not isinstance(tools, dict):
             raise ReleaseError(
-                f"producer tool mismatch for {name}: "
-                f"version={version!r} sha256={digest}"
+                "producer-tool manifest is missing a required table: canonical-tools"
             )
-        observed[name] = f"{version}; sha256={digest}"
+        for name, policy in tools.items():
+            observed[name] = verify_tool_policy(name, policy, require_hash=True)
+    else:
+        claimed = document.get("supported-platforms", {})
+        claimed_list = claimed.get("claimed") if isinstance(claimed, dict) else None
+        if not isinstance(claimed_list, list) or not claimed_list:
+            raise ReleaseError(
+                "producer-tool manifest has no non-empty claimed noncanonical "
+                "platform list"
+            )
+        if not all(isinstance(entry, str) for entry in claimed_list):
+            raise ReleaseError("claimed noncanonical platform list must be strings")
+        platform_key = current_platform_key()
+        if platform_key not in claimed_list:
+            raise ReleaseError(
+                f"this platform ({platform_key!r}) is not in the claimed "
+                f"noncanonical platform list: {claimed_list}"
+            )
+        tools_by_platform = document.get("supported-host-tools")
+        if not isinstance(tools_by_platform, dict):
+            raise ReleaseError(
+                "producer-tool manifest is missing a required table: "
+                "supported-host-tools"
+            )
+        tools = tools_by_platform.get(platform_key)
+        if not isinstance(tools, dict):
+            raise ReleaseError(
+                f"no supported-host-tools policy for claimed platform: {platform_key!r}"
+            )
+        for name, policy in tools.items():
+            observed[name] = verify_tool_policy(name, policy, require_hash=False)
 
     for name, policy in implementations.items():
         observed[name] = verify_implementation(root, name, policy)
@@ -505,6 +562,8 @@ def record_failure_summary(args: argparse.Namespace, error: Exception) -> None:
         summary = Path(args.evidence_dir).resolve() / "summary.log"
     elif getattr(args, "mode", None) == "security":
         summary = Path(args.output_dir).resolve() / "summary.log"
+    elif getattr(args, "mode", None) == "aggregate-ci":
+        summary = Path(args.output_dir).resolve() / "summary.log"
     else:
         return
     append_summary(summary, "status: FAIL")
@@ -587,6 +646,7 @@ def security_mode(args: argparse.Namespace) -> int:
             "context": "security",
             "status": "pass",
             "advisories_evidence": "advisories",
+            **ci_identity(),
         },
     )
     append_summary(summary, "dependency-security: PASS")
@@ -594,8 +654,125 @@ def security_mode(args: argparse.Namespace) -> int:
     return 0
 
 
+def aggregate_ci_mode(args: argparse.Namespace) -> int:
+    """RFC 009 M6c item 3: fail-closed final CI aggregator.
+
+    Fails closed when a required job did not succeed, or when a required
+    evidence manifest is missing, unreadable, not a pass, or bound to a
+    different workflow run or commit than the one aggregating it. This is
+    the only gate that reads `needs.*.result`/`github.run_id`/`github.sha` —
+    every other gate is CI-agnostic and runs identically locally.
+    """
+    root = repository_root()
+    output = require_output_boundary(root, args.output_dir)
+    summary = output / "summary.log"
+    append_summary(summary, "context: aggregate-ci")
+    append_summary(summary, f"run-id: {args.run_id}")
+    append_summary(summary, f"sha: {args.sha}")
+    append_summary(summary, "status: RUNNING")
+
+    failures: list[str] = []
+
+    for requirement in args.require_job:
+        name, separator, result = requirement.partition("=")
+        if not separator or not name or not result:
+            raise ReleaseError(f"malformed --require-job value: {requirement!r}")
+        if result != "success":
+            failures.append(
+                f"required job {name!r} did not succeed (result={result!r})"
+            )
+
+    for manifest_path in args.evidence_manifest:
+        label = str(manifest_path)
+        manifest_failures: list[str] = []
+        try:
+            with manifest_path.open("rb") as file:
+                document = json.load(file)
+        except (OSError, json.JSONDecodeError) as error:
+            failures.append(f"{label}: cannot read evidence manifest: {error}")
+            continue
+        if not isinstance(document, dict):
+            failures.append(f"{label}: evidence manifest is not a JSON object")
+            continue
+        if document.get("status") != "pass":
+            manifest_failures.append(
+                f"{label}: status is {document.get('status')!r}, not 'pass'"
+            )
+        if document.get("ci_run_id") != args.run_id:
+            manifest_failures.append(
+                f"{label}: ci_run_id {document.get('ci_run_id')!r} does not match "
+                f"this workflow run {args.run_id!r}"
+            )
+        observed_sha = document.get("ci_sha") or document.get("commit")
+        if observed_sha != args.sha:
+            manifest_failures.append(
+                f"{label}: commit {observed_sha!r} does not match this checkout "
+                f"{args.sha!r}"
+            )
+        if manifest_failures:
+            failures.extend(manifest_failures)
+        else:
+            append_summary(summary, f"evidence-binding: PASS ({label})")
+
+    if failures:
+        # `status: FAIL` and the failure detail are appended uniformly by
+        # `record_failure_summary` in `main()`, the same as every other mode
+        # — this function does not self-finalize the summary.
+        raise ReleaseError(
+            "CI provenance aggregation failed:\n" + "\n".join(failures)
+        )
+
+    write_manifest(
+        output / "manifest.json",
+        {
+            "context": "aggregate-ci",
+            "status": "pass",
+            "run_id": args.run_id,
+            "sha": args.sha,
+            "required_jobs": list(args.require_job),
+            "evidence_manifests": [str(path) for path in args.evidence_manifest],
+        },
+    )
+    append_summary(summary, "status: PASS")
+    return 0
+
+
 def re_full_sha256(value: str) -> bool:
     return len(value) == 64 and all(character in "0123456789abcdef" for character in value)
+
+
+def ci_identity() -> dict[str, object]:
+    """RFC 009 R14 "CI workflow run ID, job identity, and commit binding".
+
+    Populated only under GitHub Actions (`GITHUB_ACTIONS=true`); all fields
+    are `None` for a local run, so evidence never implies CI provenance it
+    doesn't have. `scripts/release.py aggregate-ci` is the fail-closed check
+    that these fields, once present, actually match the aggregating job's own
+    run ID and commit — this function only captures them.
+    """
+    if os.environ.get("GITHUB_ACTIONS") != "true":
+        return {"ci_run_id": None, "ci_job": None, "ci_workflow": None, "ci_sha": None}
+    return {
+        "ci_run_id": os.environ.get("GITHUB_RUN_ID"),
+        "ci_job": os.environ.get("GITHUB_JOB"),
+        "ci_workflow": os.environ.get("GITHUB_WORKFLOW"),
+        "ci_sha": os.environ.get("GITHUB_SHA"),
+    }
+
+
+def rc_eligibility(*, noncanonical: bool) -> bool:
+    """Whether this source-context run may become a release candidate.
+
+    Externally bound (RFC 009 M6c item 5), not self-asserted: requires both
+    that this run was not invoked with `--noncanonical` *and* that
+    `RFC009_RC_ELIGIBLE=1` was set by `scripts/canonical-producer.sh` (the
+    wrapper) — the runner never sets this variable about itself. Neither
+    signal alone is sufficient. Reaching this check with `noncanonical=False`
+    already means `verify_tool_manifest`'s canonical branch independently
+    confirmed the producer image, platform, locale, and base-component
+    identity; this adds a signal the runner's own arguments cannot supply.
+    """
+    return not noncanonical and os.environ.get("RFC009_RC_ELIGIBLE") == "1"
 
 
 def source_mode(args: argparse.Namespace) -> int:
@@ -684,7 +861,15 @@ def source_mode(args: argparse.Namespace) -> int:
             str(artifact_target),
         ]
         run_gate(logger, "artifact-context", command, extraction)
-    append_summary(summary, "git-free-artifact-m1-smoke: PASS")
+        append_summary(summary, "git-free-artifact-m1-smoke: PASS")
+        # Re-assert the R4/R5 layout *after* the artifact smoke run, not only
+        # before it. `--target-dir`/evidence-dir already place build output
+        # outside `extraction` by construction, but this proves that stayed
+        # true rather than assuming it: a gate that leaked a `target/` or
+        # `docs/book/` directory into the extracted source tree would be
+        # caught here before it ever reaches evidence as a pass.
+        verify_required_layout(extraction)
+    append_summary(summary, "post-smoke-layout-reassertion: PASS")
 
     write_manifest(
         evidence / "manifest.json",
@@ -703,12 +888,13 @@ def source_mode(args: argparse.Namespace) -> int:
             "producer_image": (
                 None if args.noncanonical else os.environ["RFC009_PRODUCER_IMAGE"]
             ),
-            "rc_eligible": not args.noncanonical,
+            "rc_eligible": rc_eligibility(noncanonical=args.noncanonical),
             "release_tool_manifest_sha256": sha256_file(
                 root / "scripts/release-tools.toml"
             ),
             "tool_versions": tool_versions,
             "version": version,
+            **ci_identity(),
         },
     )
     append_summary(summary, f"archive-sha256: {archive_sha256}")
@@ -770,6 +956,32 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     )
     security.add_argument("--output-dir", type=Path, required=True)
     security.set_defaults(handler=security_mode)
+
+    aggregate = subparsers.add_parser(
+        "aggregate-ci",
+        help="fail closed unless every required CI job and evidence manifest "
+        "is bound to this workflow run and commit (RFC 009 M6c item 3)",
+    )
+    aggregate.add_argument("--output-dir", type=Path, required=True)
+    aggregate.add_argument("--run-id", required=True)
+    aggregate.add_argument("--sha", required=True)
+    aggregate.add_argument(
+        "--require-job",
+        action="append",
+        default=[],
+        metavar="NAME=RESULT",
+        help="a needs.<job>.result value that must equal 'success'; repeatable",
+    )
+    aggregate.add_argument(
+        "--evidence-manifest",
+        type=Path,
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="a downloaded manifest.json that must show status=pass and match "
+        "--run-id/--sha; repeatable",
+    )
+    aggregate.set_defaults(handler=aggregate_ci_mode)
     return parser.parse_args(argv)
 
 
@@ -784,6 +996,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     ) as error:
         record_failure_summary(args, error)
         print(f"release: FAILED: {error}", file=sys.stderr)
+        return 1
+    except Exception as error:
+        # An expected gate failure always raises one of the three types
+        # above. Anything else (OSError, a third-party library's own
+        # exception type, ...) is unexpected, but must still finalize
+        # `summary.log` rather than leave it reading `status: RUNNING`
+        # forever — R14 requires the summary to never disagree with the
+        # actual (failed) outcome. `BaseException` subclasses that are not
+        # `Exception` (`KeyboardInterrupt`, `SystemExit`) intentionally
+        # propagate unfinalized: those are not gate failures.
+        record_failure_summary(args, error)
+        print(f"release: FAILED (unexpected {type(error).__name__}): {error}", file=sys.stderr)
         return 1
 
 

@@ -125,32 +125,23 @@ args = ["scripts/feature_matrix.py", "--run-all", "--modes", "test"]
 
 [tasks.bench-compile]
 description = "Verify benchmarks compile (no actual run)"
-command = "cargo"
-args = [
-    "bench",
-    "-p",
-    "localcache",
-    "--bench",
-    "cache_bench",
-    "--no-run",
-    "--features",
-    "localcache/json",
-    "--locked",
-]
+command = "python3"
+args = ["scripts/feature_matrix.py", "--run-bench-compile"]
 
 [tasks.bench]
 description = "Run benchmarks (requires --features json)"
-command = "cargo"
-args = [
-    "bench",
-    "-p",
-    "localcache",
-    "--bench",
-    "cache_bench",
-    "--features",
-    "localcache/json",
-    "--locked",
-]
+command = "python3"
+args = ["scripts/feature_matrix.py", "--run-bench"]
+
+# ---------------------------------------------------------------------------
+# Declared-MSRV matrix (RFC 014 R8) — rows come from
+# scripts/feature_matrix.py's MSRV_ROW_NAMES, not a hand-written list here.
+# ---------------------------------------------------------------------------
+
+[tasks.msrv-check]
+description = "Run the declared-MSRV cargo-check matrix"
+command = "python3"
+args = ["scripts/feature_matrix.py", "--run-msrv"]
 
 # ---------------------------------------------------------------------------
 # Documentation

@@ -1,6 +1,13 @@
 #!/bin/sh
 set -eu
 
+# RFC009_RC_ELIGIBLE=1 below is this wrapper's exclusive attestation that a
+# genuine canonical run is in progress. `scripts/release.py` treats
+# `rc_eligible` as external, not self-asserted (RFC 009 M6c item 5): it never
+# sets this variable itself, and it is required in addition to — not instead
+# of — the existing RFC009_PRODUCER_IMAGE/platform/locale/base-component
+# checks. Do not set RFC009_RC_ELIGIBLE outside this file.
+
 IMAGE='docker.io/library/rust@sha256:389c1ae98c20fbcadca68a685482749267cec3c90893ae4671c5a37cc894c416'
 PLATFORM='linux/amd64'
 MDBOOK_URL='https://github.com/rust-lang/mdBook/releases/download/v0.5.4/mdbook-v0.5.4-x86_64-unknown-linux-gnu.tar.gz'
@@ -52,6 +59,7 @@ docker run --rm --read-only --platform "$PLATFORM" \
     --env LC_ALL=C.UTF-8 \
     --env TZ=UTC \
     --env RFC009_PRODUCER_IMAGE="$IMAGE" \
+    --env RFC009_RC_ELIGIBLE=1 \
     --env GIT_CONFIG_COUNT=1 \
     --env GIT_CONFIG_KEY_0=safe.directory \
     --env GIT_CONFIG_VALUE_0=/workspace \

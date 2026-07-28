@@ -41,6 +41,22 @@ LIBRARY_FEATURES: tuple[str, ...] = (
     "opentelemetry",
 )
 
+# Non-Tokio async runtime backends. RFC 005 DEC-004 gives Tokio (`async`)
+# priority whenever multiple runtime features are enabled, so an
+# `--all-features` MSRV check alone would never actually compile the
+# async-std/smol code paths under the declared toolchain — each needs its own
+# bare `--features localcache/<name>` isolation check. `--check-coverage`
+# fails closed if this list references a feature `crates/localcache`
+# no longer declares; `MSRV_ROW_NAMES` below is generated from it, so listing
+# a new non-Tokio runtime here is the only step needed to give it MSRV
+# coverage too.
+NON_TOKIO_RUNTIME_FEATURES: tuple[str, ...] = ("async-std", "smol")
+
+# `cargo bench --features` used by both the compile-only and full-run bench
+# tasks (RFC 009 M6c item 9); folded in here so `Makefile.toml` and CI stop
+# hand-writing this list independently of the rest of the matrix.
+BENCH_FEATURES: tuple[str, ...] = ("json",)
+
 
 class MatrixError(Exception):
     """A matrix row is unknown, miscovered, or failed to run."""
@@ -123,6 +139,17 @@ ROWS: tuple[Row, ...] = (
 )
 
 
+# RFC 009 M6c item 9: the declared-MSRV `cargo check` matrix. Generated from
+# `NON_TOKIO_RUNTIME_FEATURES` rather than hand-listed, so a new non-Tokio
+# runtime feature gets an MSRV row the moment it is added to that tuple,
+# instead of silently compiling only under later Rust toolchains.
+MSRV_ROW_NAMES: tuple[str, ...] = (
+    "lib-all-features",
+    *(f"lib-feature-{feature}" for feature in NON_TOKIO_RUNTIME_FEATURES),
+    "cli-all-features",
+)
+
+
 def row_by_name(name: str) -> Row:
     for row in ROWS:
         if row.name == name:
@@ -158,6 +185,19 @@ def check_coverage(root: Path = REPO_ROOT) -> None:
         raise MatrixError(
             f"matrix row references undeclared feature(s): {sorted(stale)}"
         )
+    stale_runtime = set(NON_TOKIO_RUNTIME_FEATURES) - declared
+    if stale_runtime:
+        raise MatrixError(
+            "NON_TOKIO_RUNTIME_FEATURES references undeclared feature(s): "
+            f"{sorted(stale_runtime)}"
+        )
+    stale_bench = set(BENCH_FEATURES) - declared
+    if stale_bench:
+        raise MatrixError(
+            f"BENCH_FEATURES references undeclared feature(s): {sorted(stale_bench)}"
+        )
+    for name in MSRV_ROW_NAMES:
+        row_by_name(name)
 
 
 def run_row(name: str, mode: str, *, root: Path = REPO_ROOT) -> None:
@@ -177,12 +217,24 @@ def run_row_modes(name: str, modes: Sequence[str], *, root: Path = REPO_ROOT) ->
     """Run `name` for each of `modes`, silently skipping `clippy` for a
     doctest-only row rather than treating the combination as an error — a
     caller iterating a fixed mode list across every row (CI, `--run-all`)
-    should not need to special-case doctest rows itself."""
+    should not need to special-case doctest rows itself.
+
+    Fails closed if every requested mode was skipped: a single-row `--run`
+    invocation that executes nothing (for example `--run workspace-doctest
+    --modes clippy`) is a caller mistake, not a silent success.
+    """
     row = row_by_name(name)
+    executed = 0
     for mode in modes:
         if row.doctest_only and mode == "clippy":
             continue
         run_row(name, mode, root=root)
+        executed += 1
+    if executed == 0:
+        raise MatrixError(
+            f"row {name!r} executed no modes from {list(modes)!r} — "
+            "doctest-only rows have no clippy variant"
+        )
 
 
 def run_all(modes: Sequence[str], *, root: Path = REPO_ROOT) -> None:
@@ -200,6 +252,40 @@ def run_all(modes: Sequence[str], *, root: Path = REPO_ROOT) -> None:
         raise MatrixError("matrix failures:\n" + "\n".join(failures))
 
 
+def run_msrv(*, root: Path = REPO_ROOT) -> None:
+    """Run every row in `MSRV_ROW_NAMES` under `cargo check` (RFC 014 R8)."""
+    check_coverage(root)
+    failures: list[str] = []
+    for name in MSRV_ROW_NAMES:
+        try:
+            run_row(name, "check", root=root)
+        except MatrixError as error:
+            failures.append(str(error))
+    if failures:
+        raise MatrixError("MSRV matrix failures:\n" + "\n".join(failures))
+
+
+def bench_args(*, compile_only: bool) -> list[str]:
+    args = ["bench", "-p", "localcache", "--bench", "cache_bench"]
+    if compile_only:
+        args.append("--no-run")
+    qualified = ",".join(f"localcache/{feature}" for feature in BENCH_FEATURES)
+    args += ["--features", qualified, "--locked"]
+    return args
+
+
+def run_bench(*, compile_only: bool, root: Path = REPO_ROOT) -> None:
+    check_coverage(root)
+    label = "bench-compile" if compile_only else "bench"
+    command = ["cargo", *bench_args(compile_only=compile_only)]
+    print(f"[{label}] {' '.join(command)}", flush=True)
+    completed = subprocess.run(command, cwd=root)
+    if completed.returncode != 0:
+        raise MatrixError(
+            f"{label} failed with exit status {completed.returncode}"
+        )
+
+
 def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     group = parser.add_mutually_exclusive_group(required=True)
@@ -214,6 +300,21 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "--check-coverage",
         action="store_true",
         help="fail if a declared feature has no row, or vice versa",
+    )
+    group.add_argument(
+        "--run-msrv",
+        action="store_true",
+        help="run the declared-MSRV cargo-check matrix (RFC 014 R8)",
+    )
+    group.add_argument(
+        "--run-bench-compile",
+        action="store_true",
+        help="verify the benchmark binary compiles, without running it",
+    )
+    group.add_argument(
+        "--run-bench",
+        action="store_true",
+        help="run the benchmark binary",
     )
     parser.add_argument(
         "--json",
@@ -243,6 +344,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             run_row_modes(args.run, args.modes)
         elif args.run_all:
             run_all(args.modes)
+        elif args.run_msrv:
+            run_msrv()
+        elif args.run_bench_compile:
+            run_bench(compile_only=True)
+        elif args.run_bench:
+            run_bench(compile_only=False)
     except MatrixError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

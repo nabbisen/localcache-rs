@@ -249,6 +249,122 @@ class ReleaseRunnerTests(unittest.TestCase):
             observed = RUNNER.verify_named_implementation(root, "tool")
             self.assertIn(digest, observed)
 
+    def test_current_platform_key_is_lowercase_os_dash_machine(self) -> None:
+        key = RUNNER.current_platform_key()
+        self.assertRegex(key, r"^[a-z0-9]+-[a-z0-9_]+$")
+
+    def test_verify_tool_policy_requires_hash_for_canonical_entries(self) -> None:
+        policy = {"command": "python3", "version": "irrelevant"}
+        with self.assertRaisesRegex(RUNNER.ReleaseError, "incomplete tool policy"):
+            RUNNER.verify_tool_policy("python", policy, require_hash=True)
+
+    def test_verify_tool_policy_rejects_hash_pin_on_noncanonical_entry(self) -> None:
+        # A hash field on a [supported-host-tools] entry would silently
+        # reintroduce the single-workstation-pin defect this item exists to
+        # remove -- reject it outright rather than ignoring it.
+        policy = {"command": "python3", "version": "irrelevant", "sha256": "0" * 64}
+        with self.assertRaisesRegex(RUNNER.ReleaseError, "must not pin a binary hash"):
+            RUNNER.verify_tool_policy("python", policy, require_hash=False)
+
+    def test_verify_tool_policy_fails_closed_on_version_mismatch(self) -> None:
+        policy = {"command": "python3", "version": "Python 0.0.0"}
+        with self.assertRaisesRegex(RUNNER.ReleaseError, "version mismatch"):
+            RUNNER.verify_tool_policy("python", policy, require_hash=False)
+
+    def test_verify_tool_manifest_noncanonical_happy_path(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "scripts").mkdir()
+            platform_key = RUNNER.current_platform_key()
+            cargo_version = RUNNER.command_version(["cargo", "--version"])
+            rust_version = RUNNER.command_version(["rustc", "--version"])
+            python_version = RUNNER.command_version(["python3", "--version"])
+            (root / "scripts/release-tools.toml").write_text(
+                "schema-version = 1\n\n"
+                "[producer]\n"
+                f'cargo = "{cargo_version}"\n'
+                f'rust = "{rust_version}"\n\n'
+                "[implementations]\n\n"
+                "[supported-platforms]\n"
+                f'claimed = ["{platform_key}"]\n\n'
+                f"[supported-host-tools.{platform_key}.python]\n"
+                'command = "python3"\n'
+                f'version = "{python_version}"\n',
+                encoding="utf-8",
+            )
+            observed = RUNNER.verify_tool_manifest(root, canonical=False)
+            self.assertEqual(observed["python"], python_version)
+            self.assertEqual(observed["cargo"], cargo_version)
+            self.assertEqual(observed["rustc"], rust_version)
+
+    def test_verify_tool_manifest_fails_closed_for_unclaimed_platform(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "scripts").mkdir()
+            (root / "scripts/release-tools.toml").write_text(
+                "schema-version = 1\n\n"
+                "[producer]\n\n"
+                "[implementations]\n\n"
+                "[supported-platforms]\n"
+                'claimed = ["nonexistent-platform-9999"]\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(RUNNER.ReleaseError, "not in the claimed"):
+                RUNNER.verify_tool_manifest(root, canonical=False)
+
+    def test_verify_tool_manifest_fails_closed_on_empty_claimed_list(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "scripts").mkdir()
+            (root / "scripts/release-tools.toml").write_text(
+                "schema-version = 1\n\n"
+                "[producer]\n\n"
+                "[implementations]\n\n"
+                "[supported-platforms]\nclaimed = []\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(RUNNER.ReleaseError, "non-empty claimed"):
+                RUNNER.verify_tool_manifest(root, canonical=False)
+
+    def test_verify_tool_manifest_fails_closed_without_claimed_table(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "scripts").mkdir()
+            (root / "scripts/release-tools.toml").write_text(
+                "schema-version = 1\n\n[producer]\n\n[implementations]\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(RUNNER.ReleaseError, "non-empty claimed"):
+                RUNNER.verify_tool_manifest(root, canonical=False)
+
+    def test_verify_tool_manifest_fails_closed_on_missing_platform_tools_table(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "scripts").mkdir()
+            platform_key = RUNNER.current_platform_key()
+            (root / "scripts/release-tools.toml").write_text(
+                "schema-version = 1\n\n"
+                "[producer]\n\n"
+                "[implementations]\n\n"
+                "[supported-platforms]\n"
+                f'claimed = ["{platform_key}"]\n\n'
+                "[supported-host-tools.some-other-platform]\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                RUNNER.ReleaseError, "no supported-host-tools policy"
+            ):
+                RUNNER.verify_tool_manifest(root, canonical=False)
+
+    def test_release_tools_toml_claims_this_platform(self) -> None:
+        # The real, committed policy must be usable on the platform this
+        # test suite is actually running on -- otherwise the noncanonical
+        # path is unusable everywhere, repeating the defect this item fixes.
+        root = SCRIPT.resolve().parents[1]
+        RUNNER.verify_tool_manifest(root, canonical=False)
+
     def test_security_mode_failure_marks_downstream_steps_incomplete(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "evidence"
@@ -259,6 +375,247 @@ class ReleaseRunnerTests(unittest.TestCase):
             self.assertIn("status: FAIL", summary)
             self.assertIn("deliberate test failure", summary)
             self.assertIn("required-downstream-steps: NOT COMPLETED", summary)
+
+    def test_rc_eligibility_requires_both_signals(self) -> None:
+        cases = [
+            # (noncanonical, env value, expected)
+            (False, "1", True),
+            (True, "1", False),  # --noncanonical always disqualifies
+            (False, None, False),  # no wrapper attestation
+            (False, "0", False),  # wrong value is not truthy
+            (False, "true", False),  # only the exact string "1" counts
+            (True, None, False),
+        ]
+        for noncanonical, env_value, expected in cases:
+            with self.subTest(noncanonical=noncanonical, env_value=env_value):
+                original = os.environ.pop("RFC009_RC_ELIGIBLE", None)
+                try:
+                    if env_value is not None:
+                        os.environ["RFC009_RC_ELIGIBLE"] = env_value
+                    self.assertEqual(
+                        RUNNER.rc_eligibility(noncanonical=noncanonical), expected
+                    )
+                finally:
+                    os.environ.pop("RFC009_RC_ELIGIBLE", None)
+                    if original is not None:
+                        os.environ["RFC009_RC_ELIGIBLE"] = original
+
+    def test_canonical_wrapper_sets_rc_eligible_exclusively(self) -> None:
+        wrapper = (SCRIPTS / "canonical-producer.sh").read_text(encoding="utf-8")
+        self.assertIn("RFC009_RC_ELIGIBLE=1", wrapper)
+
+    def test_main_finalizes_summary_on_an_unexpected_exception_type(self) -> None:
+        # An OSError (or any exception outside the three expected gate-error
+        # types) must still finalize summary.log as FAIL, not propagate
+        # uncaught and leave it reading "status: RUNNING" forever.
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "evidence"
+
+            def raising_handler(args: argparse.Namespace) -> int:
+                append_summary_path = Path(args.output_dir) / "summary.log"
+                append_summary_path.parent.mkdir(parents=True, exist_ok=True)
+                append_summary_path.write_text("status: RUNNING\n", encoding="utf-8")
+                raise OSError("deliberate unexpected failure")
+
+            original_parse_args = RUNNER.parse_args
+            RUNNER.parse_args = lambda argv: argparse.Namespace(
+                mode="security", output_dir=output, handler=raising_handler
+            )
+            try:
+                status = RUNNER.main(["security", "--output-dir", str(output)])
+            finally:
+                RUNNER.parse_args = original_parse_args
+            self.assertEqual(status, 1)
+            summary = (output / "summary.log").read_text(encoding="utf-8")
+            self.assertIn("status: FAIL", summary)
+            self.assertIn("deliberate unexpected failure", summary)
+            self.assertIn("required-downstream-steps: NOT COMPLETED", summary)
+
+    def test_ci_identity_is_all_none_outside_github_actions(self) -> None:
+        original = os.environ.pop("GITHUB_ACTIONS", None)
+        try:
+            identity = RUNNER.ci_identity()
+        finally:
+            if original is not None:
+                os.environ["GITHUB_ACTIONS"] = original
+        self.assertEqual(
+            identity,
+            {"ci_run_id": None, "ci_job": None, "ci_workflow": None, "ci_sha": None},
+        )
+
+    def test_ci_identity_reads_github_actions_env_vars(self) -> None:
+        saved = {
+            key: os.environ.get(key)
+            for key in ("GITHUB_ACTIONS", "GITHUB_RUN_ID", "GITHUB_JOB", "GITHUB_WORKFLOW", "GITHUB_SHA")
+        }
+        os.environ["GITHUB_ACTIONS"] = "true"
+        os.environ["GITHUB_RUN_ID"] = "111"
+        os.environ["GITHUB_JOB"] = "archive"
+        os.environ["GITHUB_WORKFLOW"] = "CI"
+        os.environ["GITHUB_SHA"] = "cafef00d"
+        try:
+            identity = RUNNER.ci_identity()
+        finally:
+            for key, value in saved.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+        self.assertEqual(
+            identity,
+            {
+                "ci_run_id": "111",
+                "ci_job": "archive",
+                "ci_workflow": "CI",
+                "ci_sha": "cafef00d",
+            },
+        )
+
+    def test_aggregate_ci_passes_when_jobs_succeed_and_evidence_binds(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "manifest.json"
+            manifest.write_text(
+                '{"status": "pass", "ci_run_id": "42", "ci_sha": "abc123"}',
+                encoding="utf-8",
+            )
+            output = root / "out"
+            status = RUNNER.main(
+                [
+                    "aggregate-ci",
+                    "--output-dir",
+                    str(output),
+                    "--run-id",
+                    "42",
+                    "--sha",
+                    "abc123",
+                    "--require-job",
+                    "matrix=success",
+                    "--evidence-manifest",
+                    str(manifest),
+                ]
+            )
+            self.assertEqual(status, 0)
+            summary = (output / "summary.log").read_text(encoding="utf-8")
+            self.assertIn("status: PASS", summary)
+            self.assertIn("evidence-binding: PASS", summary)
+
+    def test_aggregate_ci_fails_closed_on_a_failed_required_job(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "out"
+            status = RUNNER.main(
+                [
+                    "aggregate-ci",
+                    "--output-dir",
+                    str(output),
+                    "--run-id",
+                    "42",
+                    "--sha",
+                    "abc123",
+                    "--require-job",
+                    "matrix=failure",
+                ]
+            )
+            self.assertNotEqual(status, 0)
+            summary = (output / "summary.log").read_text(encoding="utf-8")
+            self.assertIn("status: FAIL", summary)
+            self.assertIn("matrix", summary)
+            self.assertNotIn("evidence-binding: PASS", summary)
+
+    def test_aggregate_ci_rejects_a_malformed_require_job_value(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "out"
+            status = RUNNER.main(
+                [
+                    "aggregate-ci",
+                    "--output-dir",
+                    str(output),
+                    "--run-id",
+                    "42",
+                    "--sha",
+                    "abc123",
+                    "--require-job",
+                    "no-equals-sign",
+                ]
+            )
+            self.assertNotEqual(status, 0)
+
+    def test_aggregate_ci_fails_closed_on_run_id_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "manifest.json"
+            manifest.write_text(
+                '{"status": "pass", "ci_run_id": "wrong-run", "ci_sha": "abc123"}',
+                encoding="utf-8",
+            )
+            output = root / "out"
+            status = RUNNER.main(
+                [
+                    "aggregate-ci",
+                    "--output-dir",
+                    str(output),
+                    "--run-id",
+                    "42",
+                    "--sha",
+                    "abc123",
+                    "--evidence-manifest",
+                    str(manifest),
+                ]
+            )
+            self.assertNotEqual(status, 0)
+            summary = (output / "summary.log").read_text(encoding="utf-8")
+            self.assertIn("does not match this workflow run", summary)
+            self.assertNotIn("evidence-binding: PASS", summary)
+
+    def test_aggregate_ci_accepts_legacy_commit_field_without_ci_sha(self) -> None:
+        # `artifact`-mode evidence has no `ci_sha` field (see `artifact_mode`'s
+        # manifest); the aggregator must still be able to bind it via `commit`.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "manifest.json"
+            manifest.write_text(
+                '{"status": "pass", "ci_run_id": "42", "commit": "abc123"}',
+                encoding="utf-8",
+            )
+            output = root / "out"
+            status = RUNNER.main(
+                [
+                    "aggregate-ci",
+                    "--output-dir",
+                    str(output),
+                    "--run-id",
+                    "42",
+                    "--sha",
+                    "abc123",
+                    "--evidence-manifest",
+                    str(manifest),
+                ]
+            )
+            self.assertEqual(status, 0)
+
+    def test_aggregate_ci_fails_closed_on_missing_manifest_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "out"
+            status = RUNNER.main(
+                [
+                    "aggregate-ci",
+                    "--output-dir",
+                    str(output),
+                    "--run-id",
+                    "42",
+                    "--sha",
+                    "abc123",
+                    "--evidence-manifest",
+                    str(Path(directory) / "does-not-exist.json"),
+                ]
+            )
+            self.assertNotEqual(status, 0)
+            summary = (output / "summary.log").read_text(encoding="utf-8")
+            self.assertIn("cannot read evidence manifest", summary)
+
+    def test_source_and_security_manifests_embed_ci_identity_fields(self) -> None:
+        source_text = (SCRIPTS / "release.py").read_text(encoding="utf-8")
+        self.assertIn("**ci_identity()", source_text)
 
     def test_canonical_wrapper_has_no_release_action(self) -> None:
         wrapper = (SCRIPTS / "canonical-producer.sh").read_text(encoding="utf-8")

@@ -81,6 +81,24 @@ Checks are grouped by slice; each slice is a separate review point.
 - [ ] An unexpected exception (for example a write failure) still finalizes `summary.log` as
       `FAIL` — it never leaves `status: RUNNING`.
 
+### M6c — R12 residual consolidation (implementation handoff § M6c item 9)
+
+- [ ] The four declared-MSRV rows are driven from the canonical source; `ci.yaml`'s `msrv` job no
+      longer hand-writes `cargo check … --features localcache/async-std` and its siblings.
+- [ ] The bench-compile invocation is driven from the canonical source; `Makefile.toml`
+      `bench-compile`/`bench` and `ci.yaml` `bench-compile` no longer restate
+      `--features localcache/json`.
+- [ ] `grep -rnE '\-\-features localcache/' Makefile.toml .github/workflows/ci.yaml` returns
+      nothing — no feature literal survives outside the canonical source.
+- [ ] The coverage check is extended to the MSRV rows: adding a declared runtime feature with no
+      MSRV row **fails closed**, demonstrated the same way the R7 check was.
+- [ ] All four MSRV rows still pass on the declared toolchain after the move, verified
+      individually.
+- [ ] A `--run` invocation that selects zero executable modes (for example
+      `--run workspace-doctest --modes clippy`) returns **nonzero** rather than silently
+      succeeding; `--run-all` still skips that combination, since the row is covered by its other
+      mode.
+
 ## M6d — Coming-version housekeeping
 
 - [ ] Workspace and both member versions equal the authorized coming version.

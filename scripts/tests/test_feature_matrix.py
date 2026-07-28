@@ -118,6 +118,12 @@ class FeatureMatrixTests(unittest.TestCase):
             MATRIX.run_row = original
         self.assertEqual(calls, [("workspace-doctest", "test")])
 
+    def test_run_row_modes_fails_closed_when_every_mode_is_skipped(self) -> None:
+        with self.assertRaisesRegex(MATRIX.MatrixError, "executed no modes"):
+            MATRIX.run_row_modes(
+                "workspace-doctest", ["clippy"], root=Path("/nonexistent")
+            )
+
     def test_declared_library_features_reads_the_real_manifest(self) -> None:
         declared = MATRIX.declared_library_features()
         self.assertEqual(declared, set(MATRIX.LIBRARY_FEATURES))
@@ -212,6 +218,134 @@ class FeatureMatrixTests(unittest.TestCase):
     def test_parser_rejects_ambiguous_abbreviations(self) -> None:
         with self.assertRaises(SystemExit):
             MATRIX.parse_args(["--run", "cli-default", "--mode", "test"])
+
+    def test_msrv_row_names_resolve_to_real_rows(self) -> None:
+        for name in MATRIX.MSRV_ROW_NAMES:
+            MATRIX.row_by_name(name)  # must not raise
+
+    def test_msrv_row_names_cover_every_non_tokio_runtime_feature(self) -> None:
+        for feature in MATRIX.NON_TOKIO_RUNTIME_FEATURES:
+            self.assertIn(f"lib-feature-{feature}", MATRIX.MSRV_ROW_NAMES)
+
+    def test_msrv_row_names_include_all_features_and_cli_rows(self) -> None:
+        self.assertIn("lib-all-features", MATRIX.MSRV_ROW_NAMES)
+        self.assertIn("cli-all-features", MATRIX.MSRV_ROW_NAMES)
+
+    def test_a_new_non_tokio_runtime_feature_automatically_gets_an_msrv_row(
+        self,
+    ) -> None:
+        # Adding to NON_TOKIO_RUNTIME_FEATURES (rather than hand-listing an
+        # MSRV row) is the only step meant to be required -- prove
+        # MSRV_ROW_NAMES is genuinely generated, not independently maintained.
+        original = MATRIX.NON_TOKIO_RUNTIME_FEATURES
+        MATRIX.NON_TOKIO_RUNTIME_FEATURES = (*original, "json")
+        try:
+            names = (
+                "lib-all-features",
+                *(
+                    f"lib-feature-{feature}"
+                    for feature in MATRIX.NON_TOKIO_RUNTIME_FEATURES
+                ),
+                "cli-all-features",
+            )
+            self.assertIn("lib-feature-json", names)
+        finally:
+            MATRIX.NON_TOKIO_RUNTIME_FEATURES = original
+
+    def test_check_coverage_fails_closed_on_undeclared_runtime_feature(self) -> None:
+        original = MATRIX.NON_TOKIO_RUNTIME_FEATURES
+        MATRIX.NON_TOKIO_RUNTIME_FEATURES = (*original, "no-such-feature")
+        try:
+            with self.assertRaisesRegex(
+                MATRIX.MatrixError, "NON_TOKIO_RUNTIME_FEATURES references"
+            ):
+                MATRIX.check_coverage()
+        finally:
+            MATRIX.NON_TOKIO_RUNTIME_FEATURES = original
+
+    def test_check_coverage_fails_closed_on_undeclared_bench_feature(self) -> None:
+        original = MATRIX.BENCH_FEATURES
+        MATRIX.BENCH_FEATURES = (*original, "no-such-feature")
+        try:
+            with self.assertRaisesRegex(
+                MATRIX.MatrixError, "BENCH_FEATURES references"
+            ):
+                MATRIX.check_coverage()
+        finally:
+            MATRIX.BENCH_FEATURES = original
+
+    def test_bench_args_compile_only_adds_no_run(self) -> None:
+        args = MATRIX.bench_args(compile_only=True)
+        self.assertEqual(
+            args,
+            [
+                "bench",
+                "-p",
+                "localcache",
+                "--bench",
+                "cache_bench",
+                "--no-run",
+                "--features",
+                "localcache/json",
+                "--locked",
+            ],
+        )
+
+    def test_bench_args_full_run_omits_no_run(self) -> None:
+        args = MATRIX.bench_args(compile_only=False)
+        self.assertNotIn("--no-run", args)
+        self.assertEqual(
+            args,
+            [
+                "bench",
+                "-p",
+                "localcache",
+                "--bench",
+                "cache_bench",
+                "--features",
+                "localcache/json",
+                "--locked",
+            ],
+        )
+
+    def test_run_msrv_aggregates_failures_across_every_row(self) -> None:
+        failures: list[str] = []
+
+        def fake_run_row(name: str, mode: str, *, root: Path) -> None:
+            failures.append(f"{name}/{mode}")
+            raise MATRIX.MatrixError(f"deliberate failure for {name}/{mode}")
+
+        original_run_row = MATRIX.run_row
+        original_check_coverage = MATRIX.check_coverage
+        MATRIX.run_row = fake_run_row
+        MATRIX.check_coverage = lambda root: None
+        try:
+            with self.assertRaisesRegex(MATRIX.MatrixError, "MSRV matrix failures"):
+                MATRIX.run_msrv(root=Path("/nonexistent"))
+        finally:
+            MATRIX.run_row = original_run_row
+            MATRIX.check_coverage = original_check_coverage
+        self.assertEqual(len(failures), len(MATRIX.MSRV_ROW_NAMES))
+        for name in MATRIX.MSRV_ROW_NAMES:
+            self.assertIn(f"{name}/check", failures)
+
+    def test_run_bench_raises_matrix_error_on_nonzero_exit(self) -> None:
+        class FakeCompleted:
+            returncode = 1
+
+        def fake_run(command, cwd):
+            return FakeCompleted()
+
+        original_run = MATRIX.subprocess.run
+        original_check_coverage = MATRIX.check_coverage
+        MATRIX.subprocess.run = fake_run
+        MATRIX.check_coverage = lambda root: None
+        try:
+            with self.assertRaisesRegex(MATRIX.MatrixError, "bench-compile failed"):
+                MATRIX.run_bench(compile_only=True, root=Path("/nonexistent"))
+        finally:
+            MATRIX.subprocess.run = original_run
+            MATRIX.check_coverage = original_check_coverage
 
 
 if __name__ == "__main__":

@@ -6,6 +6,14 @@ on:
   pull_request:
     branches: [main]
 
+# RFC 009 R16: every workflow and job is read-only by default. No job in this
+# workflow needs to write repository contents, packages, or releases, and
+# none receives publish/registry/repository secrets. This workflow also never
+# uses `pull_request_target`, so untrusted PR code never runs with elevated
+# permissions or secret access.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
@@ -15,7 +23,7 @@ jobs:
     name: Source integrity
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Test source-integrity preflight
         run: python3 -m unittest discover -s scripts/tests -v
       - name: Verify manifest target sources
@@ -26,8 +34,8 @@ jobs:
     needs: source-integrity
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           components: rustfmt
       - name: Check formatting
@@ -40,7 +48,7 @@ jobs:
     outputs:
       rows: ${{ steps.rows.outputs.rows }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Fail closed on an uncovered Cargo feature
         run: python3 scripts/feature_matrix.py --check-coverage
       - name: Enumerate canonical matrix rows
@@ -60,15 +68,15 @@ jobs:
       matrix:
         row: ${{ fromJson(needs.matrix-setup.outputs.rows) }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           components: clippy
 
       - name: Cache cargo registry
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             ~/.cargo/registry
@@ -84,10 +92,10 @@ jobs:
     needs: source-integrity
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
       - name: Cache cargo registry
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             ~/.cargo/registry
@@ -95,16 +103,14 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-bench-${{ hashFiles('**/Cargo.lock') }}
       - name: Check bench compiles
-        run: >-
-          cargo bench -p localcache --bench cache_bench --no-run
-          --features localcache/json --locked
+        run: python3 scripts/feature_matrix.py --run-bench-compile
 
   msrv:
     name: MSRV (declared Rust 1.85)
     needs: source-integrity
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Read declared MSRV
         id: msrv
         run: |
@@ -112,11 +118,11 @@ jobs:
           test "$MSRV" = "1.85"
           echo "toolchain=${MSRV}.0" >> "$GITHUB_OUTPUT"
       - name: Install declared MSRV
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: ${{ steps.msrv.outputs.toolchain }}
       - name: Cache cargo registry
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             ~/.cargo/registry
@@ -128,19 +134,15 @@ jobs:
           rustc --version | grep -E '^rustc 1\.85\.0 '
           cargo --version | grep -E '^cargo 1\.85\.0 '
       - name: Check complete declared-MSRV matrix
-        run: |
-          cargo check -p localcache --all-targets --all-features --locked
-          cargo check -p localcache --all-targets --no-default-features --features localcache/async-std --locked
-          cargo check -p localcache --all-targets --no-default-features --features localcache/smol --locked
-          cargo check -p localcache-cli --all-targets --all-features --locked
+        run: python3 scripts/feature_matrix.py --run-msrv
 
   dependency-security:
     name: Dependency security policy
     needs: source-integrity
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
       - name: Install pinned cargo-audit
         run: cargo install cargo-audit --version 0.22.2 --locked
       - name: Run fail-closed advisory policy (RFC 009 R13)
@@ -149,8 +151,96 @@ jobs:
           --output-dir "$RUNNER_TEMP/localcache-advisory-evidence"
       - name: Preserve advisory evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dependency-security-evidence
           path: ${{ runner.temp }}/localcache-advisory-evidence
+          if-no-files-found: error
+
+  # RFC 009 M6c item 3: builds and verifies the project source archive from
+  # this runner (a supported-noncanonical platform, not the R16 canonical
+  # Docker producer — `scripts/canonical-producer.sh` is not yet wired into
+  # CI). Uploads the archive and its evidence as a CI artifact only; this job
+  # never tags, publishes, or creates a release.
+  archive:
+    name: Project archive (noncanonical)
+    needs: source-integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - name: Install pinned mdbook
+        run: |
+          curl -fL --retry 3 \
+            https://github.com/rust-lang/mdBook/releases/download/v0.5.4/mdbook-v0.5.4-x86_64-unknown-linux-gnu.tar.gz \
+            -o "$RUNNER_TEMP/mdbook.tar.gz"
+          printf '%s  %s\n' \
+            3f28de05dafca9d0f2eab99c662116b0e37b89b1d96a08f8f430b9eeae958cd7 \
+            "$RUNNER_TEMP/mdbook.tar.gz" | sha256sum -c -
+          mkdir -p "$HOME/.local/bin"
+          tar -xzf "$RUNNER_TEMP/mdbook.tar.gz" -C "$HOME/.local/bin" mdbook
+          chmod 0755 "$HOME/.local/bin/mdbook"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Build and verify project source archive (RFC 009 R3-R6)
+        run: >-
+          python3 scripts/release.py source --noncanonical
+          --output-dir "$RUNNER_TEMP/localcache-archive"
+      - name: Preserve archive and evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: project-archive-evidence
+          path: ${{ runner.temp }}/localcache-archive
+          if-no-files-found: error
+
+  # RFC 009 M6c item 3: the final fail-closed gate. Runs even if an earlier
+  # job failed (`if: always()`) so it reports the exact binding failure
+  # instead of being silently skipped. It is the only job that reads
+  # `needs.*.result`, `github.run_id`, and `github.sha` — every other gate is
+  # CI-agnostic and runs identically locally via `scripts/release.py`.
+  release-gate:
+    name: Release gate aggregation
+    if: always()
+    needs:
+      - source-integrity
+      - fmt
+      - matrix
+      - bench-compile
+      - msrv
+      - dependency-security
+      - archive
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Download dependency-security evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: dependency-security-evidence
+          path: ${{ runner.temp }}/dependency-security-evidence
+      - name: Download project archive evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: project-archive-evidence
+          path: ${{ runner.temp }}/project-archive-evidence
+      - name: Aggregate and verify CI provenance
+        run: >-
+          python3 scripts/release.py aggregate-ci
+          --output-dir "$RUNNER_TEMP/release-gate-evidence"
+          --run-id "${{ github.run_id }}"
+          --sha "${{ github.sha }}"
+          --require-job "source-integrity=${{ needs.source-integrity.result }}"
+          --require-job "fmt=${{ needs.fmt.result }}"
+          --require-job "matrix=${{ needs.matrix.result }}"
+          --require-job "bench-compile=${{ needs.bench-compile.result }}"
+          --require-job "msrv=${{ needs.msrv.result }}"
+          --require-job "dependency-security=${{ needs.dependency-security.result }}"
+          --require-job "archive=${{ needs.archive.result }}"
+          --evidence-manifest "$RUNNER_TEMP/dependency-security-evidence/manifest.json"
+          --evidence-manifest "$RUNNER_TEMP/project-archive-evidence/evidence/manifest.json"
+      - name: Preserve aggregation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-gate-evidence
+          path: ${{ runner.temp }}/release-gate-evidence
           if-no-files-found: error

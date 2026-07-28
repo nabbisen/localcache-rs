@@ -49,28 +49,37 @@ sha256 = "7e2a72b4c4b38c61e6962de6e3f4a5e9ae692e732c68deead10a7ce2135a7f68"
 path = "/usr/lib/x86_64-linux-gnu/libcrypto.so.3"
 sha256 = "72db1b3de8b7dfbaba4c056135f408da555f9d5e137c82129478e07e769f8070"
 
-[supported-host-tools.python]
+# Non-canonical platforms explicitly claimed to run the `--noncanonical`
+# archive-equivalence path (RFC 009: "other supported platforms prove
+# normalized content equivalence and behavior, not compressed-byte
+# identity"). The list must be non-empty; a platform not listed here fails
+# closed rather than silently attempting verification. Unlike
+# [canonical-tools], no per-binary SHA-256 is required — the exact bytes of
+# a system python3/git/mdbook install are platform- and package-manager-
+# specific and were never meant to be portable across hosts, only the tool
+# identity and version.
+[supported-platforms]
+claimed = ["linux-x86_64"]
+
+[supported-host-tools.linux-x86_64.python]
 command = "python3"
 version = "Python 3.14.6"
-sha256 = "684d10e0f26224cb8b112bd9d49f4c097905ea11aa801a15bf79936ea171d99c"
 
-[supported-host-tools.git]
+[supported-host-tools.linux-x86_64.git]
 command = "git"
 version = "git version 2.55.0"
-sha256 = "292115a21c70326a0fa239e6d9bdee32f750cbd23d12fdef2e518ad4b451a8b3"
 
-[supported-host-tools.mdbook]
+[supported-host-tools.linux-x86_64.mdbook]
 command = "mdbook"
 version = "mdbook v0.5.4"
-sha256 = "39d2434fc670a8c9b8cac39f899247c062ac1e2fdda92a4eb339df8ed5386f49"
 
 [implementations.release-runner]
 path = "scripts/release.py"
-sha256 = "486ec1c7119baca86a47cc95ad1381ce9bf4dbaf346e2beccbeb841fe34c5701"
+sha256 = "2d37ac6472447a069b8138f92ba4bae7cc0d030b9d14013deb1ceb85883e268e"
 
 [implementations.canonical-producer]
 path = "scripts/canonical-producer.sh"
-sha256 = "a965e232e4542379486f2e497e4b8814f1e17ae05040a429a8934a3cc18509aa"
+sha256 = "181caa9605ea0f5deb184a49daa981a70fc20ca8bbc6f3c889a9c269be426341"
 
 [implementations.archive-parser-writer-compressor]
 path = "scripts/release_archive.py"
@@ -86,4 +95,4 @@ sha256 = "43ed05480ea089708d992ffc80bf230988fc2ca7a93ddc2e4f09c4115a1bf3ba"
 
 [implementations.feature-matrix]
 path = "scripts/feature_matrix.py"
-sha256 = "f39760f370fd5e118b6ba5709ffe3cc707b917c63269825cb7786403f6f7f505"
+sha256 = "bc3016b3b6fbda9f78ff53ab06fc6cb38f86dde4c97faf1e4647539899bbe81f"
