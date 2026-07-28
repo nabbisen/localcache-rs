@@ -70,6 +70,7 @@ The "Background" section is optional in both templates.
 | [012](./accepted/012-read-only-schema-and-mutation-contract.md) | Read-only Schema and Mutation Contract | Phase 21 M3 |
 | [013](./accepted/013-panic-free-path-glob-and-cli-text-handling.md) | Panic-free Path, Glob, and CLI Text Handling | Phase 21 M3 |
 | [014](./accepted/014-declared-msrv-and-dependency-security-policy.md) | Declared MSRV and Dependency Security Policy | Phase 21 M4 |
+| [015](./accepted/015-async-runtime-and-watcher-failure-safety.md) | Async Runtime and Watcher Failure Safety | Phase 21 M5 |
 
 ### Proposed
 
