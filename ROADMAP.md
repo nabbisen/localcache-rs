@@ -122,7 +122,7 @@ has an independent **Go** review.
 | **M2 — Data integrity and SQL safety ✅** | Completed Jul 22 | Preserve v1 payloads through v1-to-v5 migration; make migrations atomic; constrain and safely handle SQLite identifiers | Historical fixture and rollback tests pass; hostile identifier tests pass; focused security review accepted |
 | **M3 — Mutation boundaries and input safety ✅** | Completed Jul 23 | Enforce read-only schema/mutation rules; prevent watcher privilege bypass; make glob/path/CLI handling Unicode-safe and non-panicking; align deleted-path behavior | Negative read-only and Unicode/property tests pass; public behavior matches approved RFCs |
 | **M4 — MSRV and supply-chain recovery ✅** | Completed Jul 28 | Select a Rust-1.85-compatible SQLite stack or approve a new MSRV; update vulnerable dependencies; define advisory deny/warn/exception policy | Full declared-MSRV build succeeds; security policy gate is green or has approved, expiring exceptions |
-| **M5 — Async and maintainability hardening** | Aug 5–12 | Remove unnecessary unsafe generic casts; unify runtime panic/poison handling; surface watcher setup failures; perform only risk-reducing module splits | Runtime-backend tests and mutex-panic tests pass; no unexplained unsafe remains; focused review accepted |
+| **M5 — Async and maintainability hardening ✅** | Completed Jul 28 | Remove unnecessary unsafe generic casts; unify runtime panic/poison handling; surface watcher setup failures; perform only risk-reducing module splits | Runtime-backend tests and mutex-panic tests pass; no unexplained unsafe remains; focused review accepted |
 | **M6 — Release controls, docs, and RC** | Aug 13–26 | Correct CI/Makefile feature matrices; enforce warning policy; reconcile archive and published-crate legal-file rules; refresh docs/RFC final prose; assemble fresh evidence | Stable and MSRV gates, tests, clippy, docs, package/archive smoke, legal-file content, and advisory gate all pass on the RC |
 | **M7 — Independent review and release decision** | Aug 27–Sep 4 | Independent architecture re-review of the RC and extracted archive | Every blocker closed; reviewer verdict **Accept** or **Accept with notes**; owner authorizes release |
 
@@ -169,6 +169,15 @@ contract is restored through `rusqlite 0.39` / `libsqlite3-sys 0.37` with zero
 packages added to the graph, and a fail-closed dependency-security gate binds
 RustSec results and fresh crates.io yanked state to the exact lockfile. This
 closure does not authorize release work or move RFC 014 from `rfcs/accepted/`.
+
+RFC 015 implementation was independently accepted at commit `772b3e5`,
+completing M5. The library now contains zero `unsafe` blocks,
+`AsyncCacheEngine` mutex poisoning returns a recoverable error instead of
+panicking every subsequent caller, blocking-closure panics produce
+`AsyncTaskPanicked` on all three async backends, and watcher registration
+failures, dropped events, and failed invalidations are all observable. This
+closure authorizes no release action and does not move RFC 015 from
+`rfcs/accepted/`.
 
 The virtual-workspace relocation at `fe9fe88` was accepted for continued
 development on 2026-07-21. Publication remains blocked until M6 supplies and
