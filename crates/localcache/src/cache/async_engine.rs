@@ -1,7 +1,7 @@
 //! Async wrapper around [`CacheEngine`].
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::{Serialize, de::DeserializeOwned};
 
@@ -52,12 +52,28 @@ where
             })
     }
 
+    /// Lock the shared engine, mapping mutex poisoning to a recoverable
+    /// error instead of propagating the panic to every subsequent caller.
+    ///
+    /// Mirrors [`crate::pool::ConnectionPool`]'s poison-handling contract: a
+    /// poisoned mutex still means the data behind it may reflect a partially
+    /// completed operation, but this only stops the panic from propagating
+    /// to callers who did nothing wrong — it does not attempt to repair
+    /// engine state.
+    fn lock(
+        inner: &Mutex<CacheEngine<T>>,
+    ) -> Result<MutexGuard<'_, CacheEngine<T>>, LocalFileCacheError> {
+        inner.lock().map_err(|_| {
+            LocalFileCacheError::UnsupportedFeature("AsyncCacheEngine mutex was poisoned".into())
+        })
+    }
+
     pub async fn get(&self, path: PathBuf) -> Result<Option<CacheEntry<T>>, LocalFileCacheError>
     where
         T: Clone,
     {
         let inner = Arc::clone(&self.inner);
-        spawn(move || inner.lock().unwrap().get(&path)).await
+        spawn(move || Self::lock(&inner)?.get(&path)).await
     }
 
     pub async fn get_if_fresh(
@@ -68,7 +84,7 @@ where
         T: Clone,
     {
         let inner = Arc::clone(&self.inner);
-        spawn(move || inner.lock().unwrap().get_if_fresh(&path)).await
+        spawn(move || Self::lock(&inner)?.get_if_fresh(&path)).await
     }
 
     pub async fn batch_get(
@@ -79,7 +95,7 @@ where
         T: Clone,
     {
         let inner = Arc::clone(&self.inner);
-        match spawn(move || Ok(inner.lock().unwrap().batch_get(&paths))).await {
+        match spawn(move || Ok(Self::lock(&inner)?.batch_get(&paths))).await {
             Ok(r) => r,
             Err(e) => vec![Err(e)],
         }
@@ -93,7 +109,7 @@ where
         T: Clone,
     {
         let inner = Arc::clone(&self.inner);
-        match spawn(move || Ok(inner.lock().unwrap().batch_get_fresh(&paths))).await {
+        match spawn(move || Ok(Self::lock(&inner)?.batch_get_fresh(&paths))).await {
             Ok(r) => r,
             Err(e) => vec![Err(e)],
         }
@@ -101,7 +117,7 @@ where
 
     pub async fn set(&self, path: PathBuf, payload: T) -> Result<(), LocalFileCacheError> {
         let inner = Arc::clone(&self.inner);
-        spawn(move || inner.lock().unwrap().set(&path, &payload)).await
+        spawn(move || Self::lock(&inner)?.set(&path, &payload)).await
     }
 
     pub async fn batch_set(
@@ -109,17 +125,17 @@ where
         items: Vec<(PathBuf, T)>,
     ) -> Result<BatchSetReport, LocalFileCacheError> {
         let inner = Arc::clone(&self.inner);
-        spawn(move || inner.lock().unwrap().batch_set(&items)).await
+        spawn(move || Self::lock(&inner)?.batch_set(&items)).await
     }
 
     pub async fn remove(&self, path: PathBuf) -> Result<bool, LocalFileCacheError> {
         let inner = Arc::clone(&self.inner);
-        spawn(move || inner.lock().unwrap().remove(&path)).await
+        spawn(move || Self::lock(&inner)?.remove(&path)).await
     }
 
     pub async fn check_status(&self, path: PathBuf) -> Result<CacheStatus, LocalFileCacheError> {
         let inner = Arc::clone(&self.inner);
-        spawn(move || inner.lock().unwrap().check_status(&path)).await
+        spawn(move || Self::lock(&inner)?.check_status(&path)).await
     }
 
     pub async fn scan_dir(
@@ -128,7 +144,7 @@ where
         recursive: bool,
     ) -> Result<Vec<(PathBuf, CacheStatus)>, LocalFileCacheError> {
         let inner = Arc::clone(&self.inner);
-        spawn(move || inner.lock().unwrap().scan_dir(&dir, recursive)).await
+        spawn(move || Self::lock(&inner)?.scan_dir(&dir, recursive)).await
     }
 
     pub async fn scan_dir_filtered(
@@ -137,42 +153,42 @@ where
         options: ScanOptions,
     ) -> Result<Vec<(PathBuf, CacheStatus)>, LocalFileCacheError> {
         let inner = Arc::clone(&self.inner);
-        spawn(move || inner.lock().unwrap().scan_dir_filtered(&dir, options)).await
+        spawn(move || Self::lock(&inner)?.scan_dir_filtered(&dir, options)).await
     }
 
     pub async fn list_entries(&self) -> Result<Vec<EntryInfo>, LocalFileCacheError> {
         let inner = Arc::clone(&self.inner);
-        spawn(move || inner.lock().unwrap().list_entries()).await
+        spawn(move || Self::lock(&inner)?.list_entries()).await
     }
 
     pub async fn cleanup_missing_files(&self) -> Result<usize, LocalFileCacheError> {
         let inner = Arc::clone(&self.inner);
-        spawn(move || inner.lock().unwrap().cleanup_missing_files()).await
+        spawn(move || Self::lock(&inner)?.cleanup_missing_files()).await
     }
 
     pub async fn cleanup_expired(&self) -> Result<usize, LocalFileCacheError> {
         let inner = Arc::clone(&self.inner);
-        spawn(move || inner.lock().unwrap().cleanup_expired()).await
+        spawn(move || Self::lock(&inner)?.cleanup_expired()).await
     }
 
     pub async fn purge_stale_versions(&self) -> Result<usize, LocalFileCacheError> {
         let inner = Arc::clone(&self.inner);
-        spawn(move || inner.lock().unwrap().purge_stale_versions()).await
+        spawn(move || Self::lock(&inner)?.purge_stale_versions()).await
     }
 
     pub async fn shrink_database(&self) -> Result<(), LocalFileCacheError> {
         let inner = Arc::clone(&self.inner);
-        spawn(move || inner.lock().unwrap().shrink_database()).await
+        spawn(move || Self::lock(&inner)?.shrink_database()).await
     }
 
     pub async fn entry_count(&self) -> Result<usize, LocalFileCacheError> {
         let inner = Arc::clone(&self.inner);
-        spawn(move || inner.lock().unwrap().entry_count()).await
+        spawn(move || Self::lock(&inner)?.entry_count()).await
     }
 
     pub async fn entry_count_by_version(&self) -> Result<Vec<(u32, usize)>, LocalFileCacheError> {
         let inner = Arc::clone(&self.inner);
-        spawn(move || inner.lock().unwrap().entry_count_by_version()).await
+        spawn(move || Self::lock(&inner)?.entry_count_by_version()).await
     }
 
     /// Async version of [`CacheEngine::cache_stats`].
@@ -180,7 +196,7 @@ where
         &self,
     ) -> Result<crate::cache::entry::CacheStats, LocalFileCacheError> {
         let inner = Arc::clone(&self.inner);
-        spawn(move || inner.lock().unwrap().cache_stats()).await
+        spawn(move || Self::lock(&inner)?.cache_stats()).await
     }
 
     /// Async version of [`CacheEngine::check_status_batch`].
@@ -189,7 +205,7 @@ where
         paths: Vec<PathBuf>,
     ) -> Vec<Result<CacheStatus, LocalFileCacheError>> {
         let inner = Arc::clone(&self.inner);
-        match spawn(move || Ok(inner.lock().unwrap().check_status_batch(&paths))).await {
+        match spawn(move || Ok(Self::lock(&inner)?.check_status_batch(&paths))).await {
             Ok(r) => r,
             Err(e) => vec![Err(e)],
         }
@@ -202,7 +218,7 @@ where
         new_key: Vec<u8>,
     ) -> Result<usize, LocalFileCacheError> {
         let inner = Arc::clone(&self.inner);
-        spawn(move || inner.lock().unwrap().rotate_encryption_key(&new_key)).await
+        spawn(move || Self::lock(&inner)?.rotate_encryption_key(&new_key)).await
     }
 
     /// Async version of [`CacheEngine::export_entries`].
@@ -210,7 +226,7 @@ where
         &self,
     ) -> Result<Vec<crate::cache::entry::ExportRecord>, LocalFileCacheError> {
         let inner = Arc::clone(&self.inner);
-        spawn(move || inner.lock().unwrap().export_entries()).await
+        spawn(move || Self::lock(&inner)?.export_entries()).await
     }
 
     /// Async version of [`CacheEngine::import_entries`].
@@ -219,19 +235,19 @@ where
         records: Vec<crate::cache::entry::ExportRecord>,
     ) -> Result<usize, LocalFileCacheError> {
         let inner = Arc::clone(&self.inner);
-        spawn(move || inner.lock().unwrap().import_entries(&records)).await
+        spawn(move || Self::lock(&inner)?.import_entries(&records)).await
     }
 
     /// Async version of [`CacheEngine::touch`].
     pub async fn touch(&self, path: PathBuf) -> Result<bool, LocalFileCacheError> {
         let inner = Arc::clone(&self.inner);
-        spawn(move || inner.lock().unwrap().touch(&path)).await
+        spawn(move || Self::lock(&inner)?.touch(&path)).await
     }
 
     /// Async version of [`CacheEngine::contains`].
     pub async fn contains(&self, path: PathBuf) -> Result<bool, LocalFileCacheError> {
         let inner = Arc::clone(&self.inner);
-        spawn(move || inner.lock().unwrap().contains(&path)).await
+        spawn(move || Self::lock(&inner)?.contains(&path)).await
     }
 
     /// Async version of [`CacheEngine::explain`].
@@ -240,7 +256,7 @@ where
         path: PathBuf,
     ) -> Result<crate::cache::entry::Diagnosis, LocalFileCacheError> {
         let inner = Arc::clone(&self.inner);
-        spawn(move || inner.lock().unwrap().explain(&path)).await
+        spawn(move || Self::lock(&inner)?.explain(&path)).await
     }
 
     /// Async version of [`CacheEngine::keys`].
@@ -249,7 +265,7 @@ where
         path_like: Option<String>,
     ) -> Result<Vec<PathBuf>, LocalFileCacheError> {
         let inner = Arc::clone(&self.inner);
-        spawn(move || inner.lock().unwrap().keys(path_like.as_deref())).await
+        spawn(move || Self::lock(&inner)?.keys(path_like.as_deref())).await
     }
 
     /// Execute a pre-built [`crate::QueryBuilder`] asynchronously.
@@ -286,22 +302,26 @@ where
     {
         let inner = Arc::clone(&self.inner);
         spawn(move || {
-            let guard = inner.lock().unwrap();
-            // SAFETY: We need to erase the lifetime because spawn_blocking
-            // requires 'static.  We guarantee safety by holding the lock for
-            // the entire duration of the closure.
-            //
-            // This is a common pattern when wrapping borrowed APIs behind
-            // a mutex for async use.  The guard is alive for the full closure.
-            let engine_ref: &crate::cache::engine::CacheEngine<U> =
-                // SAFETY: The Mutex guard keeps the engine alive for 'static
-                // within this closure. The transmute erases the borrow so the
-                // closure is 'static.
-                unsafe {
-                    &*(&*guard as *const crate::cache::engine::CacheEngine<_>
-                        as *const crate::cache::engine::CacheEngine<U>)
-                };
-            let q = engine_ref.query();
+            let guard = Self::lock(&inner)?;
+            // `EngineCore` borrows only the payload-type-independent parts
+            // of the engine (connection, namespace, and — if enabled — the
+            // encryption key), so a `QueryBuilder<'_, U>` can be built
+            // directly here even though `guard`'s engine is `CacheEngine<T>`
+            // and `U` may differ from `T`. No reinterpretation of
+            // `CacheEngine<T>` as `CacheEngine<U>` is needed or performed.
+            let q = crate::cache::query::QueryBuilder {
+                core: guard.core(),
+                _phantom: std::marker::PhantomData::<U>,
+                #[cfg(feature = "json")]
+                predicates: Vec::new(),
+                limit: None,
+                offset: 0,
+                path_like: None,
+                index_hint: None,
+                path_in_dir: None,
+                path_glob: None,
+                order_by: Vec::new(),
+            };
             let q = build(q);
             crate::cache::query::execute_query(q)
         })
@@ -335,12 +355,8 @@ where
     {
         let inner = Arc::clone(&self.inner);
         spawn(move || {
-            let guard = inner.lock().unwrap();
-            // SAFETY: same transmute pattern as `query_run` — we hold the
-            // Mutex guard for the full duration of the closure, guaranteeing
-            // the engine outlives the borrow.
-            let engine_ref: &crate::cache::engine::CacheEngine<T> =
-                unsafe { &*(&*guard as *const crate::cache::engine::CacheEngine<_>) };
+            let guard = Self::lock(&inner)?;
+            let engine_ref: &crate::cache::engine::CacheEngine<T> = &guard;
             let q = engine_ref.query();
             let q = build(q);
             q.dry_run()
@@ -351,19 +367,19 @@ where
     /// Async version of [`CacheEngine::create_path_index`].
     pub async fn create_path_index(&self, name: String) -> Result<String, LocalFileCacheError> {
         let inner = Arc::clone(&self.inner);
-        spawn(move || inner.lock().unwrap().create_path_index(&name)).await
+        spawn(move || Self::lock(&inner)?.create_path_index(&name)).await
     }
 
     /// Async version of [`CacheEngine::drop_path_index`].
     pub async fn drop_path_index(&self, name: String) -> Result<bool, LocalFileCacheError> {
         let inner = Arc::clone(&self.inner);
-        spawn(move || inner.lock().unwrap().drop_path_index(&name)).await
+        spawn(move || Self::lock(&inner)?.drop_path_index(&name)).await
     }
 
     /// Async version of [`CacheEngine::list_path_indexes`].
     pub async fn list_path_indexes(&self) -> Result<Vec<String>, LocalFileCacheError> {
         let inner = Arc::clone(&self.inner);
-        spawn(move || inner.lock().unwrap().list_path_indexes()).await
+        spawn(move || Self::lock(&inner)?.list_path_indexes()).await
     }
 }
 

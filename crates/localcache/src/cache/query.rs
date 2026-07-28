@@ -135,7 +135,8 @@ fn get_field<'a>(value: &'a serde_json::Value, path: &str) -> Option<&'a serde_j
 ///
 /// Obtain one via [`crate::CacheEngine::query`].
 pub struct QueryBuilder<'e, T> {
-    pub(crate) engine: &'e crate::cache::engine::CacheEngine<T>,
+    pub(crate) core: crate::cache::engine::EngineCore<'e>,
+    pub(crate) _phantom: std::marker::PhantomData<T>,
     #[cfg(feature = "json")]
     pub(crate) predicates: Vec<Predicate>,
     pub(crate) limit: Option<usize>,
@@ -288,8 +289,8 @@ where
         use crate::db::repository;
         let prepared = self.prepare_path_filters()?;
         repository::explain_query(
-            &self.engine.conn,
-            &self.engine.namespace,
+            self.core.conn,
+            self.core.namespace,
             self.path_like.as_deref(),
             self.index_hint.as_deref(),
             prepared.path_in_dir(),
@@ -544,8 +545,8 @@ where
     let prepared = q.prepare_path_filters()?;
 
     let paths = repository::keys(
-        &q.engine.conn,
-        &q.engine.namespace,
+        q.core.conn,
+        q.core.namespace,
         q.path_like.as_deref(),
         q.index_hint.as_deref(),
         prepared.path_in_dir(),
@@ -564,20 +565,21 @@ where
             None => continue,
         };
 
-        let row = match repository::find_file(&q.engine.conn, &q.engine.namespace, path_str)? {
+        let row = match repository::find_file(q.core.conn, q.core.namespace, path_str)? {
             Some(r) => r,
             None => continue,
         };
 
-        let payload_row = match repository::load_payload(&q.engine.conn, row.id)? {
+        let payload_row = match repository::load_payload(q.core.conn, row.id)? {
             Some(p) => p,
             None => continue,
         };
 
-        let payload: T = match q
-            .engine
-            .decode_pub(&payload_row.content, &payload_row.encoding)
-        {
+        let payload: T = match crate::cache::engine::decode_with(
+            &q.core,
+            &payload_row.content,
+            &payload_row.encoding,
+        ) {
             Ok(p) => p,
             Err(_) => continue,
         };

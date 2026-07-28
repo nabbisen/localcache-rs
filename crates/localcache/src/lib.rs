@@ -48,4 +48,4 @@ pub use read_pool::ReadPool;
 #[cfg(feature = "watching")]
 pub use cache::entry::{InvalidationReason, WatchEvent};
 #[cfg(feature = "watching")]
-pub use cache::watcher::{CacheDebouncedWatcher, CacheWatcher};
+pub use cache::watcher::{CacheDebouncedWatcher, CacheWatcher, PathRegistrationError};

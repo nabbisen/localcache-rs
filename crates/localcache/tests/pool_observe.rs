@@ -817,7 +817,7 @@ mod rfc004_shared_cache {
 // i.e. async-std is enabled but Tokio is not).
 #[cfg(all(not(feature = "async"), feature = "async-std"))]
 mod rfc005_async_std {
-    use localcache::{AsyncCacheEngine, CacheOptions};
+    use localcache::{AsyncCacheEngine, CacheOptions, LocalFileCacheError};
 
     use super::write_file;
     use tempfile::TempDir;
@@ -852,12 +852,62 @@ mod rfc005_async_std {
             );
         });
     }
+
+    // RFC 015 R3 — panic parity with Tokio (unwind-only; see runtime.rs).
+    #[test]
+    fn panic_inside_blocking_closure_yields_async_task_panicked() {
+        block_on(async {
+            let engine = AsyncCacheEngine::<Vec<f32>>::open(CacheOptions {
+                database_path: ":memory:".into(),
+                ..CacheOptions::default()
+            })
+            .await
+            .unwrap();
+
+            let result = engine
+                .query_run::<_, Vec<f32>>(|_q| panic!("intentional test panic"))
+                .await;
+            assert!(
+                matches!(result, Err(LocalFileCacheError::AsyncTaskPanicked)),
+                "expected AsyncTaskPanicked, got {result:?}"
+            );
+        });
+    }
+
+    // RFC 015 R2/R3 interlock.
+    #[test]
+    fn poisoned_mutex_recovers_on_subsequent_calls() {
+        block_on(async {
+            let engine = AsyncCacheEngine::<Vec<f32>>::open(CacheOptions {
+                database_path: ":memory:".into(),
+                ..CacheOptions::default()
+            })
+            .await
+            .unwrap();
+
+            let _ = engine
+                .query_run::<_, Vec<f32>>(|_q| panic!("intentional test panic"))
+                .await;
+
+            let path = std::path::PathBuf::from("does-not-matter.txt");
+            let first = engine.contains(path.clone()).await;
+            assert!(matches!(
+                first,
+                Err(LocalFileCacheError::UnsupportedFeature(_))
+            ));
+            let second = engine.contains(path).await;
+            assert!(matches!(
+                second,
+                Err(LocalFileCacheError::UnsupportedFeature(_))
+            ));
+        });
+    }
 }
 
 // smol backend tests (only when smol is the active runtime).
 #[cfg(all(not(feature = "async"), not(feature = "async-std"), feature = "smol"))]
 mod rfc005_smol {
-    use localcache::{AsyncCacheEngine, CacheOptions};
+    use localcache::{AsyncCacheEngine, CacheOptions, LocalFileCacheError};
 
     use super::write_file;
     use tempfile::TempDir;
@@ -886,5 +936,161 @@ mod rfc005_smol {
             let entry = engine.get(path).await.unwrap();
             assert!(entry.is_some(), "smol get must return the stored entry");
         });
+    }
+
+    // RFC 015 R3 — panic parity with Tokio (unwind-only; see runtime.rs).
+    #[test]
+    fn panic_inside_blocking_closure_yields_async_task_panicked() {
+        block_on(async {
+            let engine = AsyncCacheEngine::<Vec<f32>>::open(CacheOptions {
+                database_path: ":memory:".into(),
+                ..CacheOptions::default()
+            })
+            .await
+            .unwrap();
+
+            let result = engine
+                .query_run::<_, Vec<f32>>(|_q| panic!("intentional test panic"))
+                .await;
+            assert!(
+                matches!(result, Err(LocalFileCacheError::AsyncTaskPanicked)),
+                "expected AsyncTaskPanicked, got {result:?}"
+            );
+        });
+    }
+
+    // RFC 015 R2/R3 interlock.
+    #[test]
+    fn poisoned_mutex_recovers_on_subsequent_calls() {
+        block_on(async {
+            let engine = AsyncCacheEngine::<Vec<f32>>::open(CacheOptions {
+                database_path: ":memory:".into(),
+                ..CacheOptions::default()
+            })
+            .await
+            .unwrap();
+
+            let _ = engine
+                .query_run::<_, Vec<f32>>(|_q| panic!("intentional test panic"))
+                .await;
+
+            let path = std::path::PathBuf::from("does-not-matter.txt");
+            let first = engine.contains(path.clone()).await;
+            assert!(matches!(
+                first,
+                Err(LocalFileCacheError::UnsupportedFeature(_))
+            ));
+            let second = engine.contains(path).await;
+            assert!(matches!(
+                second,
+                Err(LocalFileCacheError::UnsupportedFeature(_))
+            ));
+        });
+    }
+}
+
+// ============================================================
+// RFC 015 — Async Runtime and Watcher Failure Safety
+//
+// A panicking `query_run` build closure runs inside the same spawned
+// blocking closure the runtime backend catches, so it is a reliable way to
+// both (a) trigger the panic->AsyncTaskPanicked conversion and (b) poison
+// the shared mutex while it is held, without any library-internal hook.
+// ============================================================
+
+#[cfg(feature = "async")]
+mod rfc015_tokio_async_engine {
+    use localcache::{AsyncCacheEngine, CacheOptions, LocalFileCacheError};
+
+    #[tokio::test]
+    async fn panic_inside_blocking_closure_yields_async_task_panicked() {
+        let engine = AsyncCacheEngine::<Vec<f32>>::open(CacheOptions {
+            database_path: ":memory:".into(),
+            ..CacheOptions::default()
+        })
+        .await
+        .unwrap();
+
+        let result = engine
+            .query_run::<_, Vec<f32>>(|_q| panic!("intentional test panic"))
+            .await;
+        assert!(
+            matches!(result, Err(LocalFileCacheError::AsyncTaskPanicked)),
+            "expected AsyncTaskPanicked, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn poisoned_mutex_recovers_on_subsequent_calls() {
+        let engine = AsyncCacheEngine::<Vec<f32>>::open(CacheOptions {
+            database_path: ":memory:".into(),
+            ..CacheOptions::default()
+        })
+        .await
+        .unwrap();
+
+        // Poison the mutex: the panic happens while `query_run`'s lock guard
+        // is held.
+        let _ = engine
+            .query_run::<_, Vec<f32>>(|_q| panic!("intentional test panic"))
+            .await;
+
+        // R2/R3 interlock: the *next* call must surface R2's recoverable
+        // poisoned-mutex error rather than panicking itself.
+        let path = std::path::PathBuf::from("does-not-matter.txt");
+        let first = engine.contains(path.clone()).await;
+        assert!(
+            matches!(first, Err(LocalFileCacheError::UnsupportedFeature(_))),
+            "expected UnsupportedFeature, got {first:?}"
+        );
+
+        // A second and third subsequent call also return the error — the
+        // engine is not left in a state where only the first post-poison
+        // call is handled.
+        let second = engine.contains(path.clone()).await;
+        assert!(matches!(
+            second,
+            Err(LocalFileCacheError::UnsupportedFeature(_))
+        ));
+        let third = engine.contains(path).await;
+        assert!(matches!(
+            third,
+            Err(LocalFileCacheError::UnsupportedFeature(_))
+        ));
+    }
+
+    // RFC 015 R1b — `query_run`'s payload type `U` may differ from the
+    // engine's own `T`, decoded via `EngineCore`/`decode_with` rather than
+    // any pointer cast. Cover the cross-type path with actual data, not
+    // just a type that happens to compile.
+    #[tokio::test]
+    async fn query_run_decodes_a_type_distinct_from_the_engines_own() {
+        use super::write_file;
+        use tempfile::TempDir;
+
+        // Engine's own payload type is `String`; query as `Vec<u8>`. Under
+        // bincode's legacy config both encode as (length, bytes), so the
+        // decoded bytes must equal the original string's UTF-8 bytes.
+        let engine = AsyncCacheEngine::<String>::open(CacheOptions {
+            database_path: ":memory:".into(),
+            ..CacheOptions::default()
+        })
+        .await
+        .unwrap();
+
+        let dir = TempDir::new().unwrap();
+        let path = write_file(&dir, "cross-type-query.txt", b"seed");
+        engine
+            .set(path.clone(), "cross-type payload".to_string())
+            .await
+            .unwrap();
+
+        let results: Vec<localcache::CacheEntry<Vec<u8>>> = engine
+            .query_run::<_, Vec<u8>>(|q| q.path_like("%cross-type-query.txt"))
+            .await
+            .unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].payload, b"cross-type payload".to_vec());
     }
 }

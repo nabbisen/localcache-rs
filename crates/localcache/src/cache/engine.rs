@@ -1,5 +1,7 @@
 //! [`CacheEngine`] implementation.
 
+mod maintenance;
+
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -12,7 +14,7 @@ use crate::cache::entry::{CacheEntry, CacheStatus, EntryInfo, PreloadReport};
 use crate::cache::options::{
     CacheOptions, ChangeDetectionMode, Codec, ScanOptions, is_memory_path,
 };
-use crate::db::{indexes, repository, schema};
+use crate::db::{repository, schema};
 use crate::detection::hash::{compute_full_hash, compute_partial_hash};
 use crate::detection::metadata::collect_metadata;
 use crate::detection::strategy::detect_change;
@@ -716,33 +718,6 @@ where
         repository::list_entries(&self.conn, &self.namespace)
     }
 
-    pub fn entry_count(&self) -> Result<usize, LocalFileCacheError> {
-        repository::count_in_namespace(&self.conn, &self.namespace)
-    }
-
-    pub fn entry_count_by_version(&self) -> Result<Vec<(u32, usize)>, LocalFileCacheError> {
-        repository::count_by_version(&self.conn, &self.namespace)
-    }
-
-    /// Return aggregate statistics for the current namespace.
-    pub fn cache_stats(&self) -> Result<crate::cache::entry::CacheStats, LocalFileCacheError> {
-        use crate::cache::entry::CacheStats;
-
-        let raw = repository::aggregate_stats(&self.conn, &self.namespace)?;
-        let entries_by_encoding = repository::encoding_breakdown(&self.conn, &self.namespace)?;
-        let entries_by_payload_version = repository::count_by_version(&self.conn, &self.namespace)?;
-
-        Ok(CacheStats {
-            namespace: self.namespace.clone(),
-            total_entries: raw.total_entries,
-            total_payload_bytes: raw.total_payload_bytes,
-            oldest_updated_at: raw.oldest_updated_at,
-            newest_updated_at: raw.newest_updated_at,
-            entries_by_encoding,
-            entries_by_payload_version,
-        })
-    }
-
     // ------------------------------------------------------------------
     // Export / import
     // ------------------------------------------------------------------
@@ -1185,65 +1160,6 @@ where
     // Builder entrypoint
     // ------------------------------------------------------------------
 
-    /// Remove entries whose stored paths no longer exist on disk.
-    ///
-    /// Returns the number of entries deleted.
-    ///
-    /// # Path semantics
-    ///
-    /// Normal `set` paths are canonical absolute paths; imported records may
-    /// retain a portable valid UTF-8 key. This method iterates exact stored
-    /// strings and calls `Path::exists()` on each one **without
-    /// re-canonicalizing**.
-    ///
-    /// Consequence on **case-insensitive filesystems** (Windows, default
-    /// macOS): a file renamed *only by case* still satisfies `exists()` and
-    /// its entry is therefore **preserved** — the correct behaviour on such
-    /// systems (the original canonical path still resolves to the file).
-    ///
-    /// If you need to track case-only renames explicitly, use
-    /// [`check_status`][CacheEngine::check_status] per entry to compare
-    /// stored vs current metadata.
-    pub fn cleanup_missing_files(&self) -> Result<usize, LocalFileCacheError> {
-        self.guard_write()?;
-        let paths = repository::all_paths_in_namespace(&self.conn, &self.namespace)?;
-        let mut removed = 0;
-        for p in &paths {
-            if !Path::new(p).exists() {
-                repository::delete_path(&self.conn, &self.namespace, p)?;
-                removed += 1;
-            }
-        }
-        Ok(removed)
-    }
-
-    pub fn cleanup_expired(&self) -> Result<usize, LocalFileCacheError> {
-        self.guard_write()?;
-        let Some(ttl) = self.ttl else {
-            return Ok(0);
-        };
-        let rows = repository::all_file_rows_in_namespace(&self.conn, &self.namespace)?;
-        let mut removed = 0;
-        for (_, path, updated_at) in &rows {
-            if is_expired(*updated_at, Some(ttl)) {
-                repository::delete_path(&self.conn, &self.namespace, path)?;
-                removed += 1;
-            }
-        }
-        Ok(removed)
-    }
-
-    pub fn purge_stale_versions(&self) -> Result<usize, LocalFileCacheError> {
-        self.guard_write()?;
-        repository::delete_by_other_version(&self.conn, &self.namespace, self.payload_version)
-    }
-
-    pub fn shrink_database(&self) -> Result<(), LocalFileCacheError> {
-        self.guard_write()?;
-        self.conn.execute_batch("VACUUM;")?;
-        Ok(())
-    }
-
     // ------------------------------------------------------------------
     // Lightweight existence / key queries
     // ------------------------------------------------------------------
@@ -1296,7 +1212,8 @@ where
     /// feature must be enabled.
     pub fn query(&self) -> crate::cache::query::QueryBuilder<'_, T> {
         crate::cache::query::QueryBuilder {
-            engine: self,
+            core: self.core(),
+            _phantom: PhantomData,
             #[cfg(feature = "json")]
             predicates: Vec::new(),
             limit: None,
@@ -1331,41 +1248,6 @@ where
         };
         repository::touch_last_accessed(&self.conn, row.id)?;
         Ok(true)
-    }
-
-    // ------------------------------------------------------------------
-    // Persistent index management
-    // ------------------------------------------------------------------
-
-    /// Create an additional SQLite index on `files(namespace, path)`.
-    ///
-    /// `name` is a suffix of 1–64 ASCII alphanumeric/underscore bytes. The
-    /// full index name is prefixed with `"lc_user_"` and returned. Existing
-    /// structurally valid legacy indexes remain idempotently discoverable,
-    /// but an out-of-grammar legacy spelling cannot be recreated after drop.
-    /// Rejected names return [`LocalFileCacheError::UnsupportedFeature`].
-    pub fn create_path_index(&self, name: &str) -> Result<String, LocalFileCacheError> {
-        self.guard_write()?;
-        indexes::create_path_index(&self.conn, name)
-    }
-
-    /// Drop an owned main-schema user index by suffix.
-    ///
-    /// Returns `true` if it existed in `main` and was dropped, or `false` if
-    /// no matching main-schema object exists. Structurally authorized legacy
-    /// names can be removed safely; TEMP and attached-schema objects are
-    /// never targets.
-    pub fn drop_path_index(&self, name: &str) -> Result<bool, LocalFileCacheError> {
-        self.guard_write()?;
-        indexes::drop_path_index(&self.conn, name)
-    }
-
-    /// List structurally valid main-schema user indexes in alphabetical order.
-    ///
-    /// Each result is valid for the catalog snapshot used by this call. A
-    /// later operation revalidates the index before using it.
-    pub fn list_path_indexes(&self) -> Result<Vec<String>, LocalFileCacheError> {
-        indexes::list_path_indexes(&self.conn)
     }
 
     // ------------------------------------------------------------------
@@ -1422,15 +1304,56 @@ where
         )
     }
 
-    /// Decode bytes — same as `decode` but callable from `query.rs` via the
-    /// `pub(crate)` visibility.
-    pub(crate) fn decode_pub(
-        &self,
-        bytes: &[u8],
-        encoding: &str,
-    ) -> Result<T, LocalFileCacheError> {
-        self.decode(bytes, encoding)
+    /// Borrow the payload-type-independent parts of this engine.
+    ///
+    /// Lets [`crate::cache::query::QueryBuilder`] (and `AsyncCacheEngine`'s
+    /// query path) operate on a query result type different from this
+    /// engine's own `T` without reinterpreting `CacheEngine<T>` as
+    /// `CacheEngine<U>`.
+    pub(crate) fn core(&self) -> EngineCore<'_> {
+        EngineCore {
+            conn: &self.conn,
+            namespace: &self.namespace,
+            #[cfg(feature = "encryption")]
+            encryption_key: self.encryption_key.as_ref(),
+        }
     }
+}
+
+/// Payload-type-independent borrow of a [`CacheEngine`], used by
+/// [`crate::cache::query::QueryBuilder`] so it can decode a query result
+/// type different from the engine's own payload type without any `unsafe`
+/// reinterpretation of `CacheEngine<T>`.
+///
+/// Mirrors every `#[cfg]` gate on the corresponding `CacheEngine<T>` field —
+/// today only `encryption_key`. `database_path` / `watch_dirs`
+/// (`watching`-gated) are not read by the query path and are intentionally
+/// not part of this type.
+pub(crate) struct EngineCore<'e> {
+    pub(crate) conn: &'e Connection,
+    pub(crate) namespace: &'e str,
+    #[cfg(feature = "encryption")]
+    pub(crate) encryption_key: Option<&'e [u8; 32]>,
+}
+
+/// Decode `bytes` into `U`, using `core`'s configuration rather than a
+/// typed `CacheEngine<U>`. The generic replacement for the removed
+/// `CacheEngine::decode_pub`.
+#[cfg_attr(not(feature = "encryption"), allow(unused_variables))]
+pub(crate) fn decode_with<U>(
+    core: &EngineCore<'_>,
+    bytes: &[u8],
+    encoding: &str,
+) -> Result<U, LocalFileCacheError>
+where
+    U: DeserializeOwned,
+{
+    decode_payload(
+        bytes,
+        encoding,
+        #[cfg(feature = "encryption")]
+        core.encryption_key,
+    )
 }
 
 // ---------------------------------------------------------------------------

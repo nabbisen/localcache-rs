@@ -36,6 +36,7 @@
 //! ```
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher, event};
@@ -44,6 +45,57 @@ use serde::{Serialize, de::DeserializeOwned};
 use crate::cache::engine::CacheEngine;
 use crate::cache::entry::{InvalidationReason, WatchEvent};
 use crate::error::LocalFileCacheError;
+
+// ---------------------------------------------------------------------------
+// Registration and invalidation diagnostics (RFC 015 R4/R5)
+// ---------------------------------------------------------------------------
+
+/// A path that failed OS-level watch registration at construction time.
+///
+/// Construction still succeeds with partial coverage — this type makes that
+/// partial failure observable via
+/// [`CacheWatcher::registration_errors`]/[`CacheDebouncedWatcher::registration_errors`]
+/// instead of silently discarding it. Each failure is also emitted as a
+/// `tracing::warn!` when the `tracing` feature is enabled, so the accessor
+/// is an audit trail rather than the only signal.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct PathRegistrationError {
+    path: PathBuf,
+    message: String,
+}
+
+impl PathRegistrationError {
+    fn new(path: PathBuf, message: String) -> Self {
+        Self { path, message }
+    }
+
+    /// The path that failed to register with the OS watcher.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// The underlying OS watcher error, rendered as text.
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+/// Shared, atomically-updated failure counters for a watcher's background
+/// callback. `Relaxed` ordering is sufficient — these are independent
+/// monotonic counters with no other memory operation that depends on their
+/// ordering relative to a read.
+#[derive(Default)]
+struct WatcherCounters {
+    /// Invalidation events dropped because the bounded notification channel
+    /// was full. The underlying cache invalidation already succeeded by the
+    /// time a drop can occur — only the *notification* is lost.
+    dropped_events: AtomicU64,
+    /// Times removing an invalidated entry from the database failed. A
+    /// failed removal is counted, not retried, and no notification is sent
+    /// for that occurrence.
+    failed_invalidations: AtomicU64,
+}
 
 // ---------------------------------------------------------------------------
 // CacheWatcher
@@ -69,11 +121,14 @@ pub struct CacheWatcher<T> {
     _os_watcher: RecommendedWatcher,
     /// Receiver end of the invalidation event channel.
     rx: mpsc::Receiver<WatchEvent>,
+    /// Paths that failed initial OS-level registration at construction time.
+    registration_errors: Vec<PathRegistrationError>,
 }
 
 struct WatcherInner<T> {
     engine: Mutex<CacheEngine<T>>,
     tx: mpsc::SyncSender<WatchEvent>,
+    counters: WatcherCounters,
 }
 
 impl<T> CacheWatcher<T>
@@ -110,6 +165,7 @@ where
         let inner = Arc::new(WatcherInner {
             engine: Mutex::new(watcher_engine),
             tx: tx.clone(),
+            counters: WatcherCounters::default(),
         });
 
         let inner_cb = Arc::clone(&inner);
@@ -129,15 +185,32 @@ where
                         // `contains()` is a single indexed SELECT — cheap —
                         // and falls back to a raw-path lookup for files that
                         // no longer exist on disk, so Remove events still
-                        // match their stored entry.
-                        if !eng.contains(path).unwrap_or(false) {
+                        // match their stored entry. An *error* from
+                        // `contains()` is not evidence the path is
+                        // uncached, so only a definite `Ok(false)` skips.
+                        if matches!(eng.contains(path), Ok(false)) {
                             continue;
                         }
-                        let _ = eng.remove(path);
-                        let _ = inner_cb.tx.try_send(WatchEvent {
-                            path: path.clone(),
-                            reason: reason.clone(),
-                        });
+                        if eng.remove(path).is_err() {
+                            inner_cb
+                                .counters
+                                .failed_invalidations
+                                .fetch_add(1, Ordering::Relaxed);
+                            continue;
+                        }
+                        if inner_cb
+                            .tx
+                            .try_send(WatchEvent {
+                                path: path.clone(),
+                                reason: reason.clone(),
+                            })
+                            .is_err()
+                        {
+                            inner_cb
+                                .counters
+                                .dropped_events
+                                .fetch_add(1, Ordering::Relaxed);
+                        }
                     }
                 }
             })
@@ -149,17 +222,30 @@ where
 
         // Pre-register all currently cached paths (provided by caller):
         // either each file individually (default) or each unique parent
-        // directory recursively (`watch_dirs = true`).
+        // directory recursively (`watch_dirs = true`). Construction still
+        // succeeds with partial coverage; a registration failure is
+        // collected rather than discarded.
+        let mut registration_errors = Vec::new();
         if watch_dirs {
             for dir in unique_parent_dirs(&paths) {
                 if dir.exists() {
-                    let _ = os_watcher.watch(&dir, RecursiveMode::Recursive);
+                    if let Err(e) = os_watcher.watch(&dir, RecursiveMode::Recursive) {
+                        #[cfg(feature = "tracing")]
+                        tracing::warn!(path = %dir.display(), error = %e, "watch registration failed");
+                        registration_errors
+                            .push(PathRegistrationError::new(dir.clone(), e.to_string()));
+                    }
                 }
             }
         } else {
             for path in &paths {
                 if path.exists() {
-                    let _ = os_watcher.watch(path, RecursiveMode::NonRecursive);
+                    if let Err(e) = os_watcher.watch(path, RecursiveMode::NonRecursive) {
+                        #[cfg(feature = "tracing")]
+                        tracing::warn!(path = %path.display(), error = %e, "watch registration failed");
+                        registration_errors
+                            .push(PathRegistrationError::new(path.clone(), e.to_string()));
+                    }
                 }
             }
         }
@@ -168,6 +254,7 @@ where
             inner,
             _os_watcher: os_watcher,
             rx,
+            registration_errors,
         })
     }
 
@@ -255,6 +342,38 @@ where
             .map(|g| g.entry_count().unwrap_or(0))
             .unwrap_or(0)
     }
+
+    /// Paths that failed OS-level watch registration at construction time.
+    ///
+    /// Construction still succeeds with partial coverage — this is how a
+    /// partial failure becomes observable. Each failure is also emitted as a
+    /// `tracing::warn!` when the `tracing` feature is enabled.
+    pub fn registration_errors(&self) -> &[PathRegistrationError] {
+        &self.registration_errors
+    }
+
+    /// Number of invalidation events dropped because the notification
+    /// channel (bounded to 256 events) was full.
+    ///
+    /// The underlying cache invalidation is unaffected — a dropped event
+    /// only means the *notification* was lost. See
+    /// [`CacheWatcher::failed_invalidation_count`] for invalidation itself
+    /// failing.
+    pub fn dropped_event_count(&self) -> u64 {
+        self.inner.counters.dropped_events.load(Ordering::Relaxed)
+    }
+
+    /// Number of times removing an invalidated entry from the database
+    /// failed.
+    ///
+    /// A failed removal is counted, not retried, and no notification is
+    /// sent for that occurrence.
+    pub fn failed_invalidation_count(&self) -> u64 {
+        self.inner
+            .counters
+            .failed_invalidations
+            .load(Ordering::Relaxed)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -301,6 +420,10 @@ pub struct CacheDebouncedWatcher<T> {
     _debouncer: notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>,
     /// Receiver for deduplicated invalidation events.
     rx: std::sync::mpsc::Receiver<WatchEvent>,
+    /// Paths that failed initial OS-level registration at construction time.
+    registration_errors: Vec<PathRegistrationError>,
+    /// Shared failure counters, updated from the debounce callback.
+    counters: Arc<WatcherCounters>,
 }
 
 impl<T> CacheDebouncedWatcher<T>
@@ -335,6 +458,8 @@ where
         let inner = Arc::new(Mutex::new(watcher_engine));
         let (tx, rx) = mpsc::sync_channel::<WatchEvent>(256);
         let inner_cb = Arc::clone(&inner);
+        let counters = Arc::new(WatcherCounters::default());
+        let counters_cb = Arc::clone(&counters);
 
         let debouncer = notify_debouncer_mini::new_debouncer(
             window,
@@ -352,15 +477,32 @@ where
                         // DebouncedEventKind has only Any / AnyContinuous —
                         // no remove variant; treat all as FileModified.
                         let reason = InvalidationReason::FileModified;
+                        let mut invalidation_failed = false;
                         if let Ok(eng) = inner_cb.lock() {
                             // Recursive directory watching delivers events
-                            // for uncached files too — filter them out.
-                            if !eng.contains(&path).unwrap_or(false) {
+                            // for uncached files too — filter them out. An
+                            // *error* from `contains()` is not evidence the
+                            // path is uncached, so only a definite
+                            // `Ok(false)` skips.
+                            if matches!(eng.contains(&path), Ok(false)) {
                                 continue;
                             }
-                            let _ = eng.remove(&path);
+                            if eng.remove(&path).is_err() {
+                                counters_cb
+                                    .failed_invalidations
+                                    .fetch_add(1, Ordering::Relaxed);
+                                invalidation_failed = true;
+                            }
                         }
-                        let _ = tx.try_send(WatchEvent { path, reason });
+                        if invalidation_failed {
+                            // Removal was attempted and failed: count it,
+                            // don't retry, and don't send a notification
+                            // claiming invalidation happened.
+                            continue;
+                        }
+                        if tx.try_send(WatchEvent { path, reason }).is_err() {
+                            counters_cb.dropped_events.fetch_add(1, Ordering::Relaxed);
+                        }
                     }
                 }
             },
@@ -373,18 +515,31 @@ where
 
         // Register all pre-existing cached paths — per file (default) or per
         // unique parent directory, recursively (`watch_dirs = true`).
+        // Construction still succeeds with partial coverage; a registration
+        // failure is collected rather than discarded.
         {
             let mut deb = debouncer;
+            let mut registration_errors = Vec::new();
             if watch_dirs {
                 for dir in unique_parent_dirs(&paths) {
                     if dir.exists() {
-                        let _ = deb.watcher().watch(&dir, RecursiveMode::Recursive);
+                        if let Err(e) = deb.watcher().watch(&dir, RecursiveMode::Recursive) {
+                            #[cfg(feature = "tracing")]
+                            tracing::warn!(path = %dir.display(), error = %e, "watch registration failed");
+                            registration_errors
+                                .push(PathRegistrationError::new(dir.clone(), e.to_string()));
+                        }
                     }
                 }
             } else {
                 for path in &paths {
                     if path.exists() {
-                        let _ = deb.watcher().watch(path, RecursiveMode::NonRecursive);
+                        if let Err(e) = deb.watcher().watch(path, RecursiveMode::NonRecursive) {
+                            #[cfg(feature = "tracing")]
+                            tracing::warn!(path = %path.display(), error = %e, "watch registration failed");
+                            registration_errors
+                                .push(PathRegistrationError::new(path.clone(), e.to_string()));
+                        }
                     }
                 }
             }
@@ -392,6 +547,8 @@ where
                 _inner: inner,
                 _debouncer: deb,
                 rx,
+                registration_errors,
+                counters,
             })
         }
     }
@@ -430,6 +587,30 @@ where
                     dir.as_ref().display()
                 ))
             })
+    }
+
+    /// Paths that failed OS-level watch registration at construction time.
+    ///
+    /// See [`CacheWatcher::registration_errors`] — identical semantics.
+    pub fn registration_errors(&self) -> &[PathRegistrationError] {
+        &self.registration_errors
+    }
+
+    /// Number of invalidation events dropped because the notification
+    /// channel (bounded to 256 events) was full.
+    ///
+    /// See [`CacheWatcher::dropped_event_count`] — identical semantics.
+    pub fn dropped_event_count(&self) -> u64 {
+        self.counters.dropped_events.load(Ordering::Relaxed)
+    }
+
+    /// Number of times removing an invalidated entry from the database
+    /// failed.
+    ///
+    /// See [`CacheWatcher::failed_invalidation_count`] — identical
+    /// semantics.
+    pub fn failed_invalidation_count(&self) -> u64 {
+        self.counters.failed_invalidations.load(Ordering::Relaxed)
     }
 }
 

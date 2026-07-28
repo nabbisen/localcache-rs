@@ -69,8 +69,19 @@ impl SpawnBlocking for AsyncStdRuntime {
         F: FnOnce() -> Result<R, LocalFileCacheError> + Send + 'static,
         R: Send + 'static,
     {
-        // `async_std::task::spawn_blocking` is stable in async-std 1.13.
-        async_std::task::spawn_blocking(f).await
+        // `async_std::task::spawn_blocking` yields `R` directly rather than
+        // `Result<R, JoinError>`, so a panicking closure would otherwise
+        // propagate as a raw unwind through this `.await` instead of
+        // becoming `AsyncTaskPanicked`. Catch it on the blocking thread,
+        // before it is handed to the runtime, so it never crosses the
+        // `.await` at all — this holds only under Rust's default unwinding
+        // panic strategy; under `panic = "abort"` no backend catches
+        // anything and the process aborts identically across all three.
+        let guarded = move || {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
+                .unwrap_or(Err(LocalFileCacheError::AsyncTaskPanicked))
+        };
+        async_std::task::spawn_blocking(guarded).await
     }
 }
 
@@ -89,9 +100,15 @@ impl SpawnBlocking for SmolRuntime {
         F: FnOnce() -> Result<R, LocalFileCacheError> + Send + 'static,
         R: Send + 'static,
     {
+        // `smol::unblock` also yields `R` directly; wrap the closure for the
+        // same reason as the async-std backend above.
+        let guarded = move || {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
+                .unwrap_or(Err(LocalFileCacheError::AsyncTaskPanicked))
+        };
         // `smol::unblock` runs the closure on the `blocking` thread pool
         // and is available in smol 2.x without any extra feature flags.
-        smol::unblock(f).await
+        smol::unblock(guarded).await
     }
 }
 

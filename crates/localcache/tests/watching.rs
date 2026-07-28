@@ -775,3 +775,185 @@ mod rfc001_recursive_dir_watching {
         );
     }
 }
+
+// ====================================================================
+// RFC 015 R4/R5 — watcher registration and invalidation diagnostics
+// ====================================================================
+
+#[cfg(all(feature = "watching", unix))]
+mod rfc015_watcher_diagnostics {
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::{Duration, Instant};
+
+    use rusqlite::Connection;
+    use tempfile::TempDir;
+
+    use localcache::CacheEngine;
+
+    /// Write via `OpenOptions` (no truncate) so the OS emits a
+    /// `Modify(Data)` event rather than a `Create` event — same technique
+    /// as `watching_tests::modify_file` elsewhere in this file.
+    fn modify_file(path: &std::path::Path, content: &[u8]) {
+        use std::io::Write as _;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path)
+            .unwrap();
+        f.write_all(content).unwrap();
+        f.flush().unwrap();
+    }
+
+    fn make_file_engine(
+        dir: &TempDir,
+        watch_dirs: bool,
+    ) -> (CacheEngine<Vec<f32>>, std::path::PathBuf) {
+        let db_path = dir.path().join("diag.sqlite3");
+        let engine = CacheEngine::builder()
+            .database(&db_path)
+            .watch_dirs(watch_dirs)
+            .build()
+            .unwrap();
+        (engine, db_path)
+    }
+
+    /// Construction still succeeds with partial coverage even when a
+    /// registered directory cannot be watched, and the failure is
+    /// observable via `registration_errors()` instead of silently
+    /// discarded.
+    #[test]
+    fn registration_errors_are_observable_for_an_unwatchable_directory() {
+        let dir = TempDir::new().unwrap();
+        let (engine, _db_path) = make_file_engine(&dir, true);
+
+        let locked = dir.path().join("locked_subdir");
+        std::fs::create_dir(&locked).unwrap();
+        let file = locked.join("cached.txt");
+        std::fs::write(&file, b"content").unwrap();
+        engine.set(&file, &vec![1.0_f32]).unwrap();
+
+        // Remove all permissions on the directory *after* caching the file
+        // inside it, so `set()` succeeded normally but the OS watch
+        // registration below fails with a permission error.
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let result = engine.watcher();
+
+        // Always restore permissions before any assertion can fail the
+        // test, so `TempDir`'s cleanup on drop never fails.
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let watcher = result.expect("construction must still succeed with partial coverage");
+        let errors = watcher.registration_errors();
+        assert!(
+            !errors.is_empty(),
+            "expected at least one registration error for the unwatchable directory"
+        );
+        assert!(
+            errors.iter().any(|e| e.path() == locked),
+            "registration_errors() must name the failing path; got {:?}",
+            errors.iter().map(|e| e.path()).collect::<Vec<_>>()
+        );
+    }
+
+    /// A failed `remove` during the watcher callback is counted, not
+    /// silently discarded, and no notification is sent for that failed
+    /// occurrence.
+    #[test]
+    fn failed_invalidation_is_counted_not_discarded() {
+        let dir = TempDir::new().unwrap();
+        let (engine, db_path) = make_file_engine(&dir, false);
+
+        let path = dir.path().join("blocked.txt");
+        std::fs::write(&path, b"original").unwrap();
+        engine.set(&path, &vec![1.0_f32]).unwrap();
+
+        let watcher = engine.watcher().unwrap();
+        assert_eq!(watcher.failed_invalidation_count(), 0);
+
+        // Hold an exclusive write lock on the same database file from a
+        // second raw connection. The watcher's own connection carries this
+        // build's compiled-in default `busy_timeout` (5000 ms; verified
+        // empirically, not configurable through the public API), so it
+        // retries internally for up to that long before `remove()` finally
+        // returns `Err(DatabaseBusy)` — the wait below must exceed it.
+        let blocker = Connection::open(&db_path).unwrap();
+        blocker.busy_timeout(Duration::ZERO).unwrap();
+        blocker.execute_batch("BEGIN IMMEDIATE;").unwrap();
+
+        std::thread::sleep(Duration::from_millis(100));
+        modify_file(&path, b"modified while locked!!");
+
+        let deadline = Instant::now() + Duration::from_secs(7);
+        while watcher.failed_invalidation_count() == 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        blocker.execute_batch("ROLLBACK;").unwrap();
+        drop(blocker);
+
+        assert!(
+            watcher.failed_invalidation_count() > 0,
+            "expected a counted failed invalidation while the database was locked"
+        );
+        // No event should have been sent for the failed occurrence.
+        assert!(
+            watcher.events().try_recv().is_err(),
+            "no notification should be sent for a failed invalidation"
+        );
+    }
+
+    /// A burst of invalidations beyond the 256-slot channel bound is
+    /// counted as dropped notifications, but every affected entry is still
+    /// removed from the database — invalidation correctness does not
+    /// depend on notification delivery.
+    #[test]
+    fn dropped_events_are_counted_and_invalidation_still_completes() {
+        const FILE_COUNT: usize = 400; // > the 256-slot channel bound
+
+        let dir = TempDir::new().unwrap();
+        let (engine, _db_path) = make_file_engine(&dir, false);
+
+        let paths: Vec<_> = (0..FILE_COUNT)
+            .map(|i| {
+                let p = dir.path().join(format!("burst_{i}.txt"));
+                std::fs::write(&p, b"seed").unwrap();
+                engine.set(&p, &vec![i as f32]).unwrap();
+                p
+            })
+            .collect();
+
+        // Watcher constructed but its channel is deliberately never drained
+        // during the burst below, so it fills and starts dropping.
+        let watcher = engine.watcher().unwrap();
+
+        for p in &paths {
+            modify_file(p, b"changed");
+        }
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let remaining = paths.iter().filter(|p| engine.contains(p).unwrap()).count();
+            if remaining == 0 {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "{remaining} of {FILE_COUNT} entries were never invalidated"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        assert!(
+            watcher.dropped_event_count() > 0,
+            "expected at least one dropped notification for a burst of {FILE_COUNT} events \
+             against a 256-slot channel"
+        );
+        assert_eq!(
+            engine.entry_count().unwrap(),
+            0,
+            "every entry must be invalidated regardless of dropped notifications"
+        );
+    }
+}

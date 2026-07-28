@@ -156,6 +156,40 @@ let handle = std::thread::spawn(move || {
 engine.set("file.txt", &payload)?;
 ```
 
+## Diagnostics
+
+Watcher construction succeeds even if some paths could not be registered
+with the OS, and the invalidation event channel is bounded to 256 events.
+Neither failure mode stops the cache from staying correct — invalidation
+(removing a stale entry from the database) happens independently of
+whether the corresponding notification could be registered or delivered —
+but both are worth monitoring:
+
+```rust
+let watcher = engine.watcher()?;
+
+// Paths that failed OS-level watch registration at construction time.
+// Construction still succeeds with partial coverage; each failure is also
+// emitted as a `tracing::warn!` when the `tracing` feature is enabled.
+for err in watcher.registration_errors() {
+    eprintln!("failed to watch {}: {}", err.path().display(), err.message());
+}
+
+// Notifications dropped because the 256-slot channel was full. The
+// underlying cache invalidation already happened — only the notification
+// was lost.
+println!("dropped notifications: {}", watcher.dropped_event_count());
+
+// Times removing an invalidated entry from the database itself failed
+// (e.g. the database was locked). A failed removal is counted, not
+// retried, and no notification is sent for that occurrence — it is not
+// silently discarded.
+println!("failed invalidations: {}", watcher.failed_invalidation_count());
+```
+
+`CacheDebouncedWatcher` exposes the identical three accessors with the same
+semantics.
+
 ## Platform support
 
 | Platform | Backend |

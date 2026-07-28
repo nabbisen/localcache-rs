@@ -24,8 +24,32 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   feature and established payload wire format are preserved. These warnings
   are not known vulnerabilities and require a new decision before expiry.
 
+### Added
+
+- `CacheWatcher` and `CacheDebouncedWatcher` expose `registration_errors()`,
+  `dropped_event_count()`, and `failed_invalidation_count()`, making
+  previously silent partial-registration failures, dropped notifications
+  (256-slot channel), and failed database removals observable. Registration
+  failures are also emitted as `tracing::warn!` when the `tracing` feature is
+  enabled. `PathRegistrationError` is a new public type.
+
 ### Fixed
 
+- A panic inside `AsyncCacheEngine`'s async-std or smol blocking closure now
+  returns `LocalFileCacheError::AsyncTaskPanicked`, matching the existing
+  Tokio behavior, instead of propagating as a raw unwind through the async
+  runtime.
+- A poisoned `AsyncCacheEngine` mutex now returns
+  `LocalFileCacheError::UnsupportedFeature` on the next call instead of
+  panicking every subsequent caller for the life of the process.
+- The two `unsafe` blocks in `AsyncCacheEngine`'s query path are removed;
+  `query_run`/`query_dry_run` no longer reinterpret `CacheEngine<T>` as
+  `CacheEngine<U>` to support a query result type different from the
+  engine's own payload type. The library now contains zero `unsafe` blocks.
+- The watcher callback now treats a `contains()` error as "attempt the
+  removal anyway" rather than silently skipping the path, and a failed
+  database removal is counted rather than discarded; no notification is
+  sent for a failed removal.
 - Glob compilation is now bounded and panic-free for Unicode input, malformed
   braces, nested/multiple alternatives, and oversized expansion. Directory
   scans and SQLite path queries share one case-sensitive Unicode-scalar
