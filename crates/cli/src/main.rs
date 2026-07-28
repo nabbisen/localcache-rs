@@ -181,8 +181,19 @@ struct ImportArgs {
     #[arg(short, long, default_value = "-")]
     input: String,
 
-    /// Overwrite existing entries with the same path.
-    #[arg(long, default_value_t = true)]
+    /// Overwrite existing entries with the same path. When false, records
+    /// whose path already exists in the target namespace are left
+    /// untouched and reported as skipped; the remaining records still
+    /// import. Default is to overwrite. A bare `--overwrite` (no value)
+    /// also means true; use `--overwrite=false` to skip existing entries.
+    #[arg(
+        long,
+        default_value_t = true,
+        default_missing_value = "true",
+        num_args = 0..=1,
+        require_equals = true,
+        action = clap::ArgAction::Set
+    )]
     overwrite: bool,
 }
 
@@ -561,12 +572,47 @@ fn cmd_import(opts: CacheOptions, args: ImportArgs) -> Result<(), LocalFileCache
         records.push(record);
     }
 
-    let imported = engine.import_entries(&records)?;
-    eprintln!(
-        "Imported {} entr{}",
-        imported,
-        if imported == 1 { "y" } else { "ies" }
-    );
+    if args.overwrite {
+        let imported = engine.import_entries(&records)?;
+        eprintln!(
+            "Imported {} entr{}",
+            imported,
+            if imported == 1 { "y" } else { "ies" }
+        );
+        return Ok(());
+    }
+
+    // `--overwrite=false`: skip records whose path already exists in the
+    // target namespace, importing only the rest. Compare against the exact
+    // stored key set — the same key `import_entries`'s
+    // `ON CONFLICT(namespace, path)` upsert conflicts on — rather than
+    // `CacheEngine::contains`, which canonicalises per the RFC 008 path
+    // contract and could disagree with the raw upsert conflict key.
+    let existing: std::collections::HashSet<String> = engine
+        .keys(None)?
+        .into_iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    let (to_import, skipped): (Vec<_>, Vec<_>) = records
+        .into_iter()
+        .partition(|r| !existing.contains(&r.path));
+    let skipped = skipped.len();
+
+    let imported = engine.import_entries(&to_import)?;
+    if skipped == 0 {
+        eprintln!(
+            "Imported {} entr{}",
+            imported,
+            if imported == 1 { "y" } else { "ies" }
+        );
+    } else {
+        eprintln!(
+            "Imported {} entr{}, skipped {} existing",
+            imported,
+            if imported == 1 { "y" } else { "ies" },
+            skipped
+        );
+    }
     Ok(())
 }
 

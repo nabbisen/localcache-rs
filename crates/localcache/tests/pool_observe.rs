@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use tempfile::TempDir;
 
-use localcache::{CacheEngine, CacheOptions, CacheStatus};
+use localcache::{CacheEngine, CacheOptions, CacheStatus, ChangeDetectionMode};
 
 // ====================================================================
 
@@ -295,6 +295,142 @@ fn explain_payload_version_mismatch() {
     assert_eq!(pv.stored, 1);
     assert_eq!(pv.expected, 2);
     assert!(!pv.matches);
+}
+
+// ====================================================================
+// Residual pre-RC correction A — explain() must compare a stored partial
+// hash against a freshly computed partial hash (and a full hash against a
+// full hash), not a full hash against a partial one.
+//
+// `SAMPLE_SIZE` (detection/hash.rs) is 64 KiB, and any file <= 128 KiB is
+// hashed in full even under "partial" mode, so the pre-fix comparison
+// accidentally succeeded for small fixtures. Every file here exceeds
+// 128 KiB so the partial and full digests actually differ.
+// ====================================================================
+
+const PARTIAL_HASH_TEST_FILE_SIZE: usize = 200 * 1024; // > SAMPLE_SIZE * 2 (128 KiB)
+const PARTIAL_HASH_REGION_SIZE: usize = 64 * 1024; // matches detection::hash::SAMPLE_SIZE
+
+fn build_large_file(head: u8, mid: u8, tail: u8) -> Vec<u8> {
+    let mut content = vec![mid; PARTIAL_HASH_TEST_FILE_SIZE];
+    content[..PARTIAL_HASH_REGION_SIZE].fill(head);
+    content[PARTIAL_HASH_TEST_FILE_SIZE - PARTIAL_HASH_REGION_SIZE..].fill(tail);
+    content
+}
+
+#[test]
+fn explain_partial_hash_unchanged_large_file_matches() {
+    // Must FAIL against the pre-fix `explain`, which always compared a
+    // full-file hash against a partial hash and reported `Some(false)` for
+    // an unchanged, partially-hashed file larger than 128 KiB.
+    let dir = TempDir::new().unwrap();
+    let engine: CacheEngine<Vec<f32>> = CacheEngine::builder()
+        .database(":memory:")
+        .change_detection(ChangeDetectionMode::MetadataThenPartialHash)
+        .build()
+        .unwrap();
+
+    let path = write_file(
+        &dir,
+        "diag_partial_unchanged.bin",
+        &build_large_file(1, 2, 3),
+    );
+    engine.set(&path, &vec![1.0_f32]).unwrap();
+
+    let diag = engine.explain(&path).unwrap();
+    assert_eq!(diag.hash_match, Some(true));
+}
+
+#[test]
+fn explain_partial_hash_mid_region_change_still_matches() {
+    // Changing only the middle of the file (outside both sampled regions)
+    // is the documented, intended limitation of partial hashing — not a
+    // bug — and `explain` must agree with `check_status`.
+    let dir = TempDir::new().unwrap();
+    let engine: CacheEngine<Vec<f32>> = CacheEngine::builder()
+        .database(":memory:")
+        .change_detection(ChangeDetectionMode::MetadataThenPartialHash)
+        .build()
+        .unwrap();
+
+    let path = write_file(&dir, "diag_partial_mid.bin", &build_large_file(1, 2, 3));
+    engine.set(&path, &vec![1.0_f32]).unwrap();
+
+    // Same head/tail, different mid-region content and same file length.
+    write_file(&dir, "diag_partial_mid.bin", &build_large_file(1, 9, 3));
+
+    let diag = engine.explain(&path).unwrap();
+    assert_eq!(diag.hash_match, Some(true));
+}
+
+#[test]
+fn explain_partial_hash_head_change_detected() {
+    let dir = TempDir::new().unwrap();
+    let engine: CacheEngine<Vec<f32>> = CacheEngine::builder()
+        .database(":memory:")
+        .change_detection(ChangeDetectionMode::MetadataThenPartialHash)
+        .build()
+        .unwrap();
+
+    let path = write_file(&dir, "diag_partial_head.bin", &build_large_file(1, 2, 3));
+    engine.set(&path, &vec![1.0_f32]).unwrap();
+
+    write_file(&dir, "diag_partial_head.bin", &build_large_file(9, 2, 3));
+
+    let diag = engine.explain(&path).unwrap();
+    assert_eq!(diag.hash_match, Some(false));
+}
+
+#[test]
+fn explain_partial_hash_tail_change_detected() {
+    let dir = TempDir::new().unwrap();
+    let engine: CacheEngine<Vec<f32>> = CacheEngine::builder()
+        .database(":memory:")
+        .change_detection(ChangeDetectionMode::MetadataThenPartialHash)
+        .build()
+        .unwrap();
+
+    let path = write_file(&dir, "diag_partial_tail.bin", &build_large_file(1, 2, 3));
+    engine.set(&path, &vec![1.0_f32]).unwrap();
+
+    write_file(&dir, "diag_partial_tail.bin", &build_large_file(1, 2, 9));
+
+    let diag = engine.explain(&path).unwrap();
+    assert_eq!(diag.hash_match, Some(false));
+}
+
+#[test]
+fn explain_full_hash_unchanged_large_file_matches() {
+    // Regression guard: the full-hash path must remain unaffected by the fix.
+    let dir = TempDir::new().unwrap();
+    let engine: CacheEngine<Vec<f32>> = CacheEngine::builder()
+        .database(":memory:")
+        .change_detection(ChangeDetectionMode::StrictFullHash)
+        .build()
+        .unwrap();
+
+    let path = write_file(&dir, "diag_full_unchanged.bin", &build_large_file(1, 2, 3));
+    engine.set(&path, &vec![1.0_f32]).unwrap();
+
+    let diag = engine.explain(&path).unwrap();
+    assert_eq!(diag.hash_match, Some(true));
+}
+
+#[test]
+fn explain_no_stored_hash_metadata_only() {
+    // MetadataOnly stores no hash at all; `hash_match` must stay `None`.
+    let dir = TempDir::new().unwrap();
+    let engine: CacheEngine<Vec<f32>> = CacheEngine::builder()
+        .database(":memory:")
+        .change_detection(ChangeDetectionMode::MetadataOnly)
+        .build()
+        .unwrap();
+
+    let path = write_file(&dir, "diag_meta_only.bin", &build_large_file(1, 2, 3));
+    engine.set(&path, &vec![1.0_f32]).unwrap();
+
+    let diag = engine.explain(&path).unwrap();
+    assert_eq!(diag.hash_match, None);
 }
 
 // ====================================================================

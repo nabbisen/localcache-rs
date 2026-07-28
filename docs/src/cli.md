@@ -162,6 +162,16 @@ localcache -d new.sqlite3 import < backup.jsonl
 localcache -d new.sqlite3 import -i backup.jsonl
 ```
 
+By default, a record whose path already exists in the target namespace
+**overwrites** the stored entry — this is the same behavior as a bare
+`--overwrite`. Pass `--overwrite=false` to leave existing entries untouched
+instead; the command reports both counts and imports the remaining records:
+
+```sh
+localcache -d cache.sqlite3 import --overwrite=false -i backup.jsonl
+# Imported 12 entries, skipped 3 existing
+```
+
 ### `copy`
 
 Copy all entries from one namespace to another within the same database.

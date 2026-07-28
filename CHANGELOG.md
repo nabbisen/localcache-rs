@@ -57,6 +57,16 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Caller journal/synchronous settings are delayed until migration commit, and
   post-commit configuration errors explicitly report whether migration
   committed and the requested/observed settings.
+- `explain` now compares a stored partial hash against a freshly computed
+  partial hash, and a full hash against a full hash, instead of always
+  comparing against a full-file digest. The prior comparison reported a
+  changed file for every unchanged entry larger than 128 KiB stored under a
+  partial-hash detection mode.
+- CLI `import --overwrite=false` now actually skips records whose path
+  already exists in the target namespace, reporting both the imported and
+  skipped counts. Previously the option had no effect and every import
+  silently overwrote existing entries regardless of its value; a bare
+  `--overwrite` (no value) continues to mean overwrite, unchanged.
 
 ### Changed
 

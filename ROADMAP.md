@@ -184,10 +184,10 @@ M6 constructs the release candidate, but they are not part of RFC 015's async
 runtime and watcher scope and do not require a separate RFC unless implementation
 uncovers a material compatibility or design decision:
 
-- [ ] Make `explain` compare partial stored hashes using the matching partial
+- [x] Make `explain` compare partial stored hashes using the matching partial
       hash strategy rather than comparing them with a full-file digest; cover
       both unchanged and changed partially hashed files with regression tests.
-- [ ] Make the CLI import contract truthful while preserving the public
+- [x] Make the CLI import contract truthful while preserving the public
       `--overwrite` spelling: implement and document distinct overwrite and
       no-overwrite behavior, and cover both paths with regression tests.
       Removing or renaming the option is a material CLI compatibility change

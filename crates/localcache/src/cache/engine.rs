@@ -524,7 +524,7 @@ where
         path: P,
     ) -> Result<crate::cache::entry::Diagnosis, LocalFileCacheError> {
         use crate::cache::entry::{Diagnosis, MetadataDiff, PayloadVersionInfo};
-        use crate::detection::hash::compute_full_hash;
+        use crate::detection::hash::{compute_full_hash, compute_partial_hash, is_partial_hash};
         use crate::detection::metadata::collect_metadata;
 
         let path = path.as_ref();
@@ -589,15 +589,15 @@ where
                 mtime_changed: row.metadata.mtime != current.mtime,
                 size_changed: row.metadata.file_size != current.file_size,
             };
-            // Compare hash if one was stored.
+            // Compare hash if one was stored, using whichever strategy
+            // produced the stored digest (mirrors `detection::strategy`).
             let hm = if let Some(stored_hash) = &row.metadata.hash {
-                let current_hash = compute_full_hash(canonical).ok();
-                current_hash.map(|h| {
-                    let stored_base = stored_hash
-                        .strip_prefix(crate::detection::hash::PARTIAL_PREFIX)
-                        .unwrap_or(stored_hash);
-                    h == stored_base || &h == stored_hash
-                })
+                let current = if is_partial_hash(stored_hash) {
+                    compute_partial_hash(canonical).ok()
+                } else {
+                    compute_full_hash(canonical).ok()
+                };
+                current.map(|h| h == *stored_hash)
             } else {
                 None
             };
