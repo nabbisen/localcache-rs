@@ -254,22 +254,19 @@ dependencies = ["version-check", "changelog-check", "security-check", "pre-publi
 #   localcache-vX.Y.Z.tar.gz
 #   evidence/
 #
-# Project files are at archive root. The canonical runner refuses a dirty
-# checkout, validates raw headers before extraction, and runs the M1 smoke
-# gates from both the checkout and a Git-free fresh extraction.
+# Project files are at archive root. The runner refuses a dirty checkout,
+# validates raw headers before extraction, and runs the M1 smoke gates from
+# both the checkout and a Git-free fresh extraction. RFC 017 retired the
+# canonical/noncanonical distinction: this runs on any supported host, and
+# the uncompressed-tar digest is the same-host determinism gate (R2).
 # ---------------------------------------------------------------------------
 
 [tasks.archive]
-description = "Construct and verify the RFC 009 M1 project source archive"
-command = "scripts/canonical-producer.sh"
-
-[tasks.archive-equivalence]
-description = "Run non-RC archive behavior/content checks on the supported host"
+description = "Construct and verify the RFC 009/017 project source archive"
 command = "python3"
 args = [
     "scripts/release.py",
     "source",
     "--output-dir",
     ".git-exclude/release-output",
-    "--noncanonical",
 ]

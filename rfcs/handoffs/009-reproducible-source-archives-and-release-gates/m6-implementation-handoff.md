@@ -56,27 +56,34 @@ Known gaps, each verified present in the tree:
 
 **This slice closes B-07.** Record that in its review request.
 
-### M6c — Canonical producer and CI provenance *(RFC 009 R3–R6, R14, R16)*
+### M6c — CI provenance *(RFC 009 R3–R6, R14)* — ✅ complete
 
-1. Execute `scripts/canonical-producer.sh` end-to-end. It has **never been run** — the M1 evidence
-   used a checksum-verified OCI filesystem under `bwrap` because Docker was unavailable, and that
-   exception was accepted for M1 only.
-2. Prove two consecutive canonical builds from one commit produce an identical SHA-256.
+> **Items 1, 2, 5, and 8 below are withdrawn by
+> [RFC 017](../../accepted/017-content-reproducible-archives-without-a-container-producer.md)
+> (accepted 2026-07-28), which supersedes RFC 009 R16 and retires the container producer.** They are
+> struck rather than deleted so the record of what was originally required, and why it changed,
+> survives. Their replacements live in § M6e. Items 3, 4, 6, 7, and 9 were delivered in `d86fda7`.
+
+1. ~~Execute `scripts/canonical-producer.sh` end-to-end.~~ **Withdrawn (RFC 017 R5).**
+2. ~~Prove two consecutive canonical builds from one commit produce an identical SHA-256.~~
+   **Withdrawn** — replaced by RFC 017 R2, per-host uncompressed-tar determinism, verified in M6e.
 3. Add CI archive construction plus a final aggregator that fails closed when any required row or
    artifact is missing, duplicated, stale, or bound to a different workflow run or commit.
 4. Enforce R16: explicit `permissions: contents: read`, every third-party action pinned to an
    immutable commit SHA, no `pull_request_target` execution of untrusted code, no publish or
    repository secrets in build/verification jobs.
-5. Replace self-asserted RC eligibility with an external binding. Today `producer_class: canonical`
-   and `rc_eligible: true` follow from an environment variable the runner reads about itself; bind
-   them to the wrapper or CI run identity instead.
+5. ~~Replace self-asserted RC eligibility with an external binding.~~ **Withdrawn** — RFC 017 R3
+   removes the environmental claim entirely: `rc_eligible` derives from a clean committed tree, all
+   required gates passing, and a complete evidence bundle. There is nothing environmental left to
+   attest. Implemented in M6e.
 6. Re-assert the R4/R5 layout **after** the artifact smoke run, so "build output stayed outside the
    extracted source" is observed rather than assumed.
 7. Finalize the failure summary on unexpected exceptions — `main()` currently catches only three
    error types, so an `OSError` can leave `summary.log` reading `status: RUNNING`.
-8. Replace the per-binary SHA-256 pins in `[supported-host-tools]` with an explicit, non-empty
-   claimed-platform policy. The current pins describe one workstation, which is why the
-   noncanonical runner cannot execute in CI.
+8. ~~Replace the per-binary SHA-256 pins in `[supported-host-tools]` with an explicit, non-empty
+   claimed-platform policy.~~ The pins were removed in `d86fda7`; **RFC 017 R3 then removes
+   `[supported-platforms]` and `[supported-host-tools]` outright**, since there is no longer a
+   canonical/noncanonical distinction to police. Removal happens in M6e.
 9. **(Added after the M6b implementation review, N-1.)** M6b consolidated the R7 feature-and-package
    matrix into `scripts/feature_matrix.py`, but the declared-MSRV rows (`ci.yaml` `msrv` job's four
    `cargo check` invocations) and the bench-compile invocation (`Makefile.toml` `bench-compile`/
@@ -102,14 +109,42 @@ Known gaps, each verified present in the tree:
 
 **`0.20.0` is already tagged.** Any archive built before this slice carries a colliding name.
 
-### M6e — RC construction and evidence *(RFC 009 R9, R14)*
+### M6e — RC construction and evidence *(RFC 017; RFC 009 R9, R14)*
 
-1. `cargo doc --workspace --no-deps --all-features --locked`, `mdbook build docs`, and
+**Do the RFC 017 migration first (items 1–6); the RC is built on top of it.**
+[RFC 017](../../accepted/017-content-reproducible-archives-without-a-container-producer.md) was
+accepted 2026-07-28 and supersedes RFC 009 R16. There is no container producer to execute and no
+compressed-byte identity to prove; M6c's deferred canonical-producer items are **withdrawn**, not
+carried here. RFC 009 **R5's archive-safety controls are unchanged** — do not touch structured header
+validation, the export manifest, Git blob identity, or link rejection.
+
+1. `release_archive.py` — compute and return the **uncompressed-tar** SHA-256; keep `compress_tar`
+   for producing the deliverable.
+2. `release.py` — record the uncompressed digest as the primary identity; the compressed size and
+   digest stay recorded but **advisory**. Replace `rc_eligibility()`'s environment check with RFC 017
+   R3: clean committed tree **and** every required gate passed **and** the evidence bundle complete
+   with no skipped required step. Drop `verify_tool_manifest`'s canonical branch. Add RFC 017 R4
+   toolchain-identity capture (platform, `git`, Python, zlib, locale, timezone, stable and
+   declared-MSRV `rustc`/`cargo`, mdBook, security tool).
+3. `release-tools.toml` — remove `[producer].image`, `[canonical-base-components]`,
+   `[supported-platforms]`, `[supported-host-tools]`, and the `canonical-producer`
+   `[implementations]` pin. Keep `[implementations]` for the remaining gate scripts.
+4. Delete `scripts/canonical-producer.sh`.
+5. `.github/workflows/ci.yaml` — the `archive` job drops `--noncanonical` and becomes the ordinary
+   archive gate. Remove `RFC009_PRODUCER_IMAGE` / `RFC009_RC_ELIGIBLE` handling wherever it appears.
+6. Leave no dangling reference to the wrapper in `Makefile.toml`, CI, `release-tools.toml`, or these
+   handoffs.
+
+Then the RC itself:
+
+7. `cargo doc --workspace --no-deps --all-features --locked`, `mdbook build docs`, and
    `cargo package --workspace --locked` — no `--allow-dirty`, no `--no-verify`.
-2. Joint package verification including M6a's in-artifact legal-file assertion.
-3. Canonical-environment archive plus SHA-256.
-4. Evidence bundle carrying every R14 field, including the RFC 014 policy revision and the
-   advisory-database revision. A required step that was skipped must render the summary a failure.
+8. Joint package verification including M6a's in-artifact legal-file assertion.
+9. Archive plus its uncompressed-tar digest; prove two consecutive builds from one clean commit on
+   the same host produce an identical uncompressed-tar digest.
+10. Evidence bundle carrying every R14 field as amended by RFC 017 R4, including the RFC 014 policy
+    revision and the advisory-database revision. A required step that was skipped must render the
+    summary a failure.
 
 ### Explicitly out of scope
 
@@ -187,8 +222,9 @@ archive. Generated `docs/book/` must be removed before any review request.
 
 ## 7. Known limitations
 
-- The canonical producer requires Docker. If it is still unavailable, that is an **escalation**, not
-  a repeat of M1's `bwrap` exception — M6c exists specifically to close that gap.
+- **Docker is no longer required anywhere.** RFC 017 retired the container producer; the archive
+  gates run on any supported host. If a future change reintroduces a container, it may only be an
+  optional execution wrapper that changes no gate semantics (RFC 017 R5).
 - The two `warn` advisory dispositions carry an `expires` field; once reached the security gate
   denies. Renewing or resolving them is an owner decision that gates M6b's security step.
 - RFC 016 is Proposed. M6a cannot begin until it is Accepted, and its owner decision is the only

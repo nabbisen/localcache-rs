@@ -76,6 +76,15 @@ findings. **All eight are now closed**; M6 as a whole is not complete until
 its remaining slices (M6a, M6c–M6e) and M7 finish. This closure authorizes no
 release action.
 
+M6c (CI provenance) was independently accepted at commit `d86fda7`. Its two
+canonical-producer proof items were withdrawn rather than carried forward:
+[RFC 017](https://github.com/nabbisen/localcache-rs/blob/main/rfcs/accepted/017-content-reproducible-archives-without-a-container-producer.md)
+(accepted 2026-07-28) supersedes RFC 009's canonical-producer requirement (R16)
+entirely, replacing compressed-byte reproducibility in a pinned Docker image
+with content reproducibility: an uncompressed-tar digest, per-host
+determinism, and RC eligibility that derives from gates passing rather than
+from which machine ran them. This closure authorizes no release action.
+
 The virtual-workspace relocation at `fe9fe88` was accepted for continued
 development. Publication remains blocked until M6 includes and verifies the
 root-authoritative `LICENSE` and `NOTICE` content in generated `.crate`

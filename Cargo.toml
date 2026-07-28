@@ -13,7 +13,7 @@ default-members = [
 # `field.workspace = true`
 # --------------------------------------------------------------------------
 [workspace.package]
-version         = "0.20.0"
+version         = "0.20.1"
 edition         = "2024"
 rust-version    = "1.85"
 license         = "Apache-2.0"
@@ -27,7 +27,7 @@ readme          = "README.md"
 # --------------------------------------------------------------------------
 [workspace.dependencies]
 # workspace members
-localcache              = { version = "0.20.0", path = "crates/localcache" }
+localcache              = { version = "0", path = "crates/localcache" }
 # library
 rusqlite                = { version = "0.39", features = ["bundled", "limits"] }
 serde                   = { version = "1",    features = ["derive"] }

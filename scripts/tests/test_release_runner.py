@@ -83,15 +83,151 @@ class ReleaseRunnerTests(unittest.TestCase):
                 {
                     "name": "localcache-cli",
                     "version": "1.2.3",
-                    "dependencies": [{"name": "localcache", "req": "^1.2.2"}],
+                    # ^1.3.0 excludes 1.2.3 entirely -- a genuine drift, not
+                    # just a non-exact-but-compatible caret requirement.
+                    "dependencies": [{"name": "localcache", "req": "^1.3.0"}],
                 },
             ]
         }
-        with self.assertRaisesRegex(RUNNER.ReleaseError, "does not match"):
+        with self.assertRaisesRegex(RUNNER.ReleaseError, "does not admit"):
             RUNNER.workspace_version(document)
 
         document["packages"][1]["dependencies"][0]["req"] = "^1.2.3"
         self.assertEqual(RUNNER.workspace_version(document), "1.2.3")
+
+    def test_workspace_version_accepts_a_compatible_non_exact_caret_requirement(
+        self,
+    ) -> None:
+        # ^1.2.2 is satisfied by 1.2.3 (a patch bump within the same minor) --
+        # this must not be treated as drift; only genuine incompatibility is.
+        document = {
+            "packages": [
+                {"name": "localcache", "version": "1.2.3", "dependencies": []},
+                {
+                    "name": "localcache-cli",
+                    "version": "1.2.3",
+                    "dependencies": [{"name": "localcache", "req": "^1.2.2"}],
+                },
+            ]
+        }
+        self.assertEqual(RUNNER.workspace_version(document), "1.2.3")
+
+    def test_workspace_version_accepts_bare_zero_caret_for_pre_1_0(self) -> None:
+        # This project's real Cargo.toml uses `localcache = { version = "0" }`
+        # for the CLI's workspace-internal dependency deliberately: both
+        # crates are always released in lockstep, so a bare "^0" (any 0.x.y)
+        # is intentional, not drift.
+        document = {
+            "packages": [
+                {"name": "localcache", "version": "0.20.1", "dependencies": []},
+                {
+                    "name": "localcache-cli",
+                    "version": "0.20.1",
+                    "dependencies": [{"name": "localcache", "req": "^0"}],
+                },
+            ]
+        }
+        self.assertEqual(RUNNER.workspace_version(document), "0.20.1")
+
+    def test_caret_requirement_satisfied_matches_cargo_semantics(self) -> None:
+        cases = [
+            ("^0", "0.20.1", True),
+            ("^0", "0.0.1", True),
+            ("^0.20.1", "0.20.1", True),
+            ("^0.20.1", "0.20.2", True),
+            ("^0.20.1", "0.21.0", False),
+            ("^0.20.1", "0.19.0", False),
+            ("^1.2.3", "1.5.0", True),
+            ("^1.2.3", "1.2.2", False),
+            ("^1.2.3", "2.0.0", False),
+            ("^0.0.3", "0.0.3", True),
+            ("^0.0.3", "0.0.4", False),
+        ]
+        for requirement, version, expected in cases:
+            with self.subTest(requirement=requirement, version=version):
+                self.assertEqual(
+                    RUNNER.caret_requirement_satisfied(requirement, version), expected
+                )
+
+    @staticmethod
+    def _version_reference_fixture(root: Path, *, version: str) -> None:
+        for relative in RUNNER.VERSION_REFERENCE_TARGETS:
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                f'```toml\n[dependencies]\nlocalcache = "{version}"\n```\n',
+                encoding="utf-8",
+            )
+
+    def test_verify_version_references_passes_when_all_match(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._version_reference_fixture(root, version="0.20.1")
+            RUNNER.verify_version_references(root, "0.20.1")  # must not raise
+
+    def test_verify_version_references_fails_closed_on_stale_version(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._version_reference_fixture(root, version="0.20.1")
+            with self.assertRaisesRegex(RUNNER.ReleaseError, "stale version reference"):
+                RUNNER.verify_version_references(root, "0.20.2")
+
+    def test_verify_version_references_fails_closed_on_missing_line(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._version_reference_fixture(root, version="0.20.1")
+            (root / "README.md").write_text("no install example here\n", encoding="utf-8")
+            with self.assertRaisesRegex(
+                RUNNER.ReleaseError, "no install-example version line found"
+            ):
+                RUNNER.verify_version_references(root, "0.20.1")
+
+    def test_verify_version_references_fails_closed_on_missing_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with self.assertRaisesRegex(RUNNER.ReleaseError, "cannot read version reference"):
+                RUNNER.verify_version_references(root, "0.20.1")
+
+    def test_verify_changelog_has_coming_version_section_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "CHANGELOG.md").write_text(
+                "# Changelog\n\n## [0.20.1] — Unreleased\n\n### Added\n\n- Something.\n\n"
+                "## [0.20.0] — 2026-06-06\n\n### Added\n\n- Older.\n",
+                encoding="utf-8",
+            )
+            RUNNER.verify_changelog_has_coming_version_section(root, "0.20.1")
+
+    def test_verify_changelog_fails_closed_on_missing_section(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "CHANGELOG.md").write_text(
+                "# Changelog\n\n## [0.20.0] — 2026-06-06\n\n### Added\n\n- Older.\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(RUNNER.ReleaseError, "no section for"):
+                RUNNER.verify_changelog_has_coming_version_section(root, "0.20.1")
+
+    def test_verify_changelog_fails_closed_on_empty_section(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "CHANGELOG.md").write_text(
+                "# Changelog\n\n## [0.20.1] — Unreleased\n\n## [0.20.0] — 2026-06-06\n\n"
+                "### Added\n\n- Older.\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(RUNNER.ReleaseError, "is empty"):
+                RUNNER.verify_changelog_has_coming_version_section(root, "0.20.1")
+
+    def test_real_repo_version_references_and_changelog_match_workspace(self) -> None:
+        # Demonstrates the fixed defect directly: before M6d this failed
+        # because README.md/docs said 0.20.1 while Cargo.toml said 0.20.0.
+        root = SCRIPT.resolve().parents[1]
+        with (root / "Cargo.toml").open("rb") as file:
+            document = tomllib.load(file)
+        version = document["workspace"]["package"]["version"]
+        RUNNER.verify_version_references(root, version)
+        RUNNER.verify_changelog_has_coming_version_section(root, version)
 
     def test_failed_gate_is_logged_and_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -115,7 +251,7 @@ class ReleaseRunnerTests(unittest.TestCase):
             arguments = argparse.Namespace(
                 root=root,
                 expected_layout=RUNNER.LAYOUT,
-                expected_sha256="a" * 64,
+                expected_uncompressed_sha256="a" * 64,
                 expected_version="1.2.3",
                 evidence_dir=root / "evidence",
                 target_dir=root / "target-output",
@@ -129,7 +265,7 @@ class ReleaseRunnerTests(unittest.TestCase):
             arguments = argparse.Namespace(
                 root=root,
                 expected_layout="versioned-parent",
-                expected_sha256="a" * 64,
+                expected_uncompressed_sha256="a" * 64,
                 expected_version="1.2.3",
                 evidence_dir=root / "evidence",
                 target_dir=root / "target-output",
@@ -152,7 +288,7 @@ class ReleaseRunnerTests(unittest.TestCase):
                     "1.2.3",
                     "--expected-layout",
                     "wrong-layout",
-                    "--expected-sha256",
+                    "--expected-uncompressed-sha256",
                     "a" * 64,
                     "--evidence-dir",
                     str(evidence),
@@ -226,10 +362,11 @@ class ReleaseRunnerTests(unittest.TestCase):
             ):
                 RUNNER.verify_named_implementation(root, "does-not-exist")
 
-    def test_verify_named_implementation_does_not_check_host_tools(self) -> None:
-        # Unlike verify_tool_manifest, this must not require the canonical
-        # producer's pinned rustc/cargo/python/git/mdbook versions — it is
-        # used by gates (security) that run on any CI runner.
+    def test_verify_named_implementation_does_not_require_extra_tables(self) -> None:
+        # Used by gates (security) that only need their own implementation
+        # verified. RFC 017 removed [producer]/[canonical-tools]/
+        # [supported-host-tools] entirely, so there is nothing else left for
+        # this to accidentally depend on any more.
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "scripts").mkdir()
@@ -243,127 +380,91 @@ class ReleaseRunnerTests(unittest.TestCase):
                 f'sha256 = "{digest}"\n',
                 encoding="utf-8",
             )
-            # No [producer], [canonical-tools], or [supported-host-tools]
-            # table exists in this fixture; a passing result proves those
-            # tables were never consulted.
             observed = RUNNER.verify_named_implementation(root, "tool")
             self.assertIn(digest, observed)
 
-    def test_current_platform_key_is_lowercase_os_dash_machine(self) -> None:
-        key = RUNNER.current_platform_key()
-        self.assertRegex(key, r"^[a-z0-9]+-[a-z0-9_]+$")
-
-    def test_verify_tool_policy_requires_hash_for_canonical_entries(self) -> None:
-        policy = {"command": "python3", "version": "irrelevant"}
-        with self.assertRaisesRegex(RUNNER.ReleaseError, "incomplete tool policy"):
-            RUNNER.verify_tool_policy("python", policy, require_hash=True)
-
-    def test_verify_tool_policy_rejects_hash_pin_on_noncanonical_entry(self) -> None:
-        # A hash field on a [supported-host-tools] entry would silently
-        # reintroduce the single-workstation-pin defect this item exists to
-        # remove -- reject it outright rather than ignoring it.
-        policy = {"command": "python3", "version": "irrelevant", "sha256": "0" * 64}
-        with self.assertRaisesRegex(RUNNER.ReleaseError, "must not pin a binary hash"):
-            RUNNER.verify_tool_policy("python", policy, require_hash=False)
-
-    def test_verify_tool_policy_fails_closed_on_version_mismatch(self) -> None:
-        policy = {"command": "python3", "version": "Python 0.0.0"}
-        with self.assertRaisesRegex(RUNNER.ReleaseError, "version mismatch"):
-            RUNNER.verify_tool_policy("python", policy, require_hash=False)
-
-    def test_verify_tool_manifest_noncanonical_happy_path(self) -> None:
+    def test_verify_implementations_verifies_every_pin(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "scripts").mkdir()
-            platform_key = RUNNER.current_platform_key()
-            cargo_version = RUNNER.command_version(["cargo", "--version"])
-            rust_version = RUNNER.command_version(["rustc", "--version"])
-            python_version = RUNNER.command_version(["python3", "--version"])
+            target = root / "scripts/tool.py"
+            target.write_text("print('hello')\n", encoding="utf-8")
+            digest = RUNNER.sha256_file(target)
             (root / "scripts/release-tools.toml").write_text(
                 "schema-version = 1\n\n"
-                "[producer]\n"
-                f'cargo = "{cargo_version}"\n'
-                f'rust = "{rust_version}"\n\n'
-                "[implementations]\n\n"
-                "[supported-platforms]\n"
-                f'claimed = ["{platform_key}"]\n\n'
-                f"[supported-host-tools.{platform_key}.python]\n"
-                'command = "python3"\n'
-                f'version = "{python_version}"\n',
+                '[implementations.tool]\n'
+                'path = "scripts/tool.py"\n'
+                f'sha256 = "{digest}"\n',
                 encoding="utf-8",
             )
-            observed = RUNNER.verify_tool_manifest(root, canonical=False)
-            self.assertEqual(observed["python"], python_version)
-            self.assertEqual(observed["cargo"], cargo_version)
-            self.assertEqual(observed["rustc"], rust_version)
+            observed = RUNNER.verify_implementations(root)
+            self.assertIn(digest, observed["tool"])
 
-    def test_verify_tool_manifest_fails_closed_for_unclaimed_platform(self) -> None:
+    def test_verify_implementations_fails_closed_on_missing_table(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "scripts").mkdir()
             (root / "scripts/release-tools.toml").write_text(
-                "schema-version = 1\n\n"
-                "[producer]\n\n"
-                "[implementations]\n\n"
-                "[supported-platforms]\n"
-                'claimed = ["nonexistent-platform-9999"]\n',
-                encoding="utf-8",
-            )
-            with self.assertRaisesRegex(RUNNER.ReleaseError, "not in the claimed"):
-                RUNNER.verify_tool_manifest(root, canonical=False)
-
-    def test_verify_tool_manifest_fails_closed_on_empty_claimed_list(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / "scripts").mkdir()
-            (root / "scripts/release-tools.toml").write_text(
-                "schema-version = 1\n\n"
-                "[producer]\n\n"
-                "[implementations]\n\n"
-                "[supported-platforms]\nclaimed = []\n",
-                encoding="utf-8",
-            )
-            with self.assertRaisesRegex(RUNNER.ReleaseError, "non-empty claimed"):
-                RUNNER.verify_tool_manifest(root, canonical=False)
-
-    def test_verify_tool_manifest_fails_closed_without_claimed_table(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / "scripts").mkdir()
-            (root / "scripts/release-tools.toml").write_text(
-                "schema-version = 1\n\n[producer]\n\n[implementations]\n",
-                encoding="utf-8",
-            )
-            with self.assertRaisesRegex(RUNNER.ReleaseError, "non-empty claimed"):
-                RUNNER.verify_tool_manifest(root, canonical=False)
-
-    def test_verify_tool_manifest_fails_closed_on_missing_platform_tools_table(
-        self,
-    ) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / "scripts").mkdir()
-            platform_key = RUNNER.current_platform_key()
-            (root / "scripts/release-tools.toml").write_text(
-                "schema-version = 1\n\n"
-                "[producer]\n\n"
-                "[implementations]\n\n"
-                "[supported-platforms]\n"
-                f'claimed = ["{platform_key}"]\n\n'
-                "[supported-host-tools.some-other-platform]\n",
-                encoding="utf-8",
+                "schema-version = 1\n", encoding="utf-8"
             )
             with self.assertRaisesRegex(
-                RUNNER.ReleaseError, "no supported-host-tools policy"
+                RUNNER.ReleaseError, "missing table: implementations"
             ):
-                RUNNER.verify_tool_manifest(root, canonical=False)
+                RUNNER.verify_implementations(root)
 
-    def test_release_tools_toml_claims_this_platform(self) -> None:
-        # The real, committed policy must be usable on the platform this
-        # test suite is actually running on -- otherwise the noncanonical
-        # path is unusable everywhere, repeating the defect this item fixes.
+    def test_verify_implementations_fails_closed_on_hash_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "scripts").mkdir()
+            (root / "scripts/tool.py").write_text("print('hello')\n", encoding="utf-8")
+            (root / "scripts/release-tools.toml").write_text(
+                "schema-version = 1\n\n"
+                '[implementations.tool]\n'
+                'path = "scripts/tool.py"\n'
+                f'sha256 = "{"0" * 64}"\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(RUNNER.ReleaseError, "hash mismatch"):
+                RUNNER.verify_implementations(root)
+
+    def test_release_tools_toml_has_no_retired_producer_tables(self) -> None:
+        # RFC 017 R3/R5: the canonical/noncanonical producer distinction, the
+        # image pin, the base-component hashes, and the platform-keyed
+        # host-tool tables are all retired -- confirm none survive in the
+        # real, committed manifest.
         root = SCRIPT.resolve().parents[1]
-        RUNNER.verify_tool_manifest(root, canonical=False)
+        with (root / "scripts/release-tools.toml").open("rb") as file:
+            document = tomllib.load(file)
+        for retired_table in (
+            "producer",
+            "canonical-tools",
+            "canonical-tool-artifacts",
+            "canonical-base-components",
+            "supported-platforms",
+            "supported-host-tools",
+        ):
+            self.assertNotIn(retired_table, document)
+        self.assertNotIn("canonical-producer", document.get("implementations", {}))
+
+    def test_canonical_producer_script_is_deleted(self) -> None:
+        self.assertFalse((SCRIPTS / "canonical-producer.sh").exists())
+
+    def test_toolchain_identity_returns_every_r4_field(self) -> None:
+        identity = RUNNER.toolchain_identity()
+        for field in (
+            "platform",
+            "target_triple",
+            "git_version",
+            "python_version",
+            "zlib_version",
+            "locale",
+            "timezone",
+            "cargo_version",
+            "rustc_version",
+            "mdbook_version",
+        ):
+            self.assertIn(field, identity)
+            self.assertTrue(identity[field], f"{field} must not be empty")
 
     def test_security_mode_failure_marks_downstream_steps_incomplete(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -376,33 +477,25 @@ class ReleaseRunnerTests(unittest.TestCase):
             self.assertIn("deliberate test failure", summary)
             self.assertIn("required-downstream-steps: NOT COMPLETED", summary)
 
-    def test_rc_eligibility_requires_both_signals(self) -> None:
+    def test_rc_eligibility_requires_all_three_conditions(self) -> None:
         cases = [
-            # (noncanonical, env value, expected)
-            (False, "1", True),
-            (True, "1", False),  # --noncanonical always disqualifies
-            (False, None, False),  # no wrapper attestation
-            (False, "0", False),  # wrong value is not truthy
-            (False, "true", False),  # only the exact string "1" counts
-            (True, None, False),
+            # (clean_worktree, all_required_gates_passed, evidence_complete, expected)
+            (True, True, True, True),
+            (False, True, True, False),
+            (True, False, True, False),
+            (True, True, False, False),
+            (False, False, False, False),
         ]
-        for noncanonical, env_value, expected in cases:
-            with self.subTest(noncanonical=noncanonical, env_value=env_value):
-                original = os.environ.pop("RFC009_RC_ELIGIBLE", None)
-                try:
-                    if env_value is not None:
-                        os.environ["RFC009_RC_ELIGIBLE"] = env_value
-                    self.assertEqual(
-                        RUNNER.rc_eligibility(noncanonical=noncanonical), expected
-                    )
-                finally:
-                    os.environ.pop("RFC009_RC_ELIGIBLE", None)
-                    if original is not None:
-                        os.environ["RFC009_RC_ELIGIBLE"] = original
-
-    def test_canonical_wrapper_sets_rc_eligible_exclusively(self) -> None:
-        wrapper = (SCRIPTS / "canonical-producer.sh").read_text(encoding="utf-8")
-        self.assertIn("RFC009_RC_ELIGIBLE=1", wrapper)
+        for clean, gates, evidence, expected in cases:
+            with self.subTest(clean=clean, gates=gates, evidence=evidence):
+                self.assertEqual(
+                    RUNNER.rc_eligibility(
+                        clean_worktree=clean,
+                        all_required_gates_passed=gates,
+                        evidence_complete=evidence,
+                    ),
+                    expected,
+                )
 
     def test_main_finalizes_summary_on_an_unexpected_exception_type(self) -> None:
         # An OSError (or any exception outside the three expected gate-error
@@ -616,16 +709,6 @@ class ReleaseRunnerTests(unittest.TestCase):
     def test_source_and_security_manifests_embed_ci_identity_fields(self) -> None:
         source_text = (SCRIPTS / "release.py").read_text(encoding="utf-8")
         self.assertIn("**ci_identity()", source_text)
-
-    def test_canonical_wrapper_has_no_release_action(self) -> None:
-        wrapper = (SCRIPTS / "canonical-producer.sh").read_text(encoding="utf-8")
-        self.assertIn(
-            "docker.io/library/rust@sha256:"
-            "389c1ae98c20fbcadca68a685482749267cec3c90893ae4671c5a37cc894c416",
-            wrapper,
-        )
-        for forbidden in ("cargo publish", "git push", "git tag", "gh release"):
-            self.assertNotIn(forbidden, wrapper)
 
     @staticmethod
     def repository(parent: Path) -> Path:

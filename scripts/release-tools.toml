@@ -1,85 +1,16 @@
 schema-version = 1
 
-[producer]
-platform = "linux/amd64"
-image = "docker.io/library/rust@sha256:389c1ae98c20fbcadca68a685482749267cec3c90893ae4671c5a37cc894c416"
-informational-tag = "docker.io/library/rust:1.97.1-bookworm"
-rust = "rustc 1.97.1 (8bab26f4f 2026-07-14)"
-cargo = "cargo 1.97.1 (c980f4866 2026-06-30)"
-locale = "C.UTF-8"
-timezone = "UTC"
-
-[canonical-tools.python]
-command = "python3"
-version = "Python 3.11.2"
-sha256 = "6d972cf21be56fe3c947ab6ba257ff8d08c342dd2714442986791bd9a6dfabfe"
-
-[canonical-tools.git]
-command = "git"
-version = "git version 2.39.5"
-sha256 = "2540879925a6881e3877ff7e3330746ba3027b04edf16a3a12dccd1644c4f32d"
-
-[canonical-tools.mdbook]
-command = "mdbook"
-version = "mdbook v0.5.4"
-sha256 = "dc9020903f60cf632c0cc01bf8c12b57237649c2ab64c7a85a60e12103e356ce"
-
-[canonical-tool-artifacts.mdbook]
-url = "https://github.com/rust-lang/mdBook/releases/download/v0.5.4/mdbook-v0.5.4-x86_64-unknown-linux-gnu.tar.gz"
-archive-sha256 = "3f28de05dafca9d0f2eab99c662116b0e37b89b1d96a08f8f430b9eeae958cd7"
-binary-sha256 = "dc9020903f60cf632c0cc01bf8c12b57237649c2ab64c7a85a60e12103e356ce"
-
-[canonical-base-components.python-gzip]
-path = "/usr/lib/python3.11/gzip.py"
-sha256 = "8e0a7f850ef481fea41e0de9b52b4a014573b58e500ae83b92e5888d7a061008"
-
-[canonical-base-components.python-hashlib]
-path = "/usr/lib/python3.11/hashlib.py"
-sha256 = "e2bffb462e4d43e6637b9450e259e8ba2a56626ba3037d68aa1cee68b3f61d4a"
-
-[canonical-base-components.python-hashlib-extension]
-path = "/usr/lib/python3.11/lib-dynload/_hashlib.cpython-311-x86_64-linux-gnu.so"
-sha256 = "2fe950de7ddfa4b2961315021e181cffa10dca74f4b409eeb3b215cf1ff4e33e"
-
-[canonical-base-components.zlib]
-path = "/usr/lib/x86_64-linux-gnu/libz.so.1.2.13"
-sha256 = "7e2a72b4c4b38c61e6962de6e3f4a5e9ae692e732c68deead10a7ce2135a7f68"
-
-[canonical-base-components.openssl]
-path = "/usr/lib/x86_64-linux-gnu/libcrypto.so.3"
-sha256 = "72db1b3de8b7dfbaba4c056135f408da555f9d5e137c82129478e07e769f8070"
-
-# Non-canonical platforms explicitly claimed to run the `--noncanonical`
-# archive-equivalence path (RFC 009: "other supported platforms prove
-# normalized content equivalence and behavior, not compressed-byte
-# identity"). The list must be non-empty; a platform not listed here fails
-# closed rather than silently attempting verification. Unlike
-# [canonical-tools], no per-binary SHA-256 is required — the exact bytes of
-# a system python3/git/mdbook install are platform- and package-manager-
-# specific and were never meant to be portable across hosts, only the tool
-# identity and version.
-[supported-platforms]
-claimed = ["linux-x86_64"]
-
-[supported-host-tools.linux-x86_64.python]
-command = "python3"
-version = "Python 3.14.6"
-
-[supported-host-tools.linux-x86_64.git]
-command = "git"
-version = "git version 2.55.0"
-
-[supported-host-tools.linux-x86_64.mdbook]
-command = "mdbook"
-version = "mdbook v0.5.4"
+# RFC 017 retired the canonical-producer contract (Docker image pin, pinned
+# host-tool versions/hashes, base-component hashes) that used to live here.
+# Toolchain identity (platform, git, Python, zlib, locale, timezone, compiler
+# versions) is now recorded per run in evidence rather than pinned in this
+# file — see `scripts/release.py`'s `toolchain_identity`. Only the gate
+# scripts themselves are still hash-pinned below, for supply-chain integrity
+# (RFC 009 R12).
 
 [implementations.release-runner]
 path = "scripts/release.py"
-sha256 = "2d37ac6472447a069b8138f92ba4bae7cc0d030b9d14013deb1ceb85883e268e"
-
-[implementations.canonical-producer]
-path = "scripts/canonical-producer.sh"
-sha256 = "181caa9605ea0f5deb184a49daa981a70fc20ca8bbc6f3c889a9c269be426341"
+sha256 = "94e42b0282eb0cddc76435b6ecef5b5381d7d7acb834496f2a3992ca68cb5874"
 
 [implementations.archive-parser-writer-compressor]
 path = "scripts/release_archive.py"

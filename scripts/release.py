@@ -8,12 +8,14 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shlex
-import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import tomllib
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -40,6 +42,18 @@ REQUIRED_PATHS = (
     "LICENSE",
     "NOTICE",
 )
+
+# RFC 009 R10/R11: install examples that must name the exact coming version.
+# Deliberately a fixed, narrow target list rather than a broad version-string
+# scan — historical CHANGELOG entries, compatibility ranges, and schema-era
+# prose (e.g. "v0.18.0+", "the v0.20.1 schema") mention other versions on
+# purpose and must never be treated as stale or rewritten.
+VERSION_REFERENCE_TARGETS: tuple[str, ...] = (
+    "README.md",
+    "docs/src/getting_started.md",
+    "docs/src/introduction.md",
+)
+VERSION_REFERENCE_PATTERN = re.compile(r'^localcache = "([^"]+)"$', re.MULTILINE)
 
 
 class ReleaseError(Exception):
@@ -200,12 +214,8 @@ def verify_implementation(root: Path, name: str, policy: object) -> str:
 def verify_named_implementation(root: Path, name: str) -> str:
     """Verify one `[implementations.<name>]` hash pin in isolation.
 
-    Unlike `verify_tool_manifest`, this does not check the canonical
-    producer's pinned host tools, Rust/Cargo versions, or base components —
-    those describe the archive-production environment specifically. A gate
-    that only needs its own implementation verified (for example `security`,
-    which must run on any CI runner, not just the canonical producer) should
-    call this instead of the full manifest verification.
+    A gate that only needs its own implementation verified (for example
+    `security`) should call this instead of `verify_implementations`.
     """
     document = load_tool_manifest(root)
     implementations = document.get("implementations")
@@ -217,160 +227,46 @@ def verify_named_implementation(root: Path, name: str) -> str:
     return verify_implementation(root, name, policy)
 
 
-def current_platform_key() -> str:
-    return f"{platform.system().lower()}-{platform.machine().lower()}"
+def verify_implementations(root: Path) -> dict[str, str]:
+    """Verify every `[implementations]` hash pin (RFC 009 R12 supply-chain
+    integrity for the gate scripts themselves).
 
-
-def verify_tool_policy(name: str, policy: object, *, require_hash: bool) -> str:
-    """Verify one `command`/`version`(/`sha256`) tool policy entry.
-
-    `require_hash` is `True` only for `[canonical-tools]`, where R16 demands
-    exact byte identity with the pinned Docker image's binaries. Non-canonical
-    host tools (`[supported-host-tools.<platform>]`) verify command identity
-    and exact version only — the underlying bytes of a system package are
-    platform- and package-manager-specific and were never meant to be
-    portable across hosts.
+    RFC 017 retired the canonical/noncanonical producer distinction this
+    function used to police in addition to the implementation pins — there is
+    no more environment to verify against, only the scripts. Toolchain
+    identity (platform, git, Python, zlib, locale, timezone, compiler
+    versions) is now recorded, not gated; see `toolchain_identity`.
     """
-    if not isinstance(policy, dict):
-        raise ReleaseError(f"invalid tool policy: {name}")
-    command = policy.get("command")
-    expected_version = policy.get("version")
-    expected_sha256 = policy.get("sha256")
-    if not isinstance(command, str) or not isinstance(expected_version, str):
-        raise ReleaseError(f"incomplete tool policy: {name}")
-    if require_hash and not isinstance(expected_sha256, str):
-        raise ReleaseError(f"incomplete tool policy: {name}")
-    if not require_hash and expected_sha256 is not None:
-        raise ReleaseError(
-            f"non-canonical tool policy must not pin a binary hash: {name}"
-        )
-    executable = shutil.which(command)
-    if executable is None:
-        raise ReleaseError(f"required producer tool is unavailable: {command}")
-    try:
-        completed = subprocess.run(
-            [executable, "--version"],
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
-    except (OSError, subprocess.CalledProcessError) as error:
-        raise ReleaseError(f"cannot inspect producer tool: {command}") from error
-    version = completed.stdout.strip()
-    if version != expected_version:
-        raise ReleaseError(
-            f"producer tool version mismatch for {name}: {version!r}"
-        )
-    if require_hash:
-        digest = sha256_file(Path(executable).resolve())
-        if digest != expected_sha256:
-            raise ReleaseError(
-                f"producer tool hash mismatch for {name}: sha256={digest}"
-            )
-        return f"{version}; sha256={digest}"
-    return version
-
-
-def verify_tool_manifest(root: Path, *, canonical: bool) -> dict[str, str]:
     document = load_tool_manifest(root)
-    producer = document.get("producer")
     implementations = document.get("implementations")
-    if not isinstance(producer, dict) or not isinstance(implementations, dict):
-        raise ReleaseError("producer-tool manifest is missing a required table")
+    if not isinstance(implementations, dict):
+        raise ReleaseError("producer-tool manifest is missing table: implementations")
+    return {
+        name: verify_implementation(root, name, policy)
+        for name, policy in implementations.items()
+    }
 
-    observed: dict[str, str] = {}
 
-    if canonical:
-        tools = document.get("canonical-tools")
-        if not isinstance(tools, dict):
-            raise ReleaseError(
-                "producer-tool manifest is missing a required table: canonical-tools"
-            )
-        for name, policy in tools.items():
-            observed[name] = verify_tool_policy(name, policy, require_hash=True)
-    else:
-        claimed = document.get("supported-platforms", {})
-        claimed_list = claimed.get("claimed") if isinstance(claimed, dict) else None
-        if not isinstance(claimed_list, list) or not claimed_list:
-            raise ReleaseError(
-                "producer-tool manifest has no non-empty claimed noncanonical "
-                "platform list"
-            )
-        if not all(isinstance(entry, str) for entry in claimed_list):
-            raise ReleaseError("claimed noncanonical platform list must be strings")
-        platform_key = current_platform_key()
-        if platform_key not in claimed_list:
-            raise ReleaseError(
-                f"this platform ({platform_key!r}) is not in the claimed "
-                f"noncanonical platform list: {claimed_list}"
-            )
-        tools_by_platform = document.get("supported-host-tools")
-        if not isinstance(tools_by_platform, dict):
-            raise ReleaseError(
-                "producer-tool manifest is missing a required table: "
-                "supported-host-tools"
-            )
-        tools = tools_by_platform.get(platform_key)
-        if not isinstance(tools, dict):
-            raise ReleaseError(
-                f"no supported-host-tools policy for claimed platform: {platform_key!r}"
-            )
-        for name, policy in tools.items():
-            observed[name] = verify_tool_policy(name, policy, require_hash=False)
+def toolchain_identity() -> dict[str, object]:
+    """RFC 017 R4: record toolchain and host identity per run.
 
-    for name, policy in implementations.items():
-        observed[name] = verify_implementation(root, name, policy)
-
-    cargo_version = command_version(["cargo", "--version"])
-    rust_version = command_version(["rustc", "--version"])
-    if cargo_version != producer.get("cargo") or rust_version != producer.get("rust"):
-        raise ReleaseError(
-            "Rust/Cargo do not match the pinned producer-tool manifest"
-        )
-    observed["cargo"] = cargo_version
-    observed["rustc"] = rust_version
-
-    if canonical:
-        components = document.get("canonical-base-components")
-        if not isinstance(components, dict):
-            raise ReleaseError(
-                "producer-tool manifest is missing canonical base components"
-            )
-        for name, policy in components.items():
-            if not isinstance(policy, dict):
-                raise ReleaseError(f"invalid canonical base component: {name}")
-            path_value = policy.get("path")
-            expected_sha256 = policy.get("sha256")
-            if not isinstance(path_value, str) or not isinstance(
-                expected_sha256, str
-            ):
-                raise ReleaseError(
-                    f"incomplete canonical base component policy: {name}"
-                )
-            digest = sha256_file(Path(path_value))
-            if digest != expected_sha256:
-                raise ReleaseError(
-                    f"canonical base component mismatch for {path_value}: {digest}"
-                )
-            observed[name] = f"{path_value}; sha256={digest}"
-
-        expected_image = producer.get("image")
-        if os.environ.get("RFC009_PRODUCER_IMAGE") != expected_image:
-            raise ReleaseError(
-                "canonical production requires RFC009_PRODUCER_IMAGE bound "
-                "to the pinned platform digest"
-            )
-        if platform.system() != "Linux" or platform.machine() not in {
-            "x86_64",
-            "amd64",
-        }:
-            raise ReleaseError("canonical producer platform must be linux/amd64")
-        if os.environ.get("LC_ALL") != producer.get("locale"):
-            raise ReleaseError("canonical producer requires LC_ALL=C.UTF-8")
-        if os.environ.get("TZ") != producer.get("timezone"):
-            raise ReleaseError("canonical producer requires TZ=UTC")
-    return observed
+    This is descriptive, not a gate — RFC 017 retired the pinned-environment
+    contract entirely. If a future run's uncompressed-tar digest differs from
+    a prior run's for the same commit, these are the first values to compare;
+    an explainable difference is the goal, not an impossible one.
+    """
+    return {
+        "platform": platform.platform(),
+        "target_triple": f"{platform.machine()}-{platform.system().lower()}",
+        "git_version": command_version(["git", "--version"]),
+        "python_version": command_version(["python3", "--version"]),
+        "zlib_version": zlib.ZLIB_RUNTIME_VERSION,
+        "locale": os.environ.get("LC_ALL") or os.environ.get("LANG") or "unset",
+        "timezone": os.environ.get("TZ") or time.tzname[0],
+        "cargo_version": command_version(["cargo", "--version"]),
+        "rustc_version": command_version(["rustc", "--version"]),
+        "mdbook_version": command_version(["mdbook", "--version"]),
+    }
 
 
 def command_version(command: Sequence[str]) -> str:
@@ -404,6 +300,65 @@ def cargo_metadata(
     return workspace_version(document), document
 
 
+def _parse_semver(value: str) -> tuple[int, int, int]:
+    parts = value.split(".")
+    if not (1 <= len(parts) <= 3) or not all(part.isdigit() for part in parts):
+        raise ReleaseError(f"not a valid semantic version: {value!r}")
+    numbers = [int(part) for part in parts]
+    numbers += [0] * (3 - len(numbers))
+    return (numbers[0], numbers[1], numbers[2])
+
+
+def caret_requirement_satisfied(requirement: str, version: str) -> bool:
+    """Whether `version` satisfies a Cargo caret requirement string.
+
+    `cargo metadata` echoes a plain version string (no explicit operator) as
+    a `^`-prefixed requirement. Cargo's caret rule is stricter below 1.0.0:
+    `^0.J.K` (J>0) allows only patch bumps, `^0.0.K` allows nothing but K
+    itself, and a bare `^0` (no minor/patch given) allows any 0.x.y — the
+    form this project's `localcache = { version = "0" }` workspace
+    dependency deliberately uses, since both crates are always released in
+    lockstep and the exact patch never needs restating here.
+    """
+    if not requirement.startswith("^"):
+        raise ReleaseError(f"unsupported dependency requirement form: {requirement!r}")
+    req_parts = requirement[1:].split(".")
+    if not (1 <= len(req_parts) <= 3) or not all(part.isdigit() for part in req_parts):
+        raise ReleaseError(f"unsupported caret requirement: {requirement!r}")
+    req_numbers = [int(part) for part in req_parts]
+    version_numbers = _parse_semver(version)
+
+    major = req_numbers[0]
+    if major > 0:
+        if version_numbers[0] != major:
+            return False
+        if len(req_numbers) == 1:
+            return True
+        minor = req_numbers[1]
+        if version_numbers[1] != minor:
+            return version_numbers[1] > minor
+        if len(req_numbers) == 2:
+            return True
+        return version_numbers[2] >= req_numbers[2]
+
+    if version_numbers[0] != 0:
+        return False
+    if len(req_numbers) == 1:
+        return True  # bare "^0": any 0.x.y
+    minor = req_numbers[1]
+    if minor > 0:
+        if version_numbers[1] != minor:
+            return False
+        if len(req_numbers) == 2:
+            return True
+        return version_numbers[2] >= req_numbers[2]
+    if version_numbers[1] != 0:
+        return False
+    if len(req_numbers) == 2:
+        return True
+    return version_numbers[2] == req_numbers[2]
+
+
 def workspace_version(document: dict[str, object]) -> str:
     try:
         packages = document["packages"]
@@ -429,13 +384,55 @@ def workspace_version(document: dict[str, object]) -> str:
         requirement = dependency["req"]
     except (KeyError, StopIteration, TypeError) as error:
         raise ReleaseError("CLI metadata is missing its localcache dependency") from error
-    expected_requirement = f"^{version}"
-    if requirement != expected_requirement:
+    if not caret_requirement_satisfied(requirement, version):
         raise ReleaseError(
-            "CLI localcache dependency does not match the workspace version: "
-            f"expected {expected_requirement!r}, observed {requirement!r}"
+            "CLI localcache dependency does not admit the workspace version: "
+            f"requirement {requirement!r} does not allow {version!r}"
         )
     return version
+
+
+def verify_version_references(root: Path, expected_version: str) -> None:
+    """RFC 009 R10/R11: every install example names the exact coming version.
+
+    Fails closed on a missing target file, a target with no matching install
+    line, or a stale version — this is what caught README.md/docs claiming
+    0.20.1 while both packages still said 0.20.0 before M6d.
+    """
+    for relative in VERSION_REFERENCE_TARGETS:
+        path = root / relative
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as error:
+            raise ReleaseError(f"cannot read version reference {relative}: {error}") from error
+        matches = VERSION_REFERENCE_PATTERN.findall(text)
+        if not matches:
+            raise ReleaseError(f"{relative}: no install-example version line found")
+        stale = sorted({match for match in matches if match != expected_version})
+        if stale:
+            raise ReleaseError(
+                f"{relative}: stale version reference(s) {stale}, "
+                f"expected {expected_version!r}"
+            )
+
+
+def verify_changelog_has_coming_version_section(root: Path, expected_version: str) -> None:
+    """RFC 009 R10/R11: `CHANGELOG.md` has a non-empty coming-version section."""
+    path = root / "CHANGELOG.md"
+    text = path.read_text(encoding="utf-8")
+    headers = re.findall(r"^## \[(.+?)\](?:\s*—.*)?$", text, re.MULTILINE)
+    if expected_version not in headers:
+        raise ReleaseError(
+            f"CHANGELOG.md has no section for the coming version {expected_version!r}"
+        )
+    sections = re.split(r"^## \[.+?\](?:\s*—.*)?$", text, flags=re.MULTILINE)
+    # `re.split` on this pattern produces one leading chunk (before the first
+    # header) then one chunk per header, in header order; headers[0]'s body
+    # is sections[1].
+    index = headers.index(expected_version)
+    body = sections[index + 1].strip()
+    if not body:
+        raise ReleaseError(f"CHANGELOG.md section for {expected_version!r} is empty")
 
 
 def verify_required_layout(root: Path) -> None:
@@ -581,8 +578,10 @@ def artifact_mode(args: argparse.Namespace) -> int:
         raise ReleaseError(
             f"unsupported artifact layout {args.expected_layout!r}; expected {LAYOUT!r}"
         )
-    if not re_full_sha256(args.expected_sha256):
-        raise ReleaseError("expected archive SHA-256 must be 64 lowercase hex digits")
+    if not re_full_sha256(args.expected_uncompressed_sha256):
+        raise ReleaseError(
+            "expected uncompressed-tar SHA-256 must be 64 lowercase hex digits"
+        )
     if (root / ".git").exists():
         raise ReleaseError("artifact context must not contain .git/")
 
@@ -600,7 +599,7 @@ def artifact_mode(args: argparse.Namespace) -> int:
     write_manifest(
         evidence / "manifest.json",
         {
-            "archive_sha256": args.expected_sha256,
+            "archive_uncompressed_sha256": args.expected_uncompressed_sha256,
             "context": "artifact",
             "layout": args.expected_layout,
             "status": "pass",
@@ -760,25 +759,25 @@ def ci_identity() -> dict[str, object]:
     }
 
 
-def rc_eligibility(*, noncanonical: bool) -> bool:
-    """Whether this source-context run may become a release candidate.
+def rc_eligibility(
+    *, clean_worktree: bool, all_required_gates_passed: bool, evidence_complete: bool
+) -> bool:
+    """RFC 017 R3: RC eligibility depends on gates, not environment.
 
-    Externally bound (RFC 009 M6c item 5), not self-asserted: requires both
-    that this run was not invoked with `--noncanonical` *and* that
-    `RFC009_RC_ELIGIBLE=1` was set by `scripts/canonical-producer.sh` (the
-    wrapper) — the runner never sets this variable about itself. Neither
-    signal alone is sufficient. Reaching this check with `noncanonical=False`
-    already means `verify_tool_manifest`'s canonical branch independently
-    confirmed the producer image, platform, locale, and base-component
-    identity; this adds a signal the runner's own arguments cannot supply.
+    True only when the tree was clean at commit time, every required gate in
+    this release run passed, and the evidence bundle is complete with no
+    skipped required step. There is no environmental signal any more — RFC
+    017 retired the canonical/noncanonical producer distinction and the
+    `RFC009_RC_ELIGIBLE` wrapper attestation it required (M6c item 5), since
+    there is no longer an environmental claim left to attest externally.
     """
-    return not noncanonical and os.environ.get("RFC009_RC_ELIGIBLE") == "1"
+    return clean_worktree and all_required_gates_passed and evidence_complete
 
 
 def source_mode(args: argparse.Namespace) -> int:
     root = repository_root()
     commit = require_clean_commit(root)
-    tool_versions = verify_tool_manifest(root, canonical=not args.noncanonical)
+    tool_versions = verify_implementations(root)
     output = require_output_boundary(root, Path(args.output_dir))
     if output.exists() and any(output.iterdir()):
         raise ReleaseError(f"output directory is not empty: {output}")
@@ -788,16 +787,16 @@ def source_mode(args: argparse.Namespace) -> int:
     summary = evidence / "summary.log"
     append_summary(summary, "context: source")
     append_summary(summary, f"commit: {commit}")
-    append_summary(
-        summary,
-        f"producer-class: {'supported-noncanonical' if args.noncanonical else 'canonical'}",
-    )
     append_summary(summary, "status: RUNNING")
     logger = GateLog(evidence / "checkout-smoke.log")
     run_source_integrity(root, logger, require_tracked=True)
     append_summary(summary, "tracked-source-integrity: PASS")
     version, _metadata = cargo_metadata(root, logger, gate_name="version-metadata")
     append_summary(summary, f"version-contract: PASS ({version})")
+    verify_version_references(root, version)
+    append_summary(summary, "version-reference-consistency: PASS")
+    verify_changelog_has_coming_version_section(root, version)
+    append_summary(summary, "changelog-coming-version: PASS")
     with tempfile.TemporaryDirectory(prefix="checkout-", dir=output) as temporary:
         checkout_temporary = Path(temporary)
         run_m1_smoke(
@@ -813,18 +812,26 @@ def source_mode(args: argparse.Namespace) -> int:
     members = release_archive.validate_tar(raw_first, expected, commit)
     append_summary(summary, "structured-archive-validation: PASS")
     raw_second = release_archive.build_git_tar(root, commit)
-    first_gzip = release_archive.compress_tar(raw_first)
-    second_gzip = release_archive.compress_tar(raw_second)
-    if raw_first != raw_second or first_gzip != second_gzip:
-        raise ReleaseError("two archive constructions from one commit differ")
+    uncompressed_sha256 = release_archive.sha256_bytes(raw_first)
+    # RFC 017 R2: per-host determinism is gated on the *uncompressed* tar
+    # digest, the identity that now matters — not on compressed bytes, which
+    # depend on zlib's version and are no longer part of the contract.
+    if release_archive.sha256_bytes(raw_second) != uncompressed_sha256:
+        raise ReleaseError(
+            "two archive constructions from one commit differ "
+            "(uncompressed-tar digest)"
+        )
     append_summary(summary, "same-commit-determinism: PASS")
 
+    archive_gzip = release_archive.compress_tar(raw_first)
     archive_name = f"localcache-v{version}.tar.gz"
     archive_path = output / archive_name
     with archive_path.open("xb") as file:
-        file.write(first_gzip)
-    archive_size = len(first_gzip)
-    archive_sha256 = release_archive.sha256_bytes(first_gzip)
+        file.write(archive_gzip)
+    archive_size = len(archive_gzip)
+    # RFC 017 R1: the compressed digest is retained but advisory; it is never
+    # gated on and never asserted as reproducible across hosts.
+    archive_compressed_sha256 = release_archive.sha256_bytes(archive_gzip)
     release_archive.validate_archive_file(archive_path, expected, commit)
 
     archive_evidence = evidence / "archive"
@@ -834,7 +841,9 @@ def source_mode(args: argparse.Namespace) -> int:
             mode = "executable" if member.executable else "non-executable"
             file.write(f"{member.kind}\t{mode}\t{member.path}\n")
     (archive_evidence / "sha256.txt").write_text(
-        f"{archive_sha256}  {archive_name}\n", encoding="utf-8"
+        f"{uncompressed_sha256}  {archive_name} (uncompressed-tar, primary)\n"
+        f"{archive_compressed_sha256}  {archive_name} (compressed, advisory)\n",
+        encoding="utf-8",
     )
 
     with tempfile.TemporaryDirectory(prefix="extract-", dir=output) as temporary:
@@ -853,8 +862,8 @@ def source_mode(args: argparse.Namespace) -> int:
             version,
             "--expected-layout",
             LAYOUT,
-            "--expected-sha256",
-            archive_sha256,
+            "--expected-uncompressed-sha256",
+            uncompressed_sha256,
             "--evidence-dir",
             str(artifact_evidence),
             "--target-dir",
@@ -875,32 +884,41 @@ def source_mode(args: argparse.Namespace) -> int:
         evidence / "manifest.json",
         {
             "archive": archive_name,
-            "archive_sha256": archive_sha256,
-            "archive_size": archive_size,
+            "archive_uncompressed_sha256": uncompressed_sha256,
+            "archive_compressed_sha256_advisory": archive_compressed_sha256,
+            "archive_compressed_size_advisory": archive_size,
             "commit": commit,
             "context": "source",
             "layout": LAYOUT,
             "member_count": len(members),
             "status": "pass",
-            "producer_class": (
-                "supported-noncanonical" if args.noncanonical else "canonical"
+            # RFC 017 R3: reaching this point already proves the tree was
+            # clean (require_clean_commit, above) and every required gate in
+            # this straight-line function passed (any failure would have
+            # raised before this write_manifest call) -- so all three
+            # conditions are literally true here, not merely assumed.
+            "rc_eligible": rc_eligibility(
+                clean_worktree=True,
+                all_required_gates_passed=True,
+                evidence_complete=True,
             ),
-            "producer_image": (
-                None if args.noncanonical else os.environ["RFC009_PRODUCER_IMAGE"]
-            ),
-            "rc_eligible": rc_eligibility(noncanonical=args.noncanonical),
             "release_tool_manifest_sha256": sha256_file(
                 root / "scripts/release-tools.toml"
             ),
             "tool_versions": tool_versions,
+            "toolchain_identity": toolchain_identity(),
             "version": version,
             **ci_identity(),
         },
     )
-    append_summary(summary, f"archive-sha256: {archive_sha256}")
+    append_summary(summary, f"archive-uncompressed-sha256: {uncompressed_sha256}")
+    append_summary(
+        summary, f"archive-compressed-sha256-advisory: {archive_compressed_sha256}"
+    )
     append_summary(summary, "status: PASS")
     print(f"verified archive: {archive_path}")
-    print(f"sha256: {archive_sha256}")
+    print(f"uncompressed-tar sha256 (primary): {uncompressed_sha256}")
+    print(f"compressed sha256 (advisory): {archive_compressed_sha256}")
     return 0
 
 
@@ -923,14 +941,6 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         "source", help="construct and verify an archive from a clean committed checkout"
     )
     source.add_argument("--output-dir", type=Path, required=True)
-    source.add_argument(
-        "--noncanonical",
-        action="store_true",
-        help=(
-            "run behavioral/content-equivalence evidence only; output is not "
-            "eligible to become a release candidate"
-        ),
-    )
     source.set_defaults(handler=source_mode)
 
     artifact = subparsers.add_parser(
@@ -939,7 +949,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     artifact.add_argument("--root", type=Path, default=Path.cwd())
     artifact.add_argument("--expected-version", required=True)
     artifact.add_argument("--expected-layout", required=True)
-    artifact.add_argument("--expected-sha256", required=True)
+    artifact.add_argument("--expected-uncompressed-sha256", required=True)
     artifact.add_argument("--evidence-dir", type=Path, required=True)
     artifact.add_argument("--target-dir", type=Path, required=True)
     artifact.set_defaults(handler=artifact_mode)

@@ -26,13 +26,15 @@ artifact context contains no Git metadata and runs the applicable metadata,
 package-scoped check, benchmark-compilation, and mdBook smoke gates with build
 output outside the extracted source.
 
-`scripts/canonical-producer.sh` is the maintainer entry point for an
-RC-eligible archive. It pulls the accepted linux/amd64 image by immutable
-platform digest, verifies the observed platform, verifies the official pinned
-mdBook artifact, and invokes the source runner inside a read-only container.
-`cargo make archive-equivalence` is available for supported-host behavioral
-and normalized-content checks, but its evidence is explicitly marked
-noncanonical and cannot become a release candidate.
+`cargo make archive` (`scripts/release.py source`) is the maintainer entry
+point and runs on any supported host — there is no separate container
+producer or canonical/noncanonical distinction. The archive's integrity
+identifier is the SHA-256 of the *uncompressed* tar stream; two consecutive
+constructions from the same clean commit on the same host must match it. The
+compressed `.tar.gz` digest is recorded alongside it but is advisory only,
+never asserted as reproducible across hosts. `rc_eligible` derives from a
+clean committed tree, every required gate passing, and a complete evidence
+bundle — not from which machine produced the archive.
 
 The runner only constructs and verifies a review candidate. It does not tag,
 push, publish crates, or create a hosted release.

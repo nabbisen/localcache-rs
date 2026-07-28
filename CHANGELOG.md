@@ -7,7 +7,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [Unreleased]
+## [0.20.1] — Unreleased
+
+RC placeholder date: this section targets the coming v0.20.1 corrective release closing Phase 21.
+The exact release date is set at M7 owner authorization, not before.
 
 ### Security
 

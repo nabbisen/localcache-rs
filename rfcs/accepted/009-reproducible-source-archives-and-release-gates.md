@@ -904,6 +904,16 @@ The owner approved all four resolutions on 2026-07-17:
    platform digest and pinned tool contract in R16. Byte identity is required
    only there; other platforms explicitly claimed by M6 prove normalized
    content equivalence and behavior.
+
+   > **Superseded on 2026-07-28 by [RFC 017](./017-content-reproducible-archives-without-a-container-producer.md).**
+   > The container producer was never executed across three milestones, and it
+   > held still only two variables (`git archive` output and zlib's compressed
+   > output) that RFC 017 removes from the identity outright. Compressed-byte
+   > identity is replaced by an uncompressed-tar content digest, per-host
+   > determinism, and gate-derived RC eligibility. R16 and the related clauses
+   > listed in RFC 017 § "Clauses amended" are superseded; **R5's archive-safety
+   > controls are unchanged.** This decision is retained as the record of what
+   > was originally accepted and why it changed.
 4. **Durable Accepted state:** adopt RFC 000's five-folder variant. The final
    focused re-review recommended Accept and the owner authorized the transition
    on 2026-07-17. RFC 009 moved to `rfcs/accepted/`, its Status and index were

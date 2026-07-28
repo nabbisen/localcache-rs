@@ -157,19 +157,20 @@ jobs:
           path: ${{ runner.temp }}/localcache-advisory-evidence
           if-no-files-found: error
 
-  # RFC 009 M6c item 3: builds and verifies the project source archive from
-  # this runner (a supported-noncanonical platform, not the R16 canonical
-  # Docker producer — `scripts/canonical-producer.sh` is not yet wired into
-  # CI). Uploads the archive and its evidence as a CI artifact only; this job
-  # never tags, publishes, or creates a release.
+  # RFC 009 M6c item 3, RFC 017: builds and verifies the project source
+  # archive on this runner. RFC 017 retired the canonical Docker producer and
+  # the canonical/noncanonical distinction entirely — this is now the
+  # ordinary archive gate, and it runs on any supported host. Uploads the
+  # archive and its evidence as a CI artifact only; this job never tags,
+  # publishes, or creates a release.
   archive:
-    name: Project archive (noncanonical)
+    name: Project archive
     needs: source-integrity
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
-      - name: Install pinned mdbook
+      - name: Install mdbook
         run: |
           curl -fL --retry 3 \
             https://github.com/rust-lang/mdBook/releases/download/v0.5.4/mdbook-v0.5.4-x86_64-unknown-linux-gnu.tar.gz \
@@ -183,7 +184,7 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Build and verify project source archive (RFC 009 R3-R6)
         run: >-
-          python3 scripts/release.py source --noncanonical
+          python3 scripts/release.py source
           --output-dir "$RUNNER_TEMP/localcache-archive"
       - name: Preserve archive and evidence
         if: always()

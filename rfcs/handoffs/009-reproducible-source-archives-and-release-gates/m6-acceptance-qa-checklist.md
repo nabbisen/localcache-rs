@@ -59,14 +59,18 @@ Checks are grouped by slice; each slice is a separate review point.
       stable is not named or counted as MSRV.
 - [ ] **B-07 is closed**, with the evidence identified in the review request.
 
-## M6c — Canonical producer and CI provenance
+## M6c — CI provenance
 
-- [ ] `scripts/canonical-producer.sh` was executed **end-to-end**, not emulated.
-- [ ] Two consecutive canonical builds from one commit produce an identical SHA-256.
-- [ ] Each explicitly claimed non-canonical platform produces the same normalized content manifest;
-      the claimed platform list is non-empty and checked in.
-- [ ] `[supported-host-tools]` no longer pins single-workstation binary hashes in a way that
-      prevents CI execution.
+> **Withdrawn by RFC 017 (accepted 2026-07-28)** — do not verify these; there is no container
+> producer and no compressed-byte identity in the contract any more. Their replacements are in
+> § "M6e — RFC 017 migration".
+>
+> - ~~`scripts/canonical-producer.sh` was executed end-to-end, not emulated.~~
+> - ~~Two consecutive canonical builds from one commit produce an identical SHA-256.~~
+> - ~~Each explicitly claimed non-canonical platform produces the same normalized content manifest.~~
+> - ~~`[supported-host-tools]` no longer pins single-workstation binary hashes.~~ *(The pins were in
+>   fact removed in `d86fda7`; RFC 017 then removed the tables outright.)*
+
 - [ ] CI constructs and verifies an archive from a clean commit.
 - [ ] A final CI job fails when any required row or artifact is missing, duplicated, stale, or bound
       to another workflow run or commit.
@@ -74,8 +78,9 @@ Checks are grouped by slice; each slice is a separate review point.
 - [ ] Every third-party action is pinned to an immutable commit SHA.
 - [ ] No `pull_request_target` execution of untrusted repository code.
 - [ ] No publish, registry, or repository secrets are available to build/verification jobs.
-- [ ] RC eligibility is bound externally (wrapper or CI run identity), not self-asserted by the
-      runner reading its own environment.
+- [ ] ~~RC eligibility is bound externally (wrapper or CI run identity), not self-asserted by the
+      runner reading its own environment.~~ **Withdrawn by RFC 017 R3** — RC eligibility now derives
+      from gates rather than from any environmental claim. Verified in § M6e instead.
 - [ ] The R4/R5 layout is re-asserted **after** the artifact smoke run, proving build output stayed
       outside the extracted source.
 - [ ] An unexpected exception (for example a write failure) still finalizes `summary.log` as
@@ -117,13 +122,40 @@ Checks are grouped by slice; each slice is a separate review point.
 
 ## M6e — RC construction and evidence
 
+### RFC 017 migration (verify before the RC checks below)
+
+- [ ] The archive's primary integrity identifier is the **uncompressed-tar** SHA-256; the compressed
+      size and digest are recorded and labelled **advisory**.
+- [ ] Two consecutive builds from one clean commit **on the same host** produce an identical
+      uncompressed-tar SHA-256.
+- [ ] No gate compares compressed bytes across hosts, and no evidence or release note asserts
+      cross-host byte identity.
+- [ ] `rc_eligible` is **false** for a dirty tree — demonstrated.
+- [ ] `rc_eligible` is **false** when any required gate failed — demonstrated.
+- [ ] `rc_eligible` is **false** when a required evidence step was skipped — demonstrated.
+- [ ] `rc_eligible` is **true** for a clean commit with all gates green and complete evidence, with
+      **no environment variable involved**.
+- [ ] `grep -rnE 'RFC009_PRODUCER_IMAGE|RFC009_RC_ELIGIBLE|canonical-producer|canonical-base-components|supported-host-tools|supported-platforms' scripts .github Makefile.toml rfcs/handoffs`
+      returns nothing.
+- [ ] `scripts/canonical-producer.sh` is deleted and its `[implementations]` pin removed; every
+      remaining pin still matches its file.
+- [ ] The CI `archive` job no longer passes `--noncanonical`.
+- [ ] Every RFC 009 **R5** archive test still passes unchanged, including the hostile-fixture set —
+      structured header validation, exact export manifest, Git blob identity, and link rejection are
+      untouched.
+- [ ] Evidence records every RFC 017 R4 identity field (platform, `git`, Python, zlib, locale,
+      timezone, stable and declared-MSRV `rustc`/`cargo`, mdBook, security tool); a missing field
+      fails the bundle.
+
+### RC construction
+
 - [ ] `cargo doc --workspace --no-deps --all-features --locked` passes.
 - [ ] `mdbook build docs` passes; generated `docs/book/` is absent from the archive and removed
       afterward.
 - [ ] `cargo package --workspace --locked` verifies **both** interdependent packages.
 - [ ] The evidence bundle carries every R14 field: project and coming version, UTC timestamp and
-      timezone, exact commit SHA, clean-worktree assertion, host platform, canonical producer
-      identity, target triple, git/archive/compressor versions, stable and declared-MSRV compiler
+      timezone, exact commit SHA, clean-worktree assertion, host platform, RFC 017 R4
+      toolchain identity (git, Python, zlib, locale, timezone), target triple, stable and declared-MSRV compiler
       and Cargo versions, mdBook and security-tool versions, every command or gate-mode name,
       per-step exit status and log, archive filename, byte size and SHA-256, layout assertion,
       extracted-archive results, CI run ID and commit binding, and the RFC 014 policy and

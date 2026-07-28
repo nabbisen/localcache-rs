@@ -110,8 +110,10 @@ has an independent **Go** review.
 - Because design review and implementation are separate roles, an approved RFC
   must have a durable repository-visible Accepted state before delegation;
   ignored review records alone do not authorize implementation.
-- The release version is provisionally v0.20.1 and must be confirmed before the
-  release-candidate milestone under the project's version-immutability policy.
+- The release version is v0.20.1, confirmed by M6d coming-version housekeeping
+  across `[workspace.package]`, both members, the CLI's dependency on the
+  library, `CHANGELOG.md`, and every install example, under the project's
+  version-immutability policy.
 
 ### Milestone schedule
 
@@ -136,13 +138,24 @@ Each slice is an independent implementation review point.
 |---|---|---|---|---|
 | **M6a — Published-crate legal files** | Ship `LICENSE`/`NOTICE` inside both `.crate` artifacts as verified mirrors; assert content within the generated archive | **RFC 016** (Proposed) | Owner decision on RFC 016 | Both crates contain both files, byte-identical to root; in-artifact check fails when a file is absent |
 | **M6b — Canonical gate consolidation ✅** | One executable gate source of truth; `Makefile.toml`/CI become thin aliases; full package-scoped feature + doctest matrix; `-D warnings` everywhere; wire the RFC 014 security step; hash-pin `check_advisories.py` | RFC 009 R7, R12, R13; RFC 014 | — | Every gate row runs from the canonical source; **B-07 closed** |
-| **M6c — Canonical producer and CI provenance** | Execute `canonical-producer.sh` end-to-end; CI archive construction and fail-closed aggregation; least-privilege permissions and immutable action SHAs; external RC-eligibility attestation; post-smoke layout re-validation; failure-summary finalization; explicit noncanonical platform list | RFC 009 R3–R6, R14, R16 | M6b | Two canonical builds byte-identical; CI aggregates by run ID and commit; no self-asserted RC eligibility |
-| **M6d — Coming-version housekeeping** | Set the authorized coming version across manifests, docs, and CHANGELOG; add the version-reference consistency gate; refresh docs and implemented-RFC prose | RFC 009 R10, R11 | M6a, M6b, M6c | No stale version reference; library and CLI versions match; changelog section present |
-| **M6e — RC construction and evidence** | Joint workspace package verification including the M6a legal-file assertion; full gate run; canonical archive and digest; evidence bundle | RFC 009 R9, R14 | M6a–M6d | Complete evidence bundle satisfying R14; archive digest reproducible in the canonical producer |
+| **M6c — CI provenance ✅** | CI archive construction and fail-closed aggregation; least-privilege permissions and immutable action SHAs; post-smoke layout re-validation; failure-summary finalization | RFC 009 R3–R6, R14 | M6b | CI aggregates by run ID and commit; layout re-asserted after the artifact smoke run |
+| **M6d — Coming-version housekeeping** | Set the authorized coming version across manifests, docs, and CHANGELOG; add the version-reference consistency gate; refresh docs and implemented-RFC prose | RFC 009 R10, R11 | M6b, M6c | No stale version reference; library and CLI versions match; changelog section present |
+| **M6e — RC construction and evidence** | Implement the RFC 017 migration (uncompressed-tar content digest, per-host determinism, gate-derived RC eligibility, retire the container wrapper); joint workspace package verification including the M6a legal-file assertion; full gate run; archive and evidence bundle | **RFC 017**; RFC 009 R9, R14 | M6a–M6d | Two same-host builds produce an identical uncompressed-tar digest; RC eligibility derives from gates, not environment; complete evidence bundle satisfying R14 as amended |
 
-M6a is independent of M6b–M6c and may proceed in parallel once RFC 016 is Accepted. M6d must
-follow the others because R10 sets the coming version immediately before the final gates, and M6e
-consumes all of them. M7 begins only after M6e produces the evidence bundle.
+M6a is independent of M6b–M6c and may proceed in parallel once RFC 016 is Accepted. M6d requires
+only M6b and M6c: R10 constrains version housekeeping to precede the **final gates**, which is M6e's
+RC construction, and nothing in it depends on M6a's legal files. M6e consumes all of them, and M7
+begins only after M6e produces the evidence bundle.
+
+**Currently delegable without any further owner decision:** M6d in full, and M6e's RFC 017 migration
+(handoff § M6e items 1–6), which touches only the release scripts and CI. M6e's RC construction
+(items 7–10) additionally requires M6a, which is blocked on the RFC 016 decision.
+
+**RFC 017 (accepted 2026-07-28) supersedes RFC 009 R16 and retires the container producer.** M6c's
+deferred canonical-producer items are therefore withdrawn rather than carried into M6e: there is no
+container to execute and no compressed-byte identity to prove. In their place M6e implements RFC
+017's migration. M6c's recorded completion stands on the CI-provenance work it actually delivered;
+its scope line above no longer claims producer or platform-policy work, since RFC 017 removed both.
 
 RFC 015 may be drafted near the end of M4, but its design review and acceptance
 must use the dependency and supported-toolchain baseline delivered by RFC 014.
