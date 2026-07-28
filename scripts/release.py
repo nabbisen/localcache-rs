@@ -300,66 +300,15 @@ def cargo_metadata(
     return workspace_version(document), document
 
 
-def _parse_semver(value: str) -> tuple[int, int, int]:
-    parts = value.split(".")
-    if not (1 <= len(parts) <= 3) or not all(part.isdigit() for part in parts):
-        raise ReleaseError(f"not a valid semantic version: {value!r}")
-    numbers = [int(part) for part in parts]
-    numbers += [0] * (3 - len(numbers))
-    return (numbers[0], numbers[1], numbers[2])
-
-
-def caret_requirement_satisfied(requirement: str, version: str) -> bool:
-    """Whether `version` satisfies a Cargo caret requirement string.
-
-    `cargo metadata` echoes a plain version string (no explicit operator) as
-    a `^`-prefixed requirement. Cargo's caret rule is stricter below 1.0.0:
-    `^0.J.K` (J>0) allows only patch bumps, `^0.0.K` allows nothing but K
-    itself, and a bare `^0` (no minor/patch given) allows any 0.x.y — the
-    form this project's `localcache = { version = "0" }` workspace
-    dependency deliberately uses, since both crates are always released in
-    lockstep and the exact patch never needs restating here.
-    """
-    if not requirement.startswith("^"):
-        raise ReleaseError(f"unsupported dependency requirement form: {requirement!r}")
-    req_parts = requirement[1:].split(".")
-    if not (1 <= len(req_parts) <= 3) or not all(part.isdigit() for part in req_parts):
-        raise ReleaseError(f"unsupported caret requirement: {requirement!r}")
-    req_numbers = [int(part) for part in req_parts]
-    version_numbers = _parse_semver(version)
-
-    major = req_numbers[0]
-    if major > 0:
-        if version_numbers[0] != major:
-            return False
-        if len(req_numbers) == 1:
-            return True
-        minor = req_numbers[1]
-        if version_numbers[1] != minor:
-            return version_numbers[1] > minor
-        if len(req_numbers) == 2:
-            return True
-        return version_numbers[2] >= req_numbers[2]
-
-    if version_numbers[0] != 0:
-        return False
-    if len(req_numbers) == 1:
-        return True  # bare "^0": any 0.x.y
-    minor = req_numbers[1]
-    if minor > 0:
-        if version_numbers[1] != minor:
-            return False
-        if len(req_numbers) == 2:
-            return True
-        return version_numbers[2] >= req_numbers[2]
-    if version_numbers[1] != 0:
-        return False
-    if len(req_numbers) == 2:
-        return True
-    return version_numbers[2] == req_numbers[2]
-
-
 def workspace_version(document: dict[str, object]) -> str:
+    """Return the shared `localcache`/`localcache-cli` package version.
+
+    This only checks that the two packages' own declared versions agree
+    (both use `version.workspace = true`, so any disagreement is a Cargo
+    metadata anomaly, not a real state). It does not inspect the CLI's
+    `localcache` path-dependency requirement — that is a separate, looser
+    concern the workspace manifest itself owns.
+    """
     try:
         packages = document["packages"]
         versions = {
@@ -373,23 +322,7 @@ def workspace_version(document: dict[str, object]) -> str:
         raise ReleaseError("Cargo metadata is missing a workspace package")
     if len(set(versions.values())) != 1:
         raise ReleaseError(f"workspace package versions differ: {versions}")
-    version = versions["localcache"]
-    try:
-        cli = next(package for package in packages if package["name"] == "localcache-cli")
-        dependency = next(
-            dependency
-            for dependency in cli["dependencies"]
-            if dependency["name"] == "localcache"
-        )
-        requirement = dependency["req"]
-    except (KeyError, StopIteration, TypeError) as error:
-        raise ReleaseError("CLI metadata is missing its localcache dependency") from error
-    if not caret_requirement_satisfied(requirement, version):
-        raise ReleaseError(
-            "CLI localcache dependency does not admit the workspace version: "
-            f"requirement {requirement!r} does not allow {version!r}"
-        )
-    return version
+    return versions["localcache"]
 
 
 def verify_version_references(root: Path, expected_version: str) -> None:

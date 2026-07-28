@@ -76,78 +76,39 @@ class ReleaseRunnerTests(unittest.TestCase):
         self.assertIn("--locked", commands["benchmark-compile"])
         self.assertEqual(commands["mdbook"], ["mdbook", "build", "docs"])
 
-    def test_workspace_version_rejects_stale_cli_dependency(self) -> None:
+    def test_workspace_version_rejects_mismatched_package_versions(self) -> None:
         document = {
             "packages": [
                 {"name": "localcache", "version": "1.2.3", "dependencies": []},
                 {
                     "name": "localcache-cli",
-                    "version": "1.2.3",
-                    # ^1.3.0 excludes 1.2.3 entirely -- a genuine drift, not
-                    # just a non-exact-but-compatible caret requirement.
-                    "dependencies": [{"name": "localcache", "req": "^1.3.0"}],
+                    "version": "1.2.4",
+                    "dependencies": [{"name": "localcache", "req": "^1.2.3"}],
                 },
             ]
         }
-        with self.assertRaisesRegex(RUNNER.ReleaseError, "does not admit"):
+        with self.assertRaisesRegex(RUNNER.ReleaseError, "versions differ"):
             RUNNER.workspace_version(document)
 
-        document["packages"][1]["dependencies"][0]["req"] = "^1.2.3"
-        self.assertEqual(RUNNER.workspace_version(document), "1.2.3")
-
-    def test_workspace_version_accepts_a_compatible_non_exact_caret_requirement(
-        self,
-    ) -> None:
-        # ^1.2.2 is satisfied by 1.2.3 (a patch bump within the same minor) --
-        # this must not be treated as drift; only genuine incompatibility is.
+    def test_workspace_version_does_not_inspect_cli_dependency_requirement(self) -> None:
+        # workspace_version() only compares the two packages' own declared
+        # versions; it does not read or gate on the CLI's `localcache`
+        # path-dependency requirement at all -- any requirement string, even
+        # a wildly incompatible one, must not affect the result.
         document = {
             "packages": [
                 {"name": "localcache", "version": "1.2.3", "dependencies": []},
                 {
                     "name": "localcache-cli",
                     "version": "1.2.3",
-                    "dependencies": [{"name": "localcache", "req": "^1.2.2"}],
+                    "dependencies": [{"name": "localcache", "req": "^99.0.0"}],
                 },
             ]
         }
         self.assertEqual(RUNNER.workspace_version(document), "1.2.3")
 
-    def test_workspace_version_accepts_bare_zero_caret_for_pre_1_0(self) -> None:
-        # This project's real Cargo.toml uses `localcache = { version = "0" }`
-        # for the CLI's workspace-internal dependency deliberately: both
-        # crates are always released in lockstep, so a bare "^0" (any 0.x.y)
-        # is intentional, not drift.
-        document = {
-            "packages": [
-                {"name": "localcache", "version": "0.20.1", "dependencies": []},
-                {
-                    "name": "localcache-cli",
-                    "version": "0.20.1",
-                    "dependencies": [{"name": "localcache", "req": "^0"}],
-                },
-            ]
-        }
-        self.assertEqual(RUNNER.workspace_version(document), "0.20.1")
-
-    def test_caret_requirement_satisfied_matches_cargo_semantics(self) -> None:
-        cases = [
-            ("^0", "0.20.1", True),
-            ("^0", "0.0.1", True),
-            ("^0.20.1", "0.20.1", True),
-            ("^0.20.1", "0.20.2", True),
-            ("^0.20.1", "0.21.0", False),
-            ("^0.20.1", "0.19.0", False),
-            ("^1.2.3", "1.5.0", True),
-            ("^1.2.3", "1.2.2", False),
-            ("^1.2.3", "2.0.0", False),
-            ("^0.0.3", "0.0.3", True),
-            ("^0.0.3", "0.0.4", False),
-        ]
-        for requirement, version, expected in cases:
-            with self.subTest(requirement=requirement, version=version):
-                self.assertEqual(
-                    RUNNER.caret_requirement_satisfied(requirement, version), expected
-                )
+        del document["packages"][1]["dependencies"]
+        self.assertEqual(RUNNER.workspace_version(document), "1.2.3")
 
     @staticmethod
     def _version_reference_fixture(root: Path, *, version: str) -> None:

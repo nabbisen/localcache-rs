@@ -135,8 +135,13 @@ Checks are grouped by slice; each slice is a separate review point.
 - [ ] `rc_eligible` is **false** when a required evidence step was skipped — demonstrated.
 - [ ] `rc_eligible` is **true** for a clean commit with all gates green and complete evidence, with
       **no environment variable involved**.
-- [ ] `grep -rnE 'RFC009_PRODUCER_IMAGE|RFC009_RC_ELIGIBLE|canonical-producer|canonical-base-components|supported-host-tools|supported-platforms' scripts .github Makefile.toml rfcs/handoffs`
-      returns nothing.
+- [ ] No **live** use of the retired identifiers remains. Run:
+      `grep -rnE 'RFC009_PRODUCER_IMAGE|RFC009_RC_ELIGIBLE|canonical-producer|canonical-base-components|supported-host-tools|supported-platforms' scripts .github Makefile.toml rfcs/handoffs`
+      and confirm every hit is one of: a comment explaining the retirement, a test asserting the
+      identifier's **absence**, or struck-through handoff text recording the withdrawal. Any hit that
+      is executable code, a CI step, or a live TOML key is a failure.
+      *(Corrected 2026-07-28: the original wording demanded the grep return nothing, which is
+      unsatisfiable — the absence tests necessarily name what they assert is gone.)*
 - [ ] `scripts/canonical-producer.sh` is deleted and its `[implementations]` pin removed; every
       remaining pin still matches its file.
 - [ ] The CI `archive` job no longer passes `--noncanonical`.
