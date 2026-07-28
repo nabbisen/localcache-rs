@@ -29,7 +29,7 @@ readme          = "README.md"
 # workspace members
 localcache              = { version = "0.20.0", path = "crates/localcache" }
 # library
-rusqlite                = { version = "0.40", features = ["bundled", "limits"] }
+rusqlite                = { version = "0.39", features = ["bundled", "limits"] }
 serde                   = { version = "1",    features = ["derive"] }
 bincode                 = { version = "2", features = ["serde"] }
 blake3                  = "1"
@@ -55,5 +55,5 @@ clap                    = { version = "4",    features = ["derive"] }
 # dev / bench
 tempfile                = "3"
 tokio-test              = { version = "1",    features = ["rt", "macros", "rt-multi-thread"] }
-criterion               = { version = "0.8",  features = ["html_reports"] }
+criterion               = { version = "0.7",  features = ["html_reports"] }
 sha2                    = "0.10"

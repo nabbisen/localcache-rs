@@ -103,12 +103,21 @@ jobs:
           --features localcache/json --locked
 
   msrv:
-    name: MSRV (stable)
+    name: MSRV (declared Rust 1.85)
     needs: source-integrity
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Read declared MSRV
+        id: msrv
+        run: |
+          MSRV=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["rust-version"])')
+          test "$MSRV" = "1.85"
+          echo "toolchain=${MSRV}.0" >> "$GITHUB_OUTPUT"
+      - name: Install declared MSRV
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ steps.msrv.outputs.toolchain }}
       - name: Cache cargo registry
         uses: actions/cache@v5
         with:
@@ -117,5 +126,34 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-msrv-${{ hashFiles('**/Cargo.lock') }}
-      - name: Check all features build
-        run: cargo check --all-features
+      - name: Verify declared toolchain
+        run: |
+          rustc --version | grep -E '^rustc 1\.85\.0 '
+          cargo --version | grep -E '^cargo 1\.85\.0 '
+      - name: Check complete declared-MSRV matrix
+        run: |
+          cargo check -p localcache --all-targets --all-features --locked
+          cargo check -p localcache --all-targets --no-default-features --features localcache/async-std --locked
+          cargo check -p localcache --all-targets --no-default-features --features localcache/smol --locked
+          cargo check -p localcache-cli --all-targets --all-features --locked
+
+  dependency-security:
+    name: Dependency security policy
+    needs: source-integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install pinned cargo-audit
+        run: cargo install cargo-audit --version 0.22.2 --locked
+      - name: Run fail-closed advisory policy
+        run: >-
+          python3 scripts/check_advisories.py
+          "$RUNNER_TEMP/localcache-advisory-evidence"
+      - name: Preserve advisory evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-security-evidence
+          path: ${{ runner.temp }}/localcache-advisory-evidence
+          if-no-files-found: error

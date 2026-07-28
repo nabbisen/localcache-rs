@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "defaults": {
+    "vulnerability": "deny",
+    "unsound": "deny",
+    "yanked": "deny",
+    "unmaintained": "deny",
+    "notice": "deny"
+  },
+  "findings": [
+    {
+      "id": "RUSTSEC-2025-0052",
+      "package": "async-std",
+      "version": "1.13.2",
+      "kind": "unmaintained",
+      "action": "warn",
+      "owner": "localcache maintainers",
+      "approved": "2026-07-23",
+      "expires": "2026-10-21",
+      "reason": "Preserve the advertised v0.20.1 async-std runtime feature.",
+      "follow-up": "Decide replacement, deprecation, removal, or renewed acceptance before expiry."
+    },
+    {
+      "id": "RUSTSEC-2025-0141",
+      "package": "bincode",
+      "version": "2.0.1",
+      "kind": "unmaintained",
+      "action": "warn",
+      "owner": "localcache maintainers",
+      "approved": "2026-07-23",
+      "expires": "2026-10-21",
+      "reason": "Preserve the established bincode legacy payload wire format for v0.20.1.",
+      "follow-up": "Assess a maintained format-compatible implementation against every historical fixture before expiry."
+    }
+  ]
+}

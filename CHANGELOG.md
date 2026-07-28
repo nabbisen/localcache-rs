@@ -9,6 +9,21 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Security
+
+- The locked dependency graph again supports the declared Rust 1.85 MSRV:
+  `rusqlite`/`libsqlite3-sys` and Criterion use compatible lines, while the
+  fixable `crossbeam-epoch` vulnerability and `anyhow` unsoundness advisory
+  are resolved without broad dependency churn.
+- A fail-closed dependency-security gate now binds RustSec results and fresh
+  crates.io yanked-state records to the exact lockfile. Vulnerabilities,
+  unsoundness, yanked packages, unknown findings, and stale or expired policy
+  entries are denied.
+- The unmaintained `async-std 1.13.2` and `bincode 2.0.1` findings remain
+  visible, exact warnings through 2026-10-21 while the advertised runtime
+  feature and established payload wire format are preserved. These warnings
+  are not known vulnerabilities and require a new decision before expiry.
+
 ### Fixed
 
 - Glob compilation is now bounded and panic-free for Unicode input, malformed
