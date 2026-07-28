@@ -135,7 +135,7 @@ Each slice is an independent implementation review point.
 | Slice | Scope | Authority | Depends on | Exit gate |
 |---|---|---|---|---|
 | **M6a — Published-crate legal files** | Ship `LICENSE`/`NOTICE` inside both `.crate` artifacts as verified mirrors; assert content within the generated archive | **RFC 016** (Proposed) | Owner decision on RFC 016 | Both crates contain both files, byte-identical to root; in-artifact check fails when a file is absent |
-| **M6b — Canonical gate consolidation** | One executable gate source of truth; `Makefile.toml`/CI become thin aliases; full package-scoped feature + doctest matrix; `-D warnings` everywhere; wire the RFC 014 security step; hash-pin `check_advisories.py` | RFC 009 R7, R12, R13; RFC 014 | — | Every gate row runs from the canonical source; **B-07 closed** |
+| **M6b — Canonical gate consolidation ✅** | One executable gate source of truth; `Makefile.toml`/CI become thin aliases; full package-scoped feature + doctest matrix; `-D warnings` everywhere; wire the RFC 014 security step; hash-pin `check_advisories.py` | RFC 009 R7, R12, R13; RFC 014 | — | Every gate row runs from the canonical source; **B-07 closed** |
 | **M6c — Canonical producer and CI provenance** | Execute `canonical-producer.sh` end-to-end; CI archive construction and fail-closed aggregation; least-privilege permissions and immutable action SHAs; external RC-eligibility attestation; post-smoke layout re-validation; failure-summary finalization; explicit noncanonical platform list | RFC 009 R3–R6, R14, R16 | M6b | Two canonical builds byte-identical; CI aggregates by run ID and commit; no self-asserted RC eligibility |
 | **M6d — Coming-version housekeeping** | Set the authorized coming version across manifests, docs, and CHANGELOG; add the version-reference consistency gate; refresh docs and implemented-RFC prose | RFC 009 R10, R11 | M6a, M6b, M6c | No stale version reference; library and CLI versions match; changelog section present |
 | **M6e — RC construction and evidence** | Joint workspace package verification including the M6a legal-file assertion; full gate run; canonical archive and digest; evidence bundle | RFC 009 R9, R14 | M6a–M6d | Complete evidence bundle satisfying R14; archive digest reproducible in the canonical producer |
@@ -196,6 +196,16 @@ panicking every subsequent caller, blocking-closure panics produce
 failures, dropped events, and failed invalidations are all observable. This
 closure authorizes no release action and does not move RFC 015 from
 `rfcs/accepted/`.
+
+M6b was independently accepted at commit `11a8bc8`, closing **B-07** — the last
+of the eight 2026-07-17 blocking findings. The R7 matrix now has one
+checked-in source of truth (`scripts/feature_matrix.py`) invoked by both
+`Makefile.toml` and CI, every clippy invocation denies warnings, all six gate
+scripts are hash-pinned, and the R13 dependency-security step is wired with
+fail-closed aggregation. B-07's fresh-evidence bullet is delivered by M6e's
+R14 bundle, not by this closure. **All eight original blocking findings are
+now closed**; the remaining gate to release is the M6a/M6c–M6e work plus M7,
+not an open defect. This closure authorizes no release action.
 
 The virtual-workspace relocation at `fe9fe88` was accepted for continued
 development on 2026-07-21. Publication remains blocked until M6 supplies and

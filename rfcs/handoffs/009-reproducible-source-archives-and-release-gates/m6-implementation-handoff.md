@@ -77,6 +77,17 @@ Known gaps, each verified present in the tree:
 8. Replace the per-binary SHA-256 pins in `[supported-host-tools]` with an explicit, non-empty
    claimed-platform policy. The current pins describe one workstation, which is why the
    noncanonical runner cannot execute in CI.
+9. **(Added after the M6b implementation review, N-1.)** M6b consolidated the R7 feature-and-package
+   matrix into `scripts/feature_matrix.py`, but the declared-MSRV rows (`ci.yaml` `msrv` job's four
+   `cargo check` invocations) and the bench-compile invocation (`Makefile.toml` `bench-compile`/
+   `bench`, `ci.yaml` `bench-compile`) still hand-write their own `--features` lists outside that
+   source. This is exactly the drift class M6b/R12 exists to eliminate: a new async-runtime feature
+   is caught by `feature_matrix.py --check-coverage` but silently missed by the MSRV matrix. Move
+   these rows into `feature_matrix.py` (or a sibling canonical source `Makefile.toml` and CI both
+   invoke) and extend the coverage check so a new runtime feature cannot be added without a
+   corresponding MSRV row. RFC 009 M6 sequence item 2 ("integrate the exact MSRV policy delivered by
+   RFC 014") requires this before M6 as a whole can be recorded complete; it is not required for M6c
+   specifically to close.
 
 ### M6d — Coming-version housekeeping *(RFC 009 R10, R11)*
 

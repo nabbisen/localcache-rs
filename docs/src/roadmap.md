@@ -70,6 +70,12 @@ RFC 014 implementation was independently accepted on 2026-07-28 at commit
 was independently accepted at commit `772b3e5`, completing M5. Both remain
 under `rfcs/accepted/`; neither closure authorizes release work.
 
+M6b (canonical gate consolidation) was independently accepted at commit
+`11a8bc8`, closing **B-07** — the last of the eight original blocking
+findings. **All eight are now closed**; M6 as a whole is not complete until
+its remaining slices (M6a, M6c–M6e) and M7 finish. This closure authorizes no
+release action.
+
 The virtual-workspace relocation at `fe9fe88` was accepted for continued
 development. Publication remains blocked until M6 includes and verifies the
 root-authoritative `LICENSE` and `NOTICE` content in generated `.crate`
