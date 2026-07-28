@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed |
+| Status | Accepted |
 | Feature | *(release engineering; no Cargo feature)* |
 | Touches | `crates/localcache/`, `crates/cli/`, `scripts/release.py`, `.github/workflows/ci.yaml`, release documentation |
 | Finding | Virtual-workspace relocation review (2026-07-21), §3 R1 — publication blocker |

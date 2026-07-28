@@ -4,7 +4,7 @@
 
 Implement the M6 release-controls milestone of
 [RFC 009](../../accepted/009-reproducible-source-archives-and-release-gates.md), together with
-[RFC 016](../../proposed/016-published-crate-legal-file-completeness.md) once it is Accepted.
+[RFC 016](../../accepted/016-published-crate-legal-file-completeness.md), Accepted 2026-07-28.
 
 RFC 009 is Accepted and **its requirements are authoritative**; this handoff sequences the work and
 names the concrete gaps, but adds no design decision and overrides none. Where this document and an
@@ -21,7 +21,7 @@ release runner** — M6 extends `scripts/release.py`, `scripts/release_archive.p
 
 ## 2. Scope followed
 
-### M6a — Published-crate legal files *(RFC 016; blocked on owner acceptance)*
+### M6a — Published-crate legal files *(RFC 016, Accepted 2026-07-28 — delegable now)*
 
 Gap: `localcache-0.20.0.crate` contains no `LICENSE`/`NOTICE`; `localcache-cli-0.20.0.crate`
 contains neither plus no `README`. Publication is blocked until fixed.
@@ -159,7 +159,7 @@ Then the RC itself:
 
 `M6a` ∥ `M6b` → `M6c` → `M6d` → `M6e` → M7.
 
-M6a is independent and may run in parallel with M6b once RFC 016 is Accepted. M6c depends on M6b's
+M6a is independent and delegable now that RFC 016 is Accepted. M6c depends on M6b's
 canonical runner. M6d must follow the others because R10 sets the version immediately before the
 final gates. M6e consumes all of them.
 
@@ -227,7 +227,7 @@ archive. Generated `docs/book/` must be removed before any review request.
   optional execution wrapper that changes no gate semantics (RFC 017 R5).
 - The two `warn` advisory dispositions carry an `expires` field; once reached the security gate
   denies. Renewing or resolving them is an owner decision that gates M6b's security step.
-- RFC 016 is Proposed. M6a cannot begin until it is Accepted, and its owner decision is the only
+- RFC 016 is Accepted (2026-07-28); M6a is unblocked. No outstanding design question remains in M6. The only
   design question outstanding in the entire milestone.
 
 ## 8. Recommended next step

@@ -136,13 +136,13 @@ Each slice is an independent implementation review point.
 
 | Slice | Scope | Authority | Depends on | Exit gate |
 |---|---|---|---|---|
-| **M6a — Published-crate legal files** | Ship `LICENSE`/`NOTICE` inside both `.crate` artifacts as verified mirrors; assert content within the generated archive | **RFC 016** (Proposed) | Owner decision on RFC 016 | Both crates contain both files, byte-identical to root; in-artifact check fails when a file is absent |
+| **M6a — Published-crate legal files** | Ship `LICENSE`/`NOTICE` inside both `.crate` artifacts as verified mirrors; assert content within the generated archive | **RFC 016** (Accepted 2026-07-28) | M6b | Both crates contain both files, byte-identical to root; in-artifact check fails when a file is absent |
 | **M6b — Canonical gate consolidation ✅** | One executable gate source of truth; `Makefile.toml`/CI become thin aliases; full package-scoped feature + doctest matrix; `-D warnings` everywhere; wire the RFC 014 security step; hash-pin `check_advisories.py` | RFC 009 R7, R12, R13; RFC 014 | — | Every gate row runs from the canonical source; **B-07 closed** |
 | **M6c — CI provenance ✅** | CI archive construction and fail-closed aggregation; least-privilege permissions and immutable action SHAs; post-smoke layout re-validation; failure-summary finalization | RFC 009 R3–R6, R14 | M6b | CI aggregates by run ID and commit; layout re-asserted after the artifact smoke run |
 | **M6d — Coming-version housekeeping** | Set the authorized coming version across manifests, docs, and CHANGELOG; add the version-reference consistency gate; refresh docs and implemented-RFC prose | RFC 009 R10, R11 | M6b, M6c | No stale version reference; library and CLI versions match; changelog section present |
 | **M6e — RC construction and evidence** | Implement the RFC 017 migration (uncompressed-tar content digest, per-host determinism, gate-derived RC eligibility, retire the container wrapper); joint workspace package verification including the M6a legal-file assertion; full gate run; archive and evidence bundle | **RFC 017**; RFC 009 R9, R14 | M6a–M6d | Two same-host builds produce an identical uncompressed-tar digest; RC eligibility derives from gates, not environment; complete evidence bundle satisfying R14 as amended |
 
-M6a is independent of M6b–M6c and may proceed in parallel once RFC 016 is Accepted. M6d requires
+M6a is independent of M6c–M6e and is delegable now that RFC 016 is Accepted. M6d requires
 only M6b and M6c: R10 constrains version housekeeping to precede the **final gates**, which is M6e's
 RC construction, and nothing in it depends on M6a's legal files. M6e consumes all of them, and M7
 begins only after M6e produces the evidence bundle.

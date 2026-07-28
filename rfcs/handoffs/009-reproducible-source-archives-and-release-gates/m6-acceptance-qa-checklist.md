@@ -1,7 +1,7 @@
 # RFC 009 M6 Acceptance and QA Checklist
 
 Operationalizes M6 of [RFC 009](../../accepted/009-reproducible-source-archives-and-release-gates.md)
-and, for M6a, [RFC 016](../../proposed/016-published-crate-legal-file-completeness.md).
+and, for M6a, [RFC 016](../../accepted/016-published-crate-legal-file-completeness.md).
 The RFCs remain authoritative; this list adds and relaxes nothing.
 
 Testing is owned by the testing developer. **Every box must be backed by an observed result. An
