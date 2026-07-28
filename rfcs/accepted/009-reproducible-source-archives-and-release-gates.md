@@ -367,6 +367,35 @@ The CLI's local path dependency must also declare a registry-compatible version
 requirement that exactly matches the coming library version. The
 version-consistency gate enforces that equality.
 
+> **Owner resolution (2026-07-28): workspace-internal path dependencies are
+> exempt from the exact-match requirement above.**
+>
+> `[workspace.dependencies].localcache` declares `version = "0"`. Both packages
+> inherit `version.workspace = true` and are always published together, so the
+> owner's decision is that the dependency's version field is registry
+> bookkeeping rather than a compatibility statement, and pinning it exactly is
+> not worth the per-bump edit. The version-consistency gate accordingly no
+> longer inspects the requirement; `workspace_version()` asserts only that the
+> two packages' own declared versions agree.
+>
+> **Accepted hazard, recorded deliberately.** `^0` resolves to
+> `>=0.0.0, <1.0.0`, so any `0.x` satisfies it. `cargo install` ignores a
+> packaged `Cargo.lock` by default and recomputes dependency versions — that is
+> what `--locked` overrides — so a published `localcache-cli` will resolve
+> `localcache` to the newest `0.x` available at install time, not to the version
+> it was built and tested against. For a `0.x` crate every minor is a breaking
+> change by convention, and this project's history bears that out (schema v4→v5
+> shipped in `0.20.0`). A future minor release can therefore break
+> `cargo install` of an older CLI.
+>
+> The independent review of 2026-07-28
+> (`.git-exclude/reviewed/architect-workspace-version-check-removal-review-2026-07-28.md`)
+> advised against this relaxation for that reason. The owner accepted it with the
+> hazard known. Two mitigations remain available without amending this clause
+> again: publish the CLI with `--locked`, or reinstate the exact requirement at
+> any future version bump. Revisit before 1.0, where `^0`'s semantics change and
+> the exemption's rationale no longer applies.
+
 The canonical producer's pinned Cargo version must prove that joint workspace
 packaging verifies the interdependent library and CLI before publication. If
 that Cargo version cannot verify the joint operation, the implementation must
@@ -665,7 +694,9 @@ normalized package manifest is valid and package verification passes.
 Excluding it from the project source archive is not acceptable while the
 workspace manifest declares the target.
 
-The CLI path dependency carries the exact coming library version. Both
+The CLI path dependency carries a registry-compatible version requirement;
+per the 2026-07-28 owner resolution recorded under R9 it need not equal the
+coming library version exactly. Both
 workspace packages are prepared together using the canonical producer's
 supported Cargo command, and both normalized manifests and file lists are
 recorded. An isolated local registry is the reviewed fallback boundary, not an
@@ -797,7 +828,9 @@ Artifact signing is outside this RFC and may be proposed separately.
 - Every clippy invocation includes `-D warnings`.
 - MSRV resolution equals `[workspace.package].rust-version`.
 - Library and CLI versions match.
-- The CLI path dependency's registry version equals the coming library version.
+- The CLI path dependency declares a registry-compatible version requirement.
+  Exact equality with the coming library version is **not** asserted — see the
+  2026-07-28 owner resolution under R9.
 - Joint workspace packaging produces and verifies both packages; both
   normalized manifests and file lists are inspected.
 - Stale previous-version installation examples fail the coming-version check.

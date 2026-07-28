@@ -107,7 +107,11 @@ Checks are grouped by slice; each slice is a separate review point.
 ## M6d — Coming-version housekeeping
 
 - [ ] Workspace and both member versions equal the authorized coming version.
-- [ ] The CLI's registry dependency on the library equals that same version exactly.
+- [ ] The CLI's registry dependency on the library declares a registry-compatible version
+      requirement. **Exact equality is not required** — per the 2026-07-28 owner resolution recorded
+      under RFC 009 R9, workspace-internal path dependencies are exempt, and `workspace_version()`
+      deliberately does not inspect the requirement. Verify only that the requirement is present and
+      parseable by `cargo metadata`.
 - [ ] `CHANGELOG.md` has a non-empty section for the coming version with its intended date or an
       approved RC placeholder.
 - [ ] `README.md` and every mdBook install example reference the coming version; the previously
