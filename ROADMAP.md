@@ -121,7 +121,7 @@ has an independent **Go** review.
 | **M1 — Buildable source and archive ✅** | Completed Jul 21 | Author or remove the declared benchmark coherently; create source-context and artifact-context runners; make the source archive self-buildable and safely verifiable | Current checkout and extracted archive pass their applicable RFC-defined smoke gates; exact export manifest and malicious archive fixtures pass |
 | **M2 — Data integrity and SQL safety ✅** | Completed Jul 22 | Preserve v1 payloads through v1-to-v5 migration; make migrations atomic; constrain and safely handle SQLite identifiers | Historical fixture and rollback tests pass; hostile identifier tests pass; focused security review accepted |
 | **M3 — Mutation boundaries and input safety ✅** | Completed Jul 23 | Enforce read-only schema/mutation rules; prevent watcher privilege bypass; make glob/path/CLI handling Unicode-safe and non-panicking; align deleted-path behavior | Negative read-only and Unicode/property tests pass; public behavior matches approved RFCs |
-| **M4 — MSRV and supply-chain recovery** | Jul 24–Aug 4 | Select a Rust-1.85-compatible SQLite stack or approve a new MSRV; update vulnerable dependencies; define advisory deny/warn/exception policy | Full declared-MSRV build succeeds; security policy gate is green or has approved, expiring exceptions |
+| **M4 — MSRV and supply-chain recovery ✅** | Completed Jul 28 | Select a Rust-1.85-compatible SQLite stack or approve a new MSRV; update vulnerable dependencies; define advisory deny/warn/exception policy | Full declared-MSRV build succeeds; security policy gate is green or has approved, expiring exceptions |
 | **M5 — Async and maintainability hardening** | Aug 5–12 | Remove unnecessary unsafe generic casts; unify runtime panic/poison handling; surface watcher setup failures; perform only risk-reducing module splits | Runtime-backend tests and mutex-panic tests pass; no unexplained unsafe remains; focused review accepted |
 | **M6 — Release controls, docs, and RC** | Aug 13–26 | Correct CI/Makefile feature matrices; enforce warning policy; reconcile archive and published-crate legal-file rules; refresh docs/RFC final prose; assemble fresh evidence | Stable and MSRV gates, tests, clippy, docs, package/archive smoke, legal-file content, and advisory gate all pass on the RC |
 | **M7 — Independent review and release decision** | Aug 27–Sep 4 | Independent architecture re-review of the RC and extracted archive | Every blocker closed; reviewer verdict **Accept** or **Accept with notes**; owner authorizes release |
@@ -163,6 +163,13 @@ tracked-source integrity gate passed against the committed source. This
 milestone closure does not authorize release work or move RFC 012 or RFC 013
 from `rfcs/accepted/`.
 
+RFC 014 implementation was independently accepted on 2026-07-28 at commit
+`b5e85da`, closing B-06 and B-08 and completing M4. The declared Rust 1.85
+contract is restored through `rusqlite 0.39` / `libsqlite3-sys 0.37` with zero
+packages added to the graph, and a fail-closed dependency-security gate binds
+RustSec results and fresh crates.io yanked state to the exact lockfile. This
+closure does not authorize release work or move RFC 014 from `rfcs/accepted/`.
+
 The virtual-workspace relocation at `fe9fe88` was accepted for continued
 development on 2026-07-21. Publication remains blocked until M6 supplies and
 verifies the root-authoritative `LICENSE` and `NOTICE` content in each generated
@@ -203,7 +210,7 @@ to RFC 000.
 | **[011](rfcs/accepted/011-safe-sqlite-identifier-boundary.md)** | Safe SQLite Identifier Boundary | B-03 (closed by `d4fe505`) | M2 | Hostile-input QA checklist accepted |
 | **[012](rfcs/accepted/012-read-only-schema-and-mutation-contract.md)** | Read-only Schema and Mutation Contract | B-04 (closed by `6c14df3`) | M3 | API-boundary implementation matrix accepted; no handoff required |
 | **[013](rfcs/accepted/013-panic-free-path-glob-and-cli-text-handling.md)** | Panic-free Path, Glob, and CLI Text Handling | B-05 (closed by `34fcc78`) and related path findings | M3 | Detailed RFC matrix; handoff only if delegated |
-| **[014](rfcs/accepted/014-declared-msrv-and-dependency-security-policy.md)** | Declared MSRV and Dependency Security Policy | B-06, B-08 | M4 | Detailed RFC matrix; handoff only if delegated |
+| **[014](rfcs/accepted/014-declared-msrv-and-dependency-security-policy.md)** | Declared MSRV and Dependency Security Policy | B-06, B-08 (closed by `b5e85da`) | M4 | Detailed RFC matrix; handoff only if delegated |
 | **015** | Async Runtime and Watcher Failure Safety | Runtime/watcher non-blocking findings | M5 | Recommended runtime test-matrix handoff |
 
 An implementation handoff is created only when the approved RFC still needs

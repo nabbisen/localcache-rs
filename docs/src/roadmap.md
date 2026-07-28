@@ -40,7 +40,7 @@ the 2026-07-17 independent architecture review before new feature work resumes.
 | M1 ✅ | Completed Jul 21 | Current source and extracted release archive are buildable |
 | M2 ✅ | Completed Jul 22 | Historical migrations preserve payloads and SQLite identifiers are safe |
 | M3 ✅ | Completed Jul 23 | Read-only boundaries and Unicode/path handling are non-bypassable and non-panicking |
-| M4 | Jul 24–Aug 4 | Declared MSRV and dependency-security policy are verified |
+| M4 ✅ | Completed Jul 28 | Declared MSRV and dependency-security policy are verified |
 | M5 | Aug 5–12 | Async/watcher failure handling and highest-risk maintainability debt are addressed |
 | M6 | Aug 13–26 | CI, documentation, package legal files, release gates, and fresh RC evidence agree |
 | M7 | Aug 27–Sep 4 | Independent architecture review and owner release decision |
@@ -64,6 +64,11 @@ RFC 012 implementation was independently accepted on 2026-07-22 at commit
 `6c14df3`. RFC 013 implementation was independently accepted on 2026-07-23 at
 commit `34fcc78`, completing M3. Both remain under `rfcs/accepted/` until their
 implementation ships; this milestone closure is not release authorization.
+
+RFC 014 implementation was independently accepted on 2026-07-28 at commit
+`b5e85da`, closing B-06 and B-08 and completing M4. It remains under
+`rfcs/accepted/` until it ships; this milestone closure is not release
+authorization.
 
 The virtual-workspace relocation at `fe9fe88` was accepted for continued
 development. Publication remains blocked until M6 includes and verifies the
