@@ -178,6 +178,88 @@ class ReleaseRunnerTests(unittest.TestCase):
             path = root / policy["path"]
             self.assertEqual(RUNNER.sha256_file(path), policy["sha256"])
 
+    def test_verify_implementation_fails_closed_on_hash_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "tool.py"
+            target.write_text("print('hello')\n", encoding="utf-8")
+            policy = {"path": "tool.py", "sha256": "0" * 64}
+            with self.assertRaisesRegex(RUNNER.ReleaseError, "hash mismatch"):
+                RUNNER.verify_implementation(root, "tool", policy)
+
+    def test_verify_implementation_passes_on_matching_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "tool.py"
+            target.write_text("print('hello')\n", encoding="utf-8")
+            digest = RUNNER.sha256_file(target)
+            policy = {"path": "tool.py", "sha256": digest}
+            observed = RUNNER.verify_implementation(root, "tool", policy)
+            self.assertIn(digest, observed)
+
+    def test_verify_named_implementation_reads_from_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "scripts").mkdir()
+            target = root / "scripts/tool.py"
+            target.write_text("print('hello')\n", encoding="utf-8")
+            digest = RUNNER.sha256_file(target)
+            (root / "scripts/release-tools.toml").write_text(
+                "schema-version = 1\n\n"
+                '[implementations.tool]\n'
+                'path = "scripts/tool.py"\n'
+                f'sha256 = "{digest}"\n',
+                encoding="utf-8",
+            )
+            observed = RUNNER.verify_named_implementation(root, "tool")
+            self.assertIn(digest, observed)
+
+    def test_verify_named_implementation_fails_closed_when_unlisted(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "scripts").mkdir()
+            (root / "scripts/release-tools.toml").write_text(
+                "schema-version = 1\n\n[implementations]\n", encoding="utf-8"
+            )
+            with self.assertRaisesRegex(
+                RUNNER.ReleaseError, "no implementation policy"
+            ):
+                RUNNER.verify_named_implementation(root, "does-not-exist")
+
+    def test_verify_named_implementation_does_not_check_host_tools(self) -> None:
+        # Unlike verify_tool_manifest, this must not require the canonical
+        # producer's pinned rustc/cargo/python/git/mdbook versions — it is
+        # used by gates (security) that run on any CI runner.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "scripts").mkdir()
+            target = root / "scripts/tool.py"
+            target.write_text("print('hello')\n", encoding="utf-8")
+            digest = RUNNER.sha256_file(target)
+            (root / "scripts/release-tools.toml").write_text(
+                "schema-version = 1\n\n"
+                '[implementations.tool]\n'
+                'path = "scripts/tool.py"\n'
+                f'sha256 = "{digest}"\n',
+                encoding="utf-8",
+            )
+            # No [producer], [canonical-tools], or [supported-host-tools]
+            # table exists in this fixture; a passing result proves those
+            # tables were never consulted.
+            observed = RUNNER.verify_named_implementation(root, "tool")
+            self.assertIn(digest, observed)
+
+    def test_security_mode_failure_marks_downstream_steps_incomplete(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "evidence"
+            args = argparse.Namespace(mode="security", output_dir=output)
+            error = RUNNER.ReleaseError("deliberate test failure")
+            RUNNER.record_failure_summary(args, error)
+            summary = (output / "summary.log").read_text(encoding="utf-8")
+            self.assertIn("status: FAIL", summary)
+            self.assertIn("deliberate test failure", summary)
+            self.assertIn("required-downstream-steps: NOT COMPLETED", summary)
+
     def test_canonical_wrapper_has_no_release_action(self) -> None:
         wrapper = (SCRIPTS / "canonical-producer.sh").read_text(encoding="utf-8")
         self.assertIn(

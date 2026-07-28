@@ -21,36 +21,51 @@ jobs:
       - name: Verify manifest target sources
         run: python3 scripts/source_integrity.py --require-tracked
 
-  test:
-    name: Test (${{ matrix.features }})
+  fmt:
+    name: Format check
     needs: source-integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+  matrix-setup:
+    name: Matrix setup
+    needs: source-integrity
+    runs-on: ubuntu-latest
+    outputs:
+      rows: ${{ steps.rows.outputs.rows }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Fail closed on an uncovered Cargo feature
+        run: python3 scripts/feature_matrix.py --check-coverage
+      - name: Enumerate canonical matrix rows
+        id: rows
+        run: echo "rows=$(python3 scripts/feature_matrix.py --list --json)" >> "$GITHUB_OUTPUT"
+
+  # RFC 009 R7 / R12: rows come from scripts/feature_matrix.py, the single
+  # checked-in source of truth — this job does not maintain its own feature
+  # list. Each row runs clippy (-D warnings) and test; the doctest-only row
+  # skips clippy internally.
+  matrix:
+    name: Matrix (${{ matrix.row }})
+    needs: matrix-setup
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        features:
-          - ""
-          - "async"
-          - "async-std"
-          - "smol"
-          - "compression"
-          - "json"
-          - "encryption"
-          - "tracing"
-          - "watching"
-          - "metrics"
-          - "opentelemetry"
-          - "async,compression,json,encryption,tracing,watching,metrics,opentelemetry"
-          - "async-std,compression,json,encryption,tracing,watching,metrics"
-          - "smol,compression,json,encryption,tracing,watching,metrics"
-
+        row: ${{ fromJson(needs.matrix-setup.outputs.rows) }}
     steps:
       - uses: actions/checkout@v6
 
       - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy, rustfmt
+          components: clippy
 
       - name: Cache cargo registry
         uses: actions/cache@v5
@@ -59,28 +74,10 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ matrix.row }}-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Check formatting
-        run: cargo fmt --all --check
-
-      - name: Clippy
-        run: |
-          FEATURES="${{ matrix.features }}"
-          if [ -z "$FEATURES" ]; then
-            cargo clippy --all-targets
-          else
-            cargo clippy --all-targets --features "$FEATURES"
-          fi
-
-      - name: Test
-        run: |
-          FEATURES="${{ matrix.features }}"
-          if [ -z "$FEATURES" ]; then
-            cargo test --all-targets
-          else
-            cargo test --all-targets --features "$FEATURES"
-          fi
+      - name: Run matrix row (clippy -D warnings + test)
+        run: python3 scripts/feature_matrix.py --run "${{ matrix.row }}"
 
   bench-compile:
     name: Bench (compile-only)
@@ -146,10 +143,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Install pinned cargo-audit
         run: cargo install cargo-audit --version 0.22.2 --locked
-      - name: Run fail-closed advisory policy
+      - name: Run fail-closed advisory policy (RFC 009 R13)
         run: >-
-          python3 scripts/check_advisories.py
-          "$RUNNER_TEMP/localcache-advisory-evidence"
+          python3 scripts/release.py security
+          --output-dir "$RUNNER_TEMP/localcache-advisory-evidence"
       - name: Preserve advisory evidence
         if: always()
         uses: actions/upload-artifact@v4

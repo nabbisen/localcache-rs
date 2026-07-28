@@ -66,7 +66,7 @@ sha256 = "39d2434fc670a8c9b8cac39f899247c062ac1e2fdda92a4eb339df8ed5386f49"
 
 [implementations.release-runner]
 path = "scripts/release.py"
-sha256 = "8ff5a21dc4470d84c152dea4b4d1e4b277409d15e52cf9052373877d8decab93"
+sha256 = "486ec1c7119baca86a47cc95ad1381ce9bf4dbaf346e2beccbeb841fe34c5701"
 
 [implementations.canonical-producer]
 path = "scripts/canonical-producer.sh"
@@ -79,3 +79,11 @@ sha256 = "cb6ed66d0a4edd0a5b481305028249ddba748d19cf839a462406c6879df8eafe"
 [implementations.source-integrity]
 path = "scripts/source_integrity.py"
 sha256 = "07587f3ece397b3be523a2142ce9a68130936599cda67a22b3c5b56383907f77"
+
+[implementations.check-advisories]
+path = "scripts/check_advisories.py"
+sha256 = "43ed05480ea089708d992ffc80bf230988fc2ca7a93ddc2e4f09c4115a1bf3ba"
+
+[implementations.feature-matrix]
+path = "scripts/feature_matrix.py"
+sha256 = "f39760f370fd5e118b6ba5709ffe3cc707b917c63269825cb7786403f6f7f505"

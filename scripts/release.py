@@ -181,6 +181,42 @@ def load_tool_manifest(root: Path) -> dict[str, object]:
     return document
 
 
+def verify_implementation(root: Path, name: str, policy: object) -> str:
+    if not isinstance(policy, dict):
+        raise ReleaseError(f"invalid implementation policy: {name}")
+    path_value = policy.get("path")
+    expected_sha256 = policy.get("sha256")
+    if not isinstance(path_value, str) or not isinstance(expected_sha256, str):
+        raise ReleaseError(f"incomplete implementation policy: {name}")
+    path = root / path_value
+    digest = sha256_file(path)
+    if digest != expected_sha256:
+        raise ReleaseError(
+            f"release implementation hash mismatch for {path_value}: {digest}"
+        )
+    return f"{path_value}; sha256={digest}"
+
+
+def verify_named_implementation(root: Path, name: str) -> str:
+    """Verify one `[implementations.<name>]` hash pin in isolation.
+
+    Unlike `verify_tool_manifest`, this does not check the canonical
+    producer's pinned host tools, Rust/Cargo versions, or base components —
+    those describe the archive-production environment specifically. A gate
+    that only needs its own implementation verified (for example `security`,
+    which must run on any CI runner, not just the canonical producer) should
+    call this instead of the full manifest verification.
+    """
+    document = load_tool_manifest(root)
+    implementations = document.get("implementations")
+    if not isinstance(implementations, dict):
+        raise ReleaseError("producer-tool manifest is missing table: implementations")
+    policy = implementations.get(name)
+    if policy is None:
+        raise ReleaseError(f"no implementation policy for {name!r}")
+    return verify_implementation(root, name, policy)
+
+
 def verify_tool_manifest(root: Path, *, canonical: bool) -> dict[str, str]:
     document = load_tool_manifest(root)
     producer = document.get("producer")
@@ -227,19 +263,7 @@ def verify_tool_manifest(root: Path, *, canonical: bool) -> dict[str, str]:
         observed[name] = f"{version}; sha256={digest}"
 
     for name, policy in implementations.items():
-        if not isinstance(policy, dict):
-            raise ReleaseError(f"invalid implementation policy: {name}")
-        path_value = policy.get("path")
-        expected_sha256 = policy.get("sha256")
-        if not isinstance(path_value, str) or not isinstance(expected_sha256, str):
-            raise ReleaseError(f"incomplete implementation policy: {name}")
-        path = root / path_value
-        digest = sha256_file(path)
-        if digest != expected_sha256:
-            raise ReleaseError(
-                f"release implementation hash mismatch for {path_value}: {digest}"
-            )
-        observed[name] = f"{path_value}; sha256={digest}"
+        observed[name] = verify_implementation(root, name, policy)
 
     cargo_version = command_version(["cargo", "--version"])
     rust_version = command_version(["rustc", "--version"])
@@ -479,6 +503,8 @@ def record_failure_summary(args: argparse.Namespace, error: Exception) -> None:
         summary = output / "evidence/summary.log"
     elif getattr(args, "mode", None) == "artifact":
         summary = Path(args.evidence_dir).resolve() / "summary.log"
+    elif getattr(args, "mode", None) == "security":
+        summary = Path(args.output_dir).resolve() / "summary.log"
     else:
         return
     append_summary(summary, "status: FAIL")
@@ -525,6 +551,45 @@ def artifact_mode(args: argparse.Namespace) -> int:
     append_summary(summary, "source-integrity: PASS")
     append_summary(summary, "version-contract: PASS")
     append_summary(summary, "m1-smoke: PASS")
+    append_summary(summary, "status: PASS")
+    return 0
+
+
+def security_mode(args: argparse.Namespace) -> int:
+    """RFC 009 R13: dependency-security gate with fail-closed aggregation.
+
+    Wraps `scripts/check_advisories.py` (verified against its
+    `release-tools.toml` hash pin before it runs) via `run_gate`, so a
+    nonzero exit — a denied finding or an operational failure — raises
+    `ReleaseError` the same way every other gate in this module does. R14's
+    policy/advisory-database digests are already emitted by the checker
+    itself into the nested `advisories/` evidence directory; this wrapper
+    adds no separate digest capture.
+    """
+    root = repository_root()
+    output = require_output_boundary(root, args.output_dir)
+    summary = output / "summary.log"
+    append_summary(summary, "context: security")
+    append_summary(summary, "status: RUNNING")
+    logger = GateLog(output / "gate.log")
+    verify_named_implementation(root, "check-advisories")
+    append_summary(summary, "tool-manifest: PASS")
+    advisories_dir = output / "advisories"
+    run_gate(
+        logger,
+        "dependency-security",
+        ["python3", "scripts/check_advisories.py", str(advisories_dir)],
+        root,
+    )
+    write_manifest(
+        output / "manifest.json",
+        {
+            "context": "security",
+            "status": "pass",
+            "advisories_evidence": "advisories",
+        },
+    )
+    append_summary(summary, "dependency-security: PASS")
     append_summary(summary, "status: PASS")
     return 0
 
@@ -699,6 +764,12 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     validate.add_argument("archive", type=Path)
     validate.add_argument("--expected-commit")
     validate.set_defaults(handler=validate_mode)
+
+    security = subparsers.add_parser(
+        "security", help="run the RFC 009 R13 dependency-security gate"
+    )
+    security.add_argument("--output-dir", type=Path, required=True)
+    security.set_defaults(handler=security_mode)
     return parser.parse_args(argv)
 
 

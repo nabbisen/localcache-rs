@@ -17,13 +17,6 @@
 default_to_workspace = false
 
 # ---------------------------------------------------------------------------
-# Environment
-# ---------------------------------------------------------------------------
-
-[env]
-ALL_FEATURES = "async,compression,json,encryption,tracing,watching,metrics"
-
-# ---------------------------------------------------------------------------
 # Bootstrap source integrity
 # ---------------------------------------------------------------------------
 
@@ -51,30 +44,55 @@ description = "Apply formatting (all crates)"
 command = "cargo"
 args = ["fmt", "--all"]
 
+# ---------------------------------------------------------------------------
+# Canonical RFC 009 R7 / R12 matrix — scripts/feature_matrix.py is the single
+# checked-in source of truth for rows; these tasks are thin aliases over it,
+# not an independent command list.
+# ---------------------------------------------------------------------------
+
+[tasks.matrix-coverage-check]
+description = "Fail closed if a declared Cargo feature has no matrix row"
+command = "python3"
+args = ["scripts/feature_matrix.py", "--check-coverage"]
+
+[tasks.matrix-clippy]
+description = "Clippy (-D warnings) across every canonical matrix row"
+command = "python3"
+args = ["scripts/feature_matrix.py", "--run-all", "--modes", "clippy"]
+
+[tasks.matrix-test]
+description = "Test across every canonical matrix row"
+command = "python3"
+args = ["scripts/feature_matrix.py", "--run-all", "--modes", "test"]
+
+[tasks.matrix]
+description = "Full canonical matrix: clippy + test, every row"
+command = "python3"
+args = ["scripts/feature_matrix.py", "--run-all"]
+
 [tasks.clippy-default]
-description = "Clippy with default features"
-command = "cargo"
-args = ["clippy", "--all-targets", "--", "-D", "warnings"]
+description = "Clippy: localcache with no optional features"
+command = "python3"
+args = ["scripts/feature_matrix.py", "--run", "lib-no-features", "--modes", "clippy"]
 
 [tasks.clippy-all]
-description = "Clippy with all features enabled"
-command = "cargo"
-args = ["clippy", "--all-targets", "--features", "${ALL_FEATURES}", "--", "-D", "warnings"]
+description = "Clippy: localcache with all features enabled"
+command = "python3"
+args = ["scripts/feature_matrix.py", "--run", "lib-all-features", "--modes", "clippy"]
 
 [tasks.clippy-min]
-description = "Clippy with no optional features (minimal build)"
-command = "cargo"
-args = ["clippy", "--all-targets", "--no-default-features", "--", "-D", "warnings"]
+description = "Clippy: localcache with no optional features (alias of clippy-default)"
+command = "python3"
+args = ["scripts/feature_matrix.py", "--run", "lib-no-features", "--modes", "clippy"]
 
 [tasks.check]
-description = "Format check + clippy (default, all, minimal)"
+description = "Format check + coverage check + clippy across the canonical matrix"
 dependencies = [
     "source-integrity-test",
     "source-integrity",
     "fmt-check",
-    "clippy-default",
-    "clippy-all",
-    "clippy-min",
+    "matrix-coverage-check",
+    "matrix-clippy",
 ]
 
 # ---------------------------------------------------------------------------
@@ -82,23 +100,24 @@ dependencies = [
 # ---------------------------------------------------------------------------
 
 [tasks.test]
-description = "Run tests with all features"
-command = "cargo"
-args = ["test", "--features", "${ALL_FEATURES}"]
+description = "Run tests: localcache with all features"
+command = "python3"
+args = ["scripts/feature_matrix.py", "--run", "lib-all-features", "--modes", "test"]
 
 [tasks.test-default]
-description = "Run tests with default features only"
-command = "cargo"
-args = ["test"]
+description = "Run tests: localcache with default (no optional) features"
+command = "python3"
+args = ["scripts/feature_matrix.py", "--run", "lib-no-features", "--modes", "test"]
 
 [tasks.test-no-features]
-description = "Run tests with no optional features"
-command = "cargo"
-args = ["test", "--no-default-features"]
+description = "Run tests: localcache with no optional features (alias of test-default)"
+command = "python3"
+args = ["scripts/feature_matrix.py", "--run", "lib-no-features", "--modes", "test"]
 
 [tasks.test-all]
-description = "Run tests across feature matrix"
-dependencies = ["test-no-features", "test-default", "test"]
+description = "Run tests across the full canonical matrix (every row)"
+command = "python3"
+args = ["scripts/feature_matrix.py", "--run-all", "--modes", "test"]
 
 # ---------------------------------------------------------------------------
 # Benchmarks
@@ -140,12 +159,12 @@ args = [
 [tasks.doc]
 description = "Build documentation with all features"
 command = "cargo"
-args = ["doc", "--no-deps", "--features", "${ALL_FEATURES}", "--open"]
+args = ["doc", "--workspace", "--no-deps", "--all-features", "--open"]
 
 [tasks.doc-check]
 description = "Check documentation builds cleanly"
 command = "cargo"
-args = ["doc", "--no-deps", "--features", "${ALL_FEATURES}"]
+args = ["doc", "--workspace", "--no-deps", "--all-features", "--locked"]
 
 # ---------------------------------------------------------------------------
 # Publish checks
@@ -166,8 +185,8 @@ description = "All checks required before publishing"
 dependencies = [
     "source-integrity",
     "fmt-check",
-    "clippy-all",
-    "test-all",
+    "matrix-coverage-check",
+    "matrix",
     "bench-compile",
     "doc-check",
     "package-check",
@@ -223,9 +242,19 @@ script = [
     '''
 ]
 
+[tasks.security-check]
+description = "Run the RFC 009 R13 fail-closed dependency-security gate"
+command = "python3"
+args = [
+    "scripts/release.py",
+    "security",
+    "--output-dir",
+    ".git-exclude/security-evidence",
+]
+
 [tasks.release-check]
 description = "Full pre-release checklist"
-dependencies = ["version-check", "changelog-check", "pre-publish"]
+dependencies = ["version-check", "changelog-check", "security-check", "pre-publish"]
 
 # ---------------------------------------------------------------------------
 # RFC 009 M1 source archive verification
