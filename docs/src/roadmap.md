@@ -85,6 +85,15 @@ with content reproducibility: an uncompressed-tar digest, per-host
 determinism, and RC eligibility that derives from gates passing rather than
 from which machine ran them. This closure authorizes no release action.
 
+M6d (coming-version housekeeping) and M6e's RFC 017 migration were
+independently accepted at commits `7aaa5bf`, `84fb7f2`, and `77f8b84`. v0.20.1
+is confirmed across both packages, the changelog, and every install example and
+is enforced by a version-reference gate. The archive's integrity identifier is
+now the uncompressed-tar digest, and release-candidate eligibility derives from
+a clean tree, passing gates, and complete evidence rather than from which
+machine ran them. M6e's remaining release-candidate construction requires M6a.
+These closures authorize no release action.
+
 The virtual-workspace relocation at `fe9fe88` was accepted for continued
 development. Publication remains blocked until M6 includes and verifies the
 root-authoritative `LICENSE` and `NOTICE` content in generated `.crate`

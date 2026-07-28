@@ -139,8 +139,8 @@ Each slice is an independent implementation review point.
 | **M6a — Published-crate legal files** | Ship `LICENSE`/`NOTICE` inside both `.crate` artifacts as verified mirrors; assert content within the generated archive | **RFC 016** (Accepted 2026-07-28) | M6b | Both crates contain both files, byte-identical to root; in-artifact check fails when a file is absent |
 | **M6b — Canonical gate consolidation ✅** | One executable gate source of truth; `Makefile.toml`/CI become thin aliases; full package-scoped feature + doctest matrix; `-D warnings` everywhere; wire the RFC 014 security step; hash-pin `check_advisories.py` | RFC 009 R7, R12, R13; RFC 014 | — | Every gate row runs from the canonical source; **B-07 closed** |
 | **M6c — CI provenance ✅** | CI archive construction and fail-closed aggregation; least-privilege permissions and immutable action SHAs; post-smoke layout re-validation; failure-summary finalization | RFC 009 R3–R6, R14 | M6b | CI aggregates by run ID and commit; layout re-asserted after the artifact smoke run |
-| **M6d — Coming-version housekeeping** | Set the authorized coming version across manifests, docs, and CHANGELOG; add the version-reference consistency gate; refresh docs and implemented-RFC prose | RFC 009 R10, R11 | M6b, M6c | No stale version reference; library and CLI versions match; changelog section present |
-| **M6e — RC construction and evidence** | Implement the RFC 017 migration (uncompressed-tar content digest, per-host determinism, gate-derived RC eligibility, retire the container wrapper); joint workspace package verification including the M6a legal-file assertion; full gate run; archive and evidence bundle | **RFC 017**; RFC 009 R9, R14 | M6a–M6d | Two same-host builds produce an identical uncompressed-tar digest; RC eligibility derives from gates, not environment; complete evidence bundle satisfying R14 as amended |
+| **M6d — Coming-version housekeeping ✅** | Set the authorized coming version across manifests, docs, and CHANGELOG; add the version-reference consistency gate; refresh docs and implemented-RFC prose | RFC 009 R10, R11 | M6b, M6c | No stale version reference; library and CLI versions match; changelog section present |
+| **M6e — RC construction and evidence** *(RFC 017 migration, items 1–6 ✅)* | Implement the RFC 017 migration (uncompressed-tar content digest, per-host determinism, gate-derived RC eligibility, retire the container wrapper); joint workspace package verification including the M6a legal-file assertion; full gate run; archive and evidence bundle | **RFC 017**; RFC 009 R9, R14 | M6a–M6d | Two same-host builds produce an identical uncompressed-tar digest; RC eligibility derives from gates, not environment; complete evidence bundle satisfying R14 as amended |
 
 M6a is independent of M6c–M6e and is delegable now that RFC 016 is Accepted. M6d requires
 only M6b and M6c: R10 constrains version housekeeping to precede the **final gates**, which is M6e's
@@ -219,6 +219,20 @@ fail-closed aggregation. B-07's fresh-evidence bullet is delivered by M6e's
 R14 bundle, not by this closure. **All eight original blocking findings are
 now closed**; the remaining gate to release is the M6a/M6c–M6e work plus M7,
 not an open defect. This closure authorizes no release action.
+
+M6d (coming-version housekeeping) and M6e's RFC 017 migration (items 1-6) were
+independently accepted at commits `7aaa5bf`, `84fb7f2`, and `77f8b84`. The
+release version is confirmed as v0.20.1 across both packages, `CHANGELOG.md`,
+and every install example, enforced by a version-reference gate; the container
+producer is retired, the archive's integrity identifier is now the
+uncompressed-tar digest, and `rc_eligible` derives from a clean tree, passing
+gates, and complete evidence rather than from any environmental claim. The
+review raised one blocking finding (the CLI dependency requirement relaxed from
+exact to `"0"`, contradicting RFC 009 R9); it was resolved by the 2026-07-28
+owner resolution recorded under R9, which exempts workspace-internal path
+dependencies and records the accepted publish-time hazard explicitly. M6e's
+remaining RC-construction items (7-10) require M6a. These closures authorize no
+release action.
 
 The virtual-workspace relocation at `fe9fe88` was accepted for continued
 development on 2026-07-21. Publication remains blocked until M6 supplies and
