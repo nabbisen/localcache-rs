@@ -318,8 +318,11 @@ archive. Generated `docs/book/` must be removed before any review request.
   optional execution wrapper that changes no gate semantics (RFC 017 R5).
 - The two `warn` advisory dispositions carry an `expires` field; once reached the security gate
   denies. Renewing or resolving them is an owner decision that gates M6b's security step.
-- RFC 016 is Accepted (2026-07-28); M6a is unblocked. No outstanding design question remains in M6. The only
-  design question outstanding in the entire milestone.
+- ~~RFC 016 is Accepted (2026-07-28); M6a is unblocked.~~ **Superseded 2026-07-28: RFC 016 was
+  withdrawn and M6a resolved as withdrawn.** Its Apache-2.0 premise was false — §4 binds
+  redistributors, not the copyright holder publishing their own work — so the repository-root
+  `LICENSE` and `NOTICE` are sufficient and no per-crate copies ship. No design question remains
+  outstanding in M6.
 
 ## 8. Recommended next step
 
@@ -330,3 +333,90 @@ discloses any gate that failed or was not run rather than omitting it.
 After M6e, request the M7 independent architecture review of the RC and the extracted archive. Do
 not record Phase 21 complete, move any RFC to `done/`, or perform any release action until M7 is
 accepted and the owner authorizes it.
+
+---
+
+## M6e — RC production run (the last task before M7)
+
+*Added 2026-07-30. Every earlier M6e item is implemented and accepted. This section is the one
+remaining task in M6.*
+
+### Why this exists
+
+All of M6e's *tooling* is done and reviewed. Its **artifact** is not. No v0.20.1 release candidate
+exists anywhere: the archives under `.git-exclude/` are all `localcache-v0.20.0.tar.gz` from
+2026-07-21 — before the version bump, before the RFC 017 migration, before RC-1 and RC-2. The RC-1 and
+RC-2 verification runs were deliberately ephemeral and were deleted after inspection, which was
+correct for verifying a gate but leaves nothing for M7 to review.
+
+**M7 reviews an artifact.** Until that artifact exists, M7 cannot start.
+
+This was the reviewer's oversight, not yours: M6e was recorded complete at `11a33a8` on the strength
+of its accepted tooling, and the missing artifact was noticed immediately afterwards. The roadmap
+correction and this section are the same commit.
+
+### Required implementation
+
+Nothing to implement. This is a **production run using the tooling exactly as it stands.** Do not
+modify `scripts/`, `Cargo.toml`, `.github/`, or `Makefile.toml` for this task. If any step below
+fails, stop and report it — a failure here is a finding about the RC, and changing the tooling to make
+the run succeed would defeat the purpose.
+
+1. **Confirm the RC commit and a clean tree.** The RC commit is the tip of `main` after the roadmap
+   correction. Record its full SHA. `git status --porcelain` must be empty; the gates enforce this,
+   but record it explicitly.
+
+2. **Produce the RC into a durable directory**, not a temporary one:
+
+   ```
+   python3 scripts/release.py release --output-dir .git-exclude/release-candidate-v0.20.1
+   ```
+
+   This must complete in **one** invocation and exit 0. It runs `source`, `msrv`, `doc-package`, and
+   `security`; `source` builds the archive twice and enforces the RFC 017 R2 same-host
+   uncompressed-tar determinism internally. Keep the whole output tree — archive, `evidence/`,
+   `manifest.json`, `summary.log`. `.git-exclude/` is gitignored, so nothing here enters the
+   repository or the archive.
+
+3. **Record the archive's identity** from `manifest.json`: `archive`,
+   `archive_uncompressed_sha256` (**primary**), the compressed digest and byte size
+   (**advisory** — label them so, per RFC 017 R1), and `rc_eligible`.
+
+4. **Verify the extracted archive**, which RFC 009 requires to pass the same applicable gates as the
+   checkout. Extract to a directory outside the repository and run the artifact-context gate against
+   it. Report the extracted-context result separately from the checkout result; do not merge them
+   into one "passed" claim.
+
+5. **Demonstrate the three negative `rc_eligible` cases** — the checklist requires them demonstrated,
+   not assumed. Each must yield `rc_eligible: false` or a nonzero exit:
+   dirty tree; a required gate failed; a required evidence step skipped. Use throwaway output
+   directories for these and delete them afterwards — **do not** contaminate the RC bundle from
+   step 2. Quote the actual observed output for each.
+
+6. **Confirm the four R4 toolchain-identity groups are populated** in the bundle: platform, `git`,
+   Python, zlib, locale, timezone; stable `rustc`/`cargo`; declared-MSRV `rustc`/`cargo`; mdBook and
+   security-tool versions. A missing field fails the bundle. Note that stable and declared-MSRV
+   compiler versions will legitimately **differ** — that is RC-2's toolchain split working, not an
+   inconsistency.
+
+7. **Confirm the bundle contains no secret or private material**: no registry token, no environment
+   dump, no key, and no content from `.git-exclude/reviewed/` or `.git-exclude/review-request/`.
+
+### The one item you cannot complete alone
+
+R14 also requires a **CI run ID and commit binding**. That needs the workflow to have run on the RC
+commit, which needs a push — an owner-authorized action. **Do not push.** Produce everything else,
+then report that the CI binding is outstanding and awaiting owner authorization. Whether M7 proceeds
+with a locally complete bundle plus a pending CI binding, or waits for the push, is the owner's call
+and the reviewer will frame it.
+
+### Required evidence
+
+Report, in your review request: the RC commit SHA; the full `release` exit status; the archive
+filename with its uncompressed (primary) and compressed (advisory) digests and byte size;
+`rc_eligible` and what it derived from; the extracted-archive result stated separately; the three
+negative demonstrations with their observed output; confirmation of the R4 identity groups and the
+secret scan; and the durable path of the bundle. Disclose anything you did not run.
+
+Above all: **do not report a pass for any step you did not execute**, and if the RC bundle differs in
+any way from what this section describes, say so rather than reconciling it silently.

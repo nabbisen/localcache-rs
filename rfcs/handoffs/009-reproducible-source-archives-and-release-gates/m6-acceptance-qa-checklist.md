@@ -193,6 +193,28 @@ Checks are grouped by slice; each slice is a separate review point.
       and its resolved `localcache` version reported, confirming (or refuting) the diagnosed mechanism
       before the fix was implemented.
 
+### RC production run (added 2026-07-30 — the last M6 task)
+
+*Every check above verifies the tooling. These verify the **artifact**, which does not yet exist. See
+the handoff § "M6e — RC production run".*
+
+- [ ] `release` completed in **one** invocation into a **durable** directory under `.git-exclude/`,
+      exit 0, and the whole output tree was retained — not a temporary directory deleted afterwards.
+- [ ] The RC commit SHA is recorded and the tree was clean.
+- [ ] The archive's **uncompressed-tar** digest is reported as primary; the compressed digest and byte
+      size are reported and labelled **advisory**.
+- [ ] `rc_eligible` is **true** in the RC bundle, and what it derived from is stated.
+- [ ] The **extracted** archive passed the artifact-context gate, reported **separately** from the
+      checkout result rather than merged into one claim.
+- [ ] All three negative `rc_eligible` cases were demonstrated with quoted output, in throwaway
+      directories that did not contaminate the RC bundle.
+- [ ] All four R4 toolchain-identity groups are populated. Stable and declared-MSRV compiler versions
+      differing is **expected** (RC-2's split), not a defect.
+- [ ] The bundle contains no registry token, environment dump, key, or private review material.
+- [ ] The CI run ID / commit binding is either present or **explicitly reported as outstanding**
+      pending owner-authorized push. It must not be silently omitted, and no historical CI run from
+      another commit may be substituted.
+
 ## Phase exit readiness (verify before requesting M7)
 
 - [ ] All eight blocking findings B-01…B-08 are closed with tests or reproducible gate evidence.
