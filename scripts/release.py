@@ -637,21 +637,34 @@ def verify_declared_toolchain(rustc_version: str, cargo_version: str, declared: 
         )
 
 
-def declared_toolchain_installed(toolchain_list_output: str, declared: str) -> bool:
-    """Pure predicate over `rustup toolchain list` output, split out of
+def matching_installed_toolchains(toolchain_list_output: str, declared: str) -> list[str]:
+    """Installed rustup toolchain versions (e.g. "1.85.0") whose dotted
+    version matches `declared` (e.g. "1.85") by prefix -- "1.85" must match
+    "1.85.0-..." but not "1.850.0-...". Split out of
     `require_declared_toolchain_installed` so it is testable without a real
     `rustup` invocation (not every environment running this test suite has
-    Rust installed at all)."""
-    return any(
-        line.startswith(f"{declared}.") for line in toolchain_list_output.splitlines()
-    )
+    Rust installed at all).
+
+    `rustup run` requires an exact installed toolchain identifier -- a bare
+    two-component version like "1.85" (what `[workspace.package].rust-version`
+    holds) is not itself a valid `rustup run` argument, only the full
+    installed version ("1.85.0") is.
+    """
+    matches = []
+    for line in toolchain_list_output.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        name = line.split()[0]
+        if name.startswith(f"{declared}."):
+            matches.append(name.split("-", 1)[0])
+    return matches
 
 
-def require_declared_toolchain_installed(declared: str) -> None:
-    """RC-2: `release` mode must fail closed, not silently skip, if the
-    declared MSRV toolchain — used to run the `msrv` gate via `rustup run`,
-    independent of whatever toolchain happens to be ambient — is not
-    installed.
+def require_declared_toolchain_installed(declared: str) -> str:
+    """RC-2: resolve the declared MSRV (e.g. "1.85") to the exact installed
+    rustup toolchain version `rustup run` requires, failing closed -- not
+    skipping -- if it is missing or ambiguous.
     """
     try:
         completed = subprocess.run(
@@ -663,11 +676,14 @@ def require_declared_toolchain_installed(declared: str) -> None:
         )
     except (OSError, subprocess.CalledProcessError) as error:
         raise ReleaseError(f"cannot list rustup toolchains: {error}") from error
-    if not declared_toolchain_installed(completed.stdout, declared):
+    matches = matching_installed_toolchains(completed.stdout, declared)
+    if len(matches) != 1:
         raise ReleaseError(
-            f"declared MSRV toolchain {declared!r} is not installed; "
-            f"run `rustup toolchain install {declared}`"
+            f"declared MSRV toolchain {declared!r} does not resolve to exactly "
+            f"one installed rustup toolchain (found {matches!r}); run "
+            f"`rustup toolchain install {declared}` and remove any ambiguous match"
         )
+    return matches[0]
 
 
 def msrv_mode(args: argparse.Namespace) -> int:
@@ -963,7 +979,7 @@ def release_mode(args: argparse.Namespace) -> int:
         declared = workspace_document["workspace"]["package"]["rust-version"]
     except (KeyError, TypeError) as error:
         raise ReleaseError("Cargo.toml has no [workspace.package].rust-version") from error
-    require_declared_toolchain_installed(declared)
+    resolved_toolchain = require_declared_toolchain_installed(declared)
 
     script = str(Path(__file__).resolve())
     manifests: dict[str, dict[str, object]] = {}
@@ -971,7 +987,7 @@ def release_mode(args: argparse.Namespace) -> int:
         gate_output = output / gate
         command = [sys.executable, script, gate, "--output-dir", str(gate_output)]
         if gate == "msrv":
-            command = ["rustup", "run", declared, *command]
+            command = ["rustup", "run", resolved_toolchain, *command]
         run_gate(logger, gate, command, root)
         append_summary(summary, f"{gate}: PASS")
         manifest_path = (

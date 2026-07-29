@@ -511,19 +511,28 @@ class ReleaseRunnerTests(unittest.TestCase):
                 "1.85",
             )
 
-    def test_declared_toolchain_installed_matches_dotted_prefix(self) -> None:
+    def test_matching_installed_toolchains_matches_dotted_prefix(self) -> None:
         listing = "1.85.0-x86_64-unknown-linux-gnu (default)\nstable-x86_64-unknown-linux-gnu\n"
-        self.assertTrue(RUNNER.declared_toolchain_installed(listing, "1.85"))
+        self.assertEqual(
+            RUNNER.matching_installed_toolchains(listing, "1.85"), ["1.85.0"]
+        )
 
-    def test_declared_toolchain_installed_rejects_prefix_collision(self) -> None:
+    def test_matching_installed_toolchains_rejects_prefix_collision(self) -> None:
         # "1.85" must not match "1.850.0-..." -- same hazard as
         # verify_declared_toolchain's own prefix-collision guard.
         listing = "1.850.0-x86_64-unknown-linux-gnu\n"
-        self.assertFalse(RUNNER.declared_toolchain_installed(listing, "1.85"))
+        self.assertEqual(RUNNER.matching_installed_toolchains(listing, "1.85"), [])
 
-    def test_declared_toolchain_installed_false_when_absent(self) -> None:
+    def test_matching_installed_toolchains_empty_when_absent(self) -> None:
         listing = "stable-x86_64-unknown-linux-gnu\n"
-        self.assertFalse(RUNNER.declared_toolchain_installed(listing, "1.85"))
+        self.assertEqual(RUNNER.matching_installed_toolchains(listing, "1.85"), [])
+
+    def test_matching_installed_toolchains_reports_every_ambiguous_match(self) -> None:
+        listing = "1.85.0-x86_64-unknown-linux-gnu\n1.85.1-x86_64-unknown-linux-gnu\n"
+        self.assertEqual(
+            RUNNER.matching_installed_toolchains(listing, "1.85"),
+            ["1.85.0", "1.85.1"],
+        )
 
     def test_require_declared_toolchain_installed_fails_closed_when_rustup_unavailable(
         self,
@@ -541,16 +550,20 @@ class ReleaseRunnerTests(unittest.TestCase):
     def test_release_mode_scopes_msrv_gate_to_declared_toolchain_via_rustup_run(
         self,
     ) -> None:
-        # RC-2: `release` must invoke `msrv` under the declared MSRV
-        # toolchain explicitly, independent of the ambient toolchain, and
-        # must fail closed rather than skip if that toolchain is absent.
+        # RC-2: `release` must invoke `msrv` under the exact resolved MSRV
+        # toolchain, independent of the ambient toolchain -- "rustup run"
+        # rejects a bare two-component version like "1.85" outright, so this
+        # must be the *resolved* toolchain, not the raw declared string --
+        # and must fail closed rather than skip if that toolchain is absent.
         source_text = (SCRIPTS / "release.py").read_text(encoding="utf-8")
         release_mode_text = source_text[source_text.index("def release_mode(") :]
         self.assertIn(
-            'command = ["rustup", "run", declared, *command]', release_mode_text
+            'command = ["rustup", "run", resolved_toolchain, *command]',
+            release_mode_text,
         )
         self.assertIn(
-            "require_declared_toolchain_installed(declared)", release_mode_text
+            "resolved_toolchain = require_declared_toolchain_installed(declared)",
+            release_mode_text,
         )
 
     def test_rc_eligibility_requires_all_three_conditions(self) -> None:
