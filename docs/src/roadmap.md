@@ -42,12 +42,12 @@ the 2026-07-17 independent architecture review before new feature work resumes.
 | M3 ✅ | Completed Jul 23 | Read-only boundaries and Unicode/path handling are non-bypassable and non-panicking |
 | M4 ✅ | Completed Jul 28 | Declared MSRV and dependency-security policy are verified |
 | M5 ✅ | Completed Jul 28 | Async/watcher failure handling and highest-risk maintainability debt are addressed |
-| M6 | Aug 13–26 | CI, documentation, package legal files, release gates, and fresh RC evidence agree |
-| M7 | Aug 27–Sep 4 | Independent architecture review and owner release decision |
+| M6 ✅ | Completed Jul 30 | CI, documentation, release gates, and fresh RC evidence agree |
+| M7 | Next | Independent architecture review and owner release decision |
 
 Two bounded residual corrections—partial-hash `explain` comparison and the
-CLI import overwrite contract—must also have regression evidence by August 12.
-They do not broaden the async/watcher RFC or create separate review gates.
+CLI import overwrite contract—are complete with regression evidence. They do not
+broaden the async/watcher RFC or create separate review gates.
 
 M1 completed on 2026-07-21 at implementation commit `e54cfe2` after focused
 independent review and correction of its review record. Archive verification in
@@ -72,9 +72,8 @@ under `rfcs/accepted/`; neither closure authorizes release work.
 
 M6b (canonical gate consolidation) was independently accepted at commit
 `11a8bc8`, closing **B-07** — the last of the eight original blocking
-findings. **All eight are now closed**; M6 as a whole is not complete until
-its remaining slices (M6a, M6c–M6e) and M7 finish. This closure authorizes no
-release action.
+findings. **All eight are now closed.** This closure authorizes no release
+action.
 
 M6c (CI provenance) was independently accepted at commit `d86fda7`. Its two
 canonical-producer proof items were withdrawn rather than carried forward:
@@ -96,13 +95,23 @@ is confirmed across both packages, the changelog, and every install example and
 is enforced by a version-reference gate. The archive's integrity identifier is
 now the uncompressed-tar digest, and release-candidate eligibility derives from
 a clean tree, passing gates, and complete evidence rather than from which
-machine ran them. M6e's remaining release-candidate construction requires M6a.
-These closures authorize no release action.
+machine ran them. These closures authorize no release action.
+
+M6e's remaining release-candidate construction and two reviewer corrections were
+independently accepted at commits `3ceb08d`, `257ac0a`, and `95f7d5d`,
+**completing M6e and all of M6**. CI aggregation now fails closed when a
+required job is missing, and `release` is the canonical entry point that runs
+the source, MSRV, documentation/package, and security gates in one invocation.
+Only the MSRV gate runs under the declared minimum toolchain; `cargo package`
+runs under stable by design, because cargo 1.85 cannot see a just-packaged
+workspace sibling and would resolve the published `localcache` instead. M7 is
+the only remaining milestone. These closures authorize no release action.
 
 The virtual-workspace relocation at `fe9fe88` was accepted for continued
-development. Publication remains blocked until M6 includes and verifies the
-root-authoritative `LICENSE` and `NOTICE` content in generated `.crate`
-artifacts without placing copies in member crate directories.
+development. Its recorded legal-file publication blocker never existed and was
+withdrawn with RFC 016; the repository-root `LICENSE` and `NOTICE` are
+sufficient and remain the sole copies, never placed in member crate
+directories.
 
 The detailed scope, RFC mapping, dependencies, and exit gates are maintained in
 the repository-root

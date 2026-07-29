@@ -125,8 +125,8 @@ has an independent **Go** review.
 | **M3 — Mutation boundaries and input safety ✅** | Completed Jul 23 | Enforce read-only schema/mutation rules; prevent watcher privilege bypass; make glob/path/CLI handling Unicode-safe and non-panicking; align deleted-path behavior | Negative read-only and Unicode/property tests pass; public behavior matches approved RFCs |
 | **M4 — MSRV and supply-chain recovery ✅** | Completed Jul 28 | Select a Rust-1.85-compatible SQLite stack or approve a new MSRV; update vulnerable dependencies; define advisory deny/warn/exception policy | Full declared-MSRV build succeeds; security policy gate is green or has approved, expiring exceptions |
 | **M5 — Async and maintainability hardening ✅** | Completed Jul 28 | Remove unnecessary unsafe generic casts; unify runtime panic/poison handling; surface watcher setup failures; perform only risk-reducing module splits | Runtime-backend tests and mutex-panic tests pass; no unexplained unsafe remains; focused review accepted |
-| **M6 — Release controls, docs, and RC** | Aug 13–26 | Correct CI/Makefile feature matrices; enforce warning policy; reconcile archive and published-crate legal-file rules; refresh docs/RFC final prose; assemble fresh evidence | Stable and MSRV gates, tests, clippy, docs, package/archive smoke, legal-file content, and advisory gate all pass on the RC |
-| **M7 — Independent review and release decision** | Aug 27–Sep 4 | Independent architecture re-review of the RC and extracted archive | Every blocker closed; reviewer verdict **Accept** or **Accept with notes**; owner authorizes release |
+| **M6 — Release controls, docs, and RC ✅** | Completed Jul 30 | Correct CI/Makefile feature matrices; enforce warning policy; reconcile archive and published-crate legal-file rules; refresh docs/RFC final prose; assemble fresh evidence | Stable and MSRV gates, tests, clippy, docs, package/archive smoke, and advisory gate all pass on the RC |
+| **M7 — Independent review and release decision** | Next; only milestone remaining | Independent architecture re-review of the RC and extracted archive | Every blocker closed; reviewer verdict **Accept** or **Accept with notes**; owner authorizes release |
 
 #### M6 slice breakdown
 
@@ -140,16 +140,14 @@ Each slice is an independent implementation review point.
 | **M6b — Canonical gate consolidation ✅** | One executable gate source of truth; `Makefile.toml`/CI become thin aliases; full package-scoped feature + doctest matrix; `-D warnings` everywhere; wire the RFC 014 security step; hash-pin `check_advisories.py` | RFC 009 R7, R12, R13; RFC 014 | — | Every gate row runs from the canonical source; **B-07 closed** |
 | **M6c — CI provenance ✅** | CI archive construction and fail-closed aggregation; least-privilege permissions and immutable action SHAs; post-smoke layout re-validation; failure-summary finalization | RFC 009 R3–R6, R14 | M6b | CI aggregates by run ID and commit; layout re-asserted after the artifact smoke run |
 | **M6d — Coming-version housekeeping ✅** | Set the authorized coming version across manifests, docs, and CHANGELOG; add the version-reference consistency gate; refresh docs and implemented-RFC prose | RFC 009 R10, R11 | M6b, M6c | No stale version reference; library and CLI versions match; changelog section present |
-| **M6e — RC construction and evidence** *(RFC 017 migration, items 1–6 ✅)* | Implement the RFC 017 migration (uncompressed-tar content digest, per-host determinism, gate-derived RC eligibility, retire the container wrapper); joint workspace package verification; full gate run; archive and evidence bundle | **RFC 017**; RFC 009 R9, R14 | M6b–M6d | Two same-host builds produce an identical uncompressed-tar digest; RC eligibility derives from gates, not environment; complete evidence bundle satisfying R14 as amended |
+| **M6e — RC construction and evidence ✅** | Implement the RFC 017 migration (uncompressed-tar content digest, per-host determinism, gate-derived RC eligibility, retire the container wrapper); joint workspace package verification; full gate run; archive and evidence bundle | **RFC 017**; RFC 009 R9, R14 | M6b–M6d | Two same-host builds produce an identical uncompressed-tar digest; RC eligibility derives from gates, not environment; complete evidence bundle satisfying R14 as amended |
 
-M6a is withdrawn; its only residual work is reverting the uncommitted implementation. **M6e no longer depends on it.** M6d requires
-only M6b and M6c: R10 constrains version housekeeping to precede the **final gates**, which is M6e's
-RC construction, and nothing in it depends on M6a's legal files. M6e consumes all of them, and M7
-begins only after M6e produces the evidence bundle.
+M6a is withdrawn; no legal-file work shipped. M6d required only M6b and M6c: R10 constrains version
+housekeeping to precede the **final gates**, which is M6e's RC construction, and nothing in it
+depended on M6a's legal files. M6e consumed all of them, and M7 begins now that M6e has produced the
+evidence bundle.
 
-**Currently delegable without any further owner decision:** M6d in full, and M6e's RFC 017 migration
-(handoff § M6e items 1–6), which touches only the release scripts and CI. M6e's RC construction
-(items 7–10) additionally requires M6a, which is blocked on the RFC 016 decision.
+**All five slices are complete; M6 is closed.** The remaining work in Phase 21 is M7 alone.
 
 **RFC 017 (accepted 2026-07-28) supersedes RFC 009 R16 and retires the container producer.** M6c's
 deferred canonical-producer items are therefore withdrawn rather than carried into M6e: there is no
@@ -160,21 +158,19 @@ its scope line above no longer claims producer or platform-policy work, since RF
 RFC 015 may be drafted near the end of M4, but its design review and acceptance
 must use the dependency and supported-toolchain baseline delivered by RFC 014.
 M5 implementation still requires RFC 015 to be durably Accepted. The residual
-pre-RC corrections below must be complete by **Aug 12**, before M6 begins RC
-construction. M6 performs coming-version housekeeping before it constructs or
-reviews the RC; it does not defer housekeeping until after an actual release.
+pre-RC corrections below were required before M6 constructed the release
+candidate; both are complete. M6 performed coming-version housekeeping before
+constructing the RC; it did not defer housekeeping until after an actual release.
 
-The M7 window includes independent-review availability and corrective-review
-buffer. It is not a promised release date. An actual tag, publication, or
-hosted release remains unset until M7 acceptance and explicit owner
-authorization.
+An actual tag, publication, or hosted release remains unset until M7 acceptance
+and explicit owner authorization.
 
 M1 completed on 2026-07-21 at implementation commit `e54cfe2` after focused
 independent review and correction of its review record. CI archive construction,
-portable noncanonical producer policy, externally attested RC eligibility,
-post-smoke layout re-validation, failure-summary finalization, and direct
-canonical-wrapper execution remain M6 work. M1 completion authorizes no release
-action.
+post-smoke layout re-validation, and failure-summary finalization were deferred
+to M6 and delivered by M6c; the producer-policy, externally-attested-eligibility,
+and canonical-wrapper items were withdrawn by RFC 017 rather than carried
+forward. M1 completion authorizes no release action.
 
 RFC 010 implementation was independently accepted on 2026-07-21 at commit
 `95fd1a0`, closing B-02. RFC 011 implementation was independently accepted on
@@ -238,15 +234,30 @@ gates, and complete evidence rather than from any environmental claim. The
 review raised one blocking finding (the CLI dependency requirement relaxed from
 exact to `"0"`, contradicting RFC 009 R9); it was resolved by the 2026-07-28
 owner resolution recorded under R9, which exempts workspace-internal path
-dependencies and records the accepted publish-time hazard explicitly. M6e's
-remaining RC-construction items (7-10) require M6a. These closures authorize no
-release action.
+dependencies and records the accepted publish-time hazard explicitly. These
+closures authorize no release action.
+
+M6e's remaining work — RC construction (items 7-10) and two reviewer corrections
+— was independently accepted at commits `3ceb08d`, `257ac0a`, and `95f7d5d`,
+**closing M6e and with it all of M6**. RC-1 replaced the fail-open CI
+aggregation with a fail-closed required-job set and added `release` as RFC 009
+R12's canonical entry point. RC-2 then scoped that entry point's toolchain
+handling: only the `msrv` gate runs under the declared MSRV via `rustup run`,
+resolved from `[workspace.package].rust-version` to an exact installed toolchain
+name and failing closed when that resolves to zero or several. **`cargo package`
+is stable-only by design**, because cargo 1.85 cannot see a just-packaged
+workspace sibling and resolves the published `localcache` instead, whose
+transitive `libsqlite3-sys` requires a newer compiler — a constraint RFC 009 R9
+anticipates and CI already reflects in its independent job split. These closures
+authorize no release action.
 
 The virtual-workspace relocation at `fe9fe88` was accepted for continued
-development on 2026-07-21. Publication remains blocked until M6 supplies and
-verifies the root-authoritative `LICENSE` and `NOTICE` content in each generated
-`.crate` artifact. These files must never be placed in member crate directories;
-the repository-root files remain the sole authoritative copies.
+development on 2026-07-21. Its recorded legal-file publication blocker **never
+existed** and was withdrawn on 2026-07-28 with RFC 016: Apache-2.0 §4 binds
+redistributors, not the copyright holder publishing their own work, so the
+repository-root `LICENSE` and `NOTICE` are sufficient. These files must never be
+placed in member crate directories; the repository-root files remain the sole
+authoritative copies.
 
 ### Residual pre-RC corrections
 
