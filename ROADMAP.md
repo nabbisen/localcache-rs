@@ -136,7 +136,7 @@ Each slice is an independent implementation review point.
 
 | Slice | Scope | Authority | Depends on | Exit gate |
 |---|---|---|---|---|
-| **M6a — Published-crate legal files — WITHDRAWN** | ~~Ship `LICENSE`/`NOTICE` inside both `.crate` artifacts~~ — withdrawn 2026-07-28 with RFC 016; root-only is sufficient. Residual task: revert the uncommitted implementation, retaining `readme.workspace = true` | **RFC 016** (Withdrawn) | — | Both crates contain both files, byte-identical to root; in-artifact check fails when a file is absent |
+| **M6a — Published-crate legal files — WITHDRAWN ✅ resolved** | ~~Ship `LICENSE`/`NOTICE` inside both `.crate` artifacts~~ — withdrawn 2026-07-28 with RFC 016; root-only is sufficient. Residual revert completed | **RFC 016** (Withdrawn) | — | No legal-file work ships; the four mirrors are absent and the repository-root `LICENSE`/`NOTICE` remain the sole copies |
 | **M6b — Canonical gate consolidation ✅** | One executable gate source of truth; `Makefile.toml`/CI become thin aliases; full package-scoped feature + doctest matrix; `-D warnings` everywhere; wire the RFC 014 security step; hash-pin `check_advisories.py` | RFC 009 R7, R12, R13; RFC 014 | — | Every gate row runs from the canonical source; **B-07 closed** |
 | **M6c — CI provenance ✅** | CI archive construction and fail-closed aggregation; least-privilege permissions and immutable action SHAs; post-smoke layout re-validation; failure-summary finalization | RFC 009 R3–R6, R14 | M6b | CI aggregates by run ID and commit; layout re-asserted after the artifact smoke run |
 | **M6d — Coming-version housekeeping ✅** | Set the authorized coming version across manifests, docs, and CHANGELOG; add the version-reference consistency gate; refresh docs and implemented-RFC prose | RFC 009 R10, R11 | M6b, M6c | No stale version reference; library and CLI versions match; changelog section present |
@@ -219,6 +219,14 @@ fail-closed aggregation. B-07's fresh-evidence bullet is delivered by M6e's
 R14 bundle, not by this closure. **All eight original blocking findings are
 now closed**; the remaining gate to release is the M6a/M6c–M6e work plus M7,
 not an open defect. This closure authorizes no release action.
+
+M6a was **resolved as withdrawn**, not implemented. RFC 016 was withdrawn at commit `660b8a9`
+after its Apache-2.0 §4 premise was found false — §4 binds redistributors exercising the granted
+licence, not the copyright holder publishing their own work — so root-only `LICENSE`/`NOTICE` is
+sufficient and no per-crate mirrors ship. The residual revert was independently accepted at commit
+`6f5161b`, confirmed byte-identical to the pre-M6a baseline, retaining only `readme.workspace = true`
+for the CLI, which is unrelated to licensing. The originating finding's "publication blocker" framing
+was corrected; there was never a blocker. This resolution authorizes no release action.
 
 M6d (coming-version housekeeping) and M6e's RFC 017 migration (items 1-6) were
 independently accepted at commits `7aaa5bf`, `84fb7f2`, and `77f8b84`. The

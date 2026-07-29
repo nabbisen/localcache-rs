@@ -85,6 +85,11 @@ with content reproducibility: an uncompressed-tar digest, per-host
 determinism, and RC eligibility that derives from gates passing rather than
 from which machine ran them. This closure authorizes no release action.
 
+M6a was resolved as withdrawn rather than implemented. RFC 016 required per-crate
+`LICENSE`/`NOTICE` copies on the stated grounds that Apache-2.0 mandates them inside each published
+crate; that reading was wrong, since those conditions bind redistributors rather than the copyright
+holder. The repository-root files remain the sole copies and no per-crate copies ship.
+
 M6d (coming-version housekeeping) and M6e's RFC 017 migration were
 independently accepted at commits `7aaa5bf`, `84fb7f2`, and `77f8b84`. v0.20.1
 is confirmed across both packages, the changelog, and every install example and

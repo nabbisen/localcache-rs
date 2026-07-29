@@ -171,6 +171,13 @@ Checks are grouped by slice; each slice is a separate review point.
       advisory-database revisions.
 - [ ] The summary **cannot** report pass when a required step was skipped — demonstrated, not
       assumed.
+- [ ] **A canonical `release` entry point exists** (RFC 009 R12) and runs the gates in the Design
+      section's order with a **hard-coded** required set — not one supplied by the caller. Forcing one
+      gate to fail makes it exit nonzero and the consolidated summary read `FAIL`.
+- [ ] **`aggregate-ci` fails closed when a required gate is omitted.** Invoking it with only a subset
+      of `--require-job` values must **fail**, not pass. *(Before this correction it exited 0 having
+      verified only `source`, with `msrv`, `doc-package`, and `security` unmentioned — reproduce that
+      invocation and confirm it now fails.)*
 - [ ] Evidence contains no registry token, environment dump, encryption key, or private review
       material.
 - [ ] Historical logs from another checkout were not substituted for current RC evidence.
