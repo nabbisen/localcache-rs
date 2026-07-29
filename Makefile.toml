@@ -139,9 +139,14 @@ args = ["scripts/feature_matrix.py", "--run-bench"]
 # ---------------------------------------------------------------------------
 
 [tasks.msrv-check]
-description = "Run the declared-MSRV cargo-check matrix"
+description = "Run the declared-MSRV cargo-check matrix with toolchain evidence"
 command = "python3"
-args = ["scripts/feature_matrix.py", "--run-msrv"]
+args = [
+    "scripts/release.py",
+    "msrv",
+    "--output-dir",
+    ".git-exclude/msrv-evidence",
+]
 
 # ---------------------------------------------------------------------------
 # Documentation
@@ -171,6 +176,16 @@ description = "Dry-run package build for the library crate"
 command = "cargo"
 args = ["package", "--no-verify", "--allow-dirty"]
 
+[tasks.doc-package-check]
+description = "cargo doc, mdbook build, and joint cargo package --workspace verification (RFC 009 R9)"
+command = "python3"
+args = [
+    "scripts/release.py",
+    "doc-package",
+    "--output-dir",
+    ".git-exclude/doc-package-evidence",
+]
+
 [tasks.pre-publish]
 description = "All checks required before publishing"
 dependencies = [
@@ -179,8 +194,8 @@ dependencies = [
     "matrix-coverage-check",
     "matrix",
     "bench-compile",
-    "doc-check",
-    "package-check",
+    "msrv-check",
+    "doc-package-check",
 ]
 
 # ---------------------------------------------------------------------------

@@ -12,6 +12,7 @@ import re
 import shlex
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 import tomllib
@@ -494,6 +495,13 @@ def record_failure_summary(args: argparse.Namespace, error: Exception) -> None:
         summary = Path(args.output_dir).resolve() / "summary.log"
     elif getattr(args, "mode", None) == "aggregate-ci":
         summary = Path(args.output_dir).resolve() / "summary.log"
+    elif getattr(args, "mode", None) == "msrv":
+        summary = Path(args.output_dir).resolve() / "summary.log"
+    elif getattr(args, "mode", None) == "doc-package":
+        output = Path(args.output_dir).resolve()
+        if not output.exists():
+            return
+        summary = output / "summary.log"
     else:
         return
     append_summary(summary, "status: FAIL")
@@ -583,6 +591,166 @@ def security_mode(args: argparse.Namespace) -> int:
     )
     append_summary(summary, "dependency-security: PASS")
     append_summary(summary, "status: PASS")
+    return 0
+
+
+def verify_declared_toolchain(rustc_version: str, cargo_version: str, declared: str) -> None:
+    """Fail closed unless `rustc`/`cargo --version` exactly match the
+    declared MSRV (`[workspace.package].rust-version`).
+
+    The declared-MSRV gate exists to prove that *specific* toolchain
+    compiles the workspace; running it under any other toolchain (for
+    example accidentally under stable) would silently defeat its purpose
+    rather than merely skip it.
+    """
+    if not rustc_version.startswith(f"rustc {declared}."):
+        raise ReleaseError(
+            f"active rustc {rustc_version!r} does not match declared MSRV {declared!r}"
+        )
+    if not cargo_version.startswith(f"cargo {declared}."):
+        raise ReleaseError(
+            f"active cargo {cargo_version!r} does not match declared MSRV {declared!r}"
+        )
+
+
+def msrv_mode(args: argparse.Namespace) -> int:
+    """RFC 009 R8/M6e item 10: declared-MSRV matrix with toolchain evidence."""
+    root = repository_root()
+    output = require_output_boundary(root, args.output_dir)
+    summary = output / "summary.log"
+    append_summary(summary, "context: msrv")
+    append_summary(summary, "status: RUNNING")
+    logger = GateLog(output / "gate.log")
+
+    with (root / "Cargo.toml").open("rb") as file:
+        workspace_document = tomllib.load(file)
+    try:
+        declared = workspace_document["workspace"]["package"]["rust-version"]
+    except (KeyError, TypeError) as error:
+        raise ReleaseError("Cargo.toml has no [workspace.package].rust-version") from error
+
+    rustc_version = command_version(["rustc", "--version"])
+    cargo_version = command_version(["cargo", "--version"])
+    verify_declared_toolchain(rustc_version, cargo_version, declared)
+    append_summary(summary, f"declared-toolchain: PASS ({rustc_version})")
+
+    run_gate(
+        logger,
+        "declared-msrv-matrix",
+        ["python3", "scripts/feature_matrix.py", "--run-msrv"],
+        root,
+    )
+    append_summary(summary, "declared-msrv-matrix: PASS")
+
+    write_manifest(
+        output / "manifest.json",
+        {
+            "context": "msrv",
+            "status": "pass",
+            "declared_rust_version": declared,
+            "rustc_version": rustc_version,
+            "cargo_version": cargo_version,
+            **ci_identity(),
+        },
+    )
+    append_summary(summary, "status: PASS")
+    return 0
+
+
+def doc_package_mode(args: argparse.Namespace) -> int:
+    """RFC 009 R9/M6e items 7-8: rustdoc, mdBook, and joint package
+    verification.
+
+    Runs `cargo doc`, `mdbook build docs`, and `cargo package --workspace
+    --locked` against a clean committed tree — no `--allow-dirty`, no
+    `--no-verify` — then opens each produced `.crate` and records its
+    normalized manifest digest and complete file list as evidence. R9
+    requires the gate to inspect both, not just observe a zero exit status.
+    """
+    root = repository_root()
+    commit = require_clean_commit(root)
+    output = require_output_boundary(root, Path(args.output_dir))
+    if output.exists() and any(output.iterdir()):
+        raise ReleaseError(f"output directory is not empty: {output}")
+    output.mkdir(parents=True, exist_ok=True)
+
+    summary = output / "summary.log"
+    append_summary(summary, "context: doc-package")
+    append_summary(summary, f"commit: {commit}")
+    append_summary(summary, "status: RUNNING")
+    logger = GateLog(output / "gate.log")
+
+    doc_target = output / "target-doc"
+    run_gate(
+        logger,
+        "cargo-doc",
+        ["cargo", "doc", "--workspace", "--no-deps", "--all-features", "--locked"],
+        root,
+        environment={"CARGO_TARGET_DIR": str(doc_target.resolve())},
+    )
+    append_summary(summary, "cargo-doc: PASS")
+
+    mdbook_target = output / "mdbook"
+    run_gate(
+        logger,
+        "mdbook-build",
+        ["mdbook", "build", "docs"],
+        root,
+        environment={"MDBOOK_BUILD__BUILD_DIR": str(mdbook_target.resolve())},
+    )
+    append_summary(summary, "mdbook-build: PASS")
+
+    version, _metadata = cargo_metadata(root, logger, gate_name="version-metadata")
+
+    package_target = output / "target-package"
+    run_gate(
+        logger,
+        "cargo-package",
+        ["cargo", "package", "--workspace", "--locked"],
+        root,
+        environment={"CARGO_TARGET_DIR": str(package_target.resolve())},
+    )
+    append_summary(summary, "cargo-package: PASS")
+
+    package_dir = package_target / "package"
+    packages: dict[str, object] = {}
+    for package_name in ("localcache", "localcache-cli"):
+        crate_path = package_dir / f"{package_name}-{version}.crate"
+        if not crate_path.is_file():
+            raise ReleaseError(f"expected package artifact missing: {crate_path}")
+        with tarfile.open(crate_path, mode="r:gz") as archive:
+            files = sorted(
+                member.name for member in archive.getmembers() if member.isfile()
+            )
+            manifest_member = f"{package_name}-{version}/Cargo.toml"
+            if manifest_member not in files:
+                raise ReleaseError(f"{crate_path.name} is missing its normalized Cargo.toml")
+            extracted = archive.extractfile(manifest_member)
+            if extracted is None:
+                raise ReleaseError(f"{crate_path.name}: normalized Cargo.toml could not be read")
+            normalized_manifest = extracted.read()
+        packages[package_name] = {
+            "crate": crate_path.name,
+            "sha256": sha256_file(crate_path),
+            "file_count": len(files),
+            "files": files,
+            "normalized_manifest_sha256": hashlib.sha256(normalized_manifest).hexdigest(),
+        }
+    append_summary(summary, "joint-package-verification: PASS")
+
+    write_manifest(
+        output / "manifest.json",
+        {
+            "commit": commit,
+            "context": "doc-package",
+            "packages": packages,
+            "status": "pass",
+            "version": version,
+            **ci_identity(),
+        },
+    )
+    append_summary(summary, "status: PASS")
+    print(f"doc+package verified: {', '.join(str(p['crate']) for p in packages.values())}")
     return 0
 
 
@@ -899,6 +1067,19 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     )
     security.add_argument("--output-dir", type=Path, required=True)
     security.set_defaults(handler=security_mode)
+
+    msrv = subparsers.add_parser(
+        "msrv", help="run the declared-MSRV matrix under the active toolchain"
+    )
+    msrv.add_argument("--output-dir", type=Path, required=True)
+    msrv.set_defaults(handler=msrv_mode)
+
+    doc_package = subparsers.add_parser(
+        "doc-package",
+        help="cargo doc, mdbook build, and joint cargo package --workspace verification",
+    )
+    doc_package.add_argument("--output-dir", type=Path, required=True)
+    doc_package.set_defaults(handler=doc_package_mode)
 
     aggregate = subparsers.add_parser(
         "aggregate-ci",

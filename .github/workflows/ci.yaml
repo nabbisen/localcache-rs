@@ -129,12 +129,17 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-msrv-${{ hashFiles('**/Cargo.lock') }}
-      - name: Verify declared toolchain
-        run: |
-          rustc --version | grep -E '^rustc 1\.85\.0 '
-          cargo --version | grep -E '^cargo 1\.85\.0 '
-      - name: Check complete declared-MSRV matrix
-        run: python3 scripts/feature_matrix.py --run-msrv
+      - name: Check declared-MSRV matrix with toolchain evidence (RFC 009 R8/R14)
+        run: >-
+          python3 scripts/release.py msrv
+          --output-dir "$RUNNER_TEMP/localcache-msrv-evidence"
+      - name: Preserve MSRV evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: msrv-evidence
+          path: ${{ runner.temp }}/localcache-msrv-evidence
+          if-no-files-found: error
 
   dependency-security:
     name: Dependency security policy
@@ -194,6 +199,48 @@ jobs:
           path: ${{ runner.temp }}/localcache-archive
           if-no-files-found: error
 
+  # RFC 009 R9 / M6e items 7-8: rustdoc, mdBook, and joint cargo package
+  # --workspace verification. Uploads doc/package evidence only; never
+  # publishes to a registry.
+  doc-package:
+    name: Docs and package verification
+    needs: source-integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - name: Install mdbook
+        run: |
+          curl -fL --retry 3 \
+            https://github.com/rust-lang/mdBook/releases/download/v0.5.4/mdbook-v0.5.4-x86_64-unknown-linux-gnu.tar.gz \
+            -o "$RUNNER_TEMP/mdbook.tar.gz"
+          printf '%s  %s\n' \
+            3f28de05dafca9d0f2eab99c662116b0e37b89b1d96a08f8f430b9eeae958cd7 \
+            "$RUNNER_TEMP/mdbook.tar.gz" | sha256sum -c -
+          mkdir -p "$HOME/.local/bin"
+          tar -xzf "$RUNNER_TEMP/mdbook.tar.gz" -C "$HOME/.local/bin" mdbook
+          chmod 0755 "$HOME/.local/bin/mdbook"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Cache cargo registry
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-doc-package-${{ hashFiles('**/Cargo.lock') }}
+      - name: cargo doc, mdbook build, cargo package --workspace (RFC 009 R9)
+        run: >-
+          python3 scripts/release.py doc-package
+          --output-dir "$RUNNER_TEMP/localcache-doc-package-evidence"
+      - name: Preserve doc/package evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: doc-package-evidence
+          path: ${{ runner.temp }}/localcache-doc-package-evidence
+          if-no-files-found: error
+
   # RFC 009 M6c item 3: the final fail-closed gate. Runs even if an earlier
   # job failed (`if: always()`) so it reports the exact binding failure
   # instead of being silently skipped. It is the only job that reads
@@ -210,6 +257,7 @@ jobs:
       - msrv
       - dependency-security
       - archive
+      - doc-package
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -223,6 +271,16 @@ jobs:
         with:
           name: project-archive-evidence
           path: ${{ runner.temp }}/project-archive-evidence
+      - name: Download MSRV evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: msrv-evidence
+          path: ${{ runner.temp }}/msrv-evidence
+      - name: Download doc/package evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: doc-package-evidence
+          path: ${{ runner.temp }}/doc-package-evidence
       - name: Aggregate and verify CI provenance
         run: >-
           python3 scripts/release.py aggregate-ci
@@ -236,8 +294,11 @@ jobs:
           --require-job "msrv=${{ needs.msrv.result }}"
           --require-job "dependency-security=${{ needs.dependency-security.result }}"
           --require-job "archive=${{ needs.archive.result }}"
+          --require-job "doc-package=${{ needs.doc-package.result }}"
           --evidence-manifest "$RUNNER_TEMP/dependency-security-evidence/manifest.json"
           --evidence-manifest "$RUNNER_TEMP/project-archive-evidence/evidence/manifest.json"
+          --evidence-manifest "$RUNNER_TEMP/msrv-evidence/manifest.json"
+          --evidence-manifest "$RUNNER_TEMP/doc-package-evidence/manifest.json"
       - name: Preserve aggregation evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

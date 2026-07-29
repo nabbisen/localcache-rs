@@ -438,6 +438,76 @@ class ReleaseRunnerTests(unittest.TestCase):
             self.assertIn("deliberate test failure", summary)
             self.assertIn("required-downstream-steps: NOT COMPLETED", summary)
 
+    def test_msrv_mode_failure_marks_downstream_steps_incomplete(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "evidence"
+            args = argparse.Namespace(mode="msrv", output_dir=output)
+            error = RUNNER.ReleaseError("deliberate test failure")
+            RUNNER.record_failure_summary(args, error)
+            summary = (output / "summary.log").read_text(encoding="utf-8")
+            self.assertIn("status: FAIL", summary)
+            self.assertIn("deliberate test failure", summary)
+            self.assertIn("required-downstream-steps: NOT COMPLETED", summary)
+
+    def test_doc_package_mode_failure_marks_downstream_steps_incomplete(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "evidence"
+            output.mkdir()
+            args = argparse.Namespace(mode="doc-package", output_dir=output)
+            error = RUNNER.ReleaseError("deliberate test failure")
+            RUNNER.record_failure_summary(args, error)
+            summary = (output / "summary.log").read_text(encoding="utf-8")
+            self.assertIn("status: FAIL", summary)
+            self.assertIn("deliberate test failure", summary)
+            self.assertIn("required-downstream-steps: NOT COMPLETED", summary)
+
+    def test_doc_package_mode_failure_before_output_created_is_silently_skipped(
+        self,
+    ) -> None:
+        # Mirrors source_mode: if require_clean_commit raises before
+        # output.mkdir() ever runs, there is no evidence directory to write
+        # into, and record_failure_summary must not fabricate one outside
+        # its intended boundary.
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "does-not-exist" / "evidence"
+            args = argparse.Namespace(mode="doc-package", output_dir=output)
+            error = RUNNER.ReleaseError("deliberate test failure")
+            RUNNER.record_failure_summary(args, error)
+            self.assertFalse(output.exists())
+
+    def test_verify_declared_toolchain_passes_on_exact_match(self) -> None:
+        RUNNER.verify_declared_toolchain(
+            "rustc 1.85.0 (4d91de4e4 2025-02-17)",
+            "cargo 1.85.0 (d73d2caf9 2024-12-31)",
+            "1.85",
+        )  # must not raise
+
+    def test_verify_declared_toolchain_fails_closed_on_rustc_mismatch(self) -> None:
+        with self.assertRaisesRegex(RUNNER.ReleaseError, "active rustc"):
+            RUNNER.verify_declared_toolchain(
+                "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+                "cargo 1.85.0 (d73d2caf9 2024-12-31)",
+                "1.85",
+            )
+
+    def test_verify_declared_toolchain_fails_closed_on_cargo_mismatch(self) -> None:
+        with self.assertRaisesRegex(RUNNER.ReleaseError, "active cargo"):
+            RUNNER.verify_declared_toolchain(
+                "rustc 1.85.0 (4d91de4e4 2025-02-17)",
+                "cargo 1.97.1 (c980f4866 2026-06-30)",
+                "1.85",
+            )
+
+    def test_verify_declared_toolchain_rejects_prefix_collision(self) -> None:
+        # "1.85" must not match "1.850" or similar -- the trailing dot in the
+        # comparison exists specifically to prevent this.
+        with self.assertRaisesRegex(RUNNER.ReleaseError, "active rustc"):
+            RUNNER.verify_declared_toolchain(
+                "rustc 1.850.0 (bogus 2026-01-01)",
+                "cargo 1.85.0 (d73d2caf9 2024-12-31)",
+                "1.85",
+            )
+
     def test_rc_eligibility_requires_all_three_conditions(self) -> None:
         cases = [
             # (clean_worktree, all_required_gates_passed, evidence_complete, expected)
