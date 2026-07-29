@@ -511,6 +511,48 @@ class ReleaseRunnerTests(unittest.TestCase):
                 "1.85",
             )
 
+    def test_declared_toolchain_installed_matches_dotted_prefix(self) -> None:
+        listing = "1.85.0-x86_64-unknown-linux-gnu (default)\nstable-x86_64-unknown-linux-gnu\n"
+        self.assertTrue(RUNNER.declared_toolchain_installed(listing, "1.85"))
+
+    def test_declared_toolchain_installed_rejects_prefix_collision(self) -> None:
+        # "1.85" must not match "1.850.0-..." -- same hazard as
+        # verify_declared_toolchain's own prefix-collision guard.
+        listing = "1.850.0-x86_64-unknown-linux-gnu\n"
+        self.assertFalse(RUNNER.declared_toolchain_installed(listing, "1.85"))
+
+    def test_declared_toolchain_installed_false_when_absent(self) -> None:
+        listing = "stable-x86_64-unknown-linux-gnu\n"
+        self.assertFalse(RUNNER.declared_toolchain_installed(listing, "1.85"))
+
+    def test_require_declared_toolchain_installed_fails_closed_when_rustup_unavailable(
+        self,
+    ) -> None:
+        original_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = ""
+        try:
+            with self.assertRaisesRegex(
+                RUNNER.ReleaseError, "cannot list rustup toolchains"
+            ):
+                RUNNER.require_declared_toolchain_installed("1.85")
+        finally:
+            os.environ["PATH"] = original_path
+
+    def test_release_mode_scopes_msrv_gate_to_declared_toolchain_via_rustup_run(
+        self,
+    ) -> None:
+        # RC-2: `release` must invoke `msrv` under the declared MSRV
+        # toolchain explicitly, independent of the ambient toolchain, and
+        # must fail closed rather than skip if that toolchain is absent.
+        source_text = (SCRIPTS / "release.py").read_text(encoding="utf-8")
+        release_mode_text = source_text[source_text.index("def release_mode(") :]
+        self.assertIn(
+            'command = ["rustup", "run", declared, *command]', release_mode_text
+        )
+        self.assertIn(
+            "require_declared_toolchain_installed(declared)", release_mode_text
+        )
+
     def test_rc_eligibility_requires_all_three_conditions(self) -> None:
         cases = [
             # (clean_worktree, all_required_gates_passed, evidence_complete, expected)

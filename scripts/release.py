@@ -637,6 +637,39 @@ def verify_declared_toolchain(rustc_version: str, cargo_version: str, declared: 
         )
 
 
+def declared_toolchain_installed(toolchain_list_output: str, declared: str) -> bool:
+    """Pure predicate over `rustup toolchain list` output, split out of
+    `require_declared_toolchain_installed` so it is testable without a real
+    `rustup` invocation (not every environment running this test suite has
+    Rust installed at all)."""
+    return any(
+        line.startswith(f"{declared}.") for line in toolchain_list_output.splitlines()
+    )
+
+
+def require_declared_toolchain_installed(declared: str) -> None:
+    """RC-2: `release` mode must fail closed, not silently skip, if the
+    declared MSRV toolchain — used to run the `msrv` gate via `rustup run`,
+    independent of whatever toolchain happens to be ambient — is not
+    installed.
+    """
+    try:
+        completed = subprocess.run(
+            ["rustup", "toolchain", "list"],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise ReleaseError(f"cannot list rustup toolchains: {error}") from error
+    if not declared_toolchain_installed(completed.stdout, declared):
+        raise ReleaseError(
+            f"declared MSRV toolchain {declared!r} is not installed; "
+            f"run `rustup toolchain install {declared}`"
+        )
+
+
 def msrv_mode(args: argparse.Namespace) -> int:
     """RFC 009 R8/M6e item 10: declared-MSRV matrix with toolchain evidence."""
     root = repository_root()
@@ -896,6 +929,21 @@ def release_mode(args: argparse.Namespace) -> int:
     (archive identity, toolchain identity, declared-MSRV versions, package
     file lists, and the pointer to the nested security evidence) rather than
     leaving them one directory down from each other.
+
+    RC-2: `msrv` runs under the declared MSRV toolchain explicitly, via
+    `rustup run`, regardless of whatever toolchain is ambient. Every other
+    gate runs under the ambient toolchain (stable, by convention and in CI).
+    This split matters because `cargo package --workspace --locked` (part of
+    `doc-package`) verifies each workspace member in isolation against the
+    real crates.io index rather than the just-packaged sibling — under a
+    cargo old enough for that to matter (1.85 cannot see the sibling the way
+    newer cargo can), the CLI's `localcache` dependency resolves to the
+    older published version instead of the one just packaged, dragging in a
+    `libsqlite3-sys` that needs a newer Rust than 1.85 to build. Packaging
+    is release tooling, not an MSRV assertion; `msrv_mode`'s `cargo check`
+    matrix is what proves 1.85 compatibility. Running both gates under one
+    toolchain was RC-1's composition assumption, and that assumption was the
+    defect.
     """
     root = repository_root()
     output = require_output_boundary(root, Path(args.output_dir))
@@ -909,16 +957,22 @@ def release_mode(args: argparse.Namespace) -> int:
     append_summary(summary, "status: RUNNING")
     logger = GateLog(output / "gate.log")
 
+    with (root / "Cargo.toml").open("rb") as file:
+        workspace_document = tomllib.load(file)
+    try:
+        declared = workspace_document["workspace"]["package"]["rust-version"]
+    except (KeyError, TypeError) as error:
+        raise ReleaseError("Cargo.toml has no [workspace.package].rust-version") from error
+    require_declared_toolchain_installed(declared)
+
     script = str(Path(__file__).resolve())
     manifests: dict[str, dict[str, object]] = {}
     for gate in RELEASE_GATES:
         gate_output = output / gate
-        run_gate(
-            logger,
-            gate,
-            [sys.executable, script, gate, "--output-dir", str(gate_output)],
-            root,
-        )
+        command = [sys.executable, script, gate, "--output-dir", str(gate_output)]
+        if gate == "msrv":
+            command = ["rustup", "run", declared, *command]
+        run_gate(logger, gate, command, root)
         append_summary(summary, f"{gate}: PASS")
         manifest_path = (
             gate_output / "evidence" / "manifest.json"
