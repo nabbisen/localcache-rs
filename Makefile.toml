@@ -258,9 +258,19 @@ args = [
     ".git-exclude/security-evidence",
 ]
 
+[tasks.release]
+description = "RFC 009 R12 canonical release entry point: source, msrv, doc-package, security in order, fail-fast, one consolidated evidence bundle"
+command = "python3"
+args = [
+    "scripts/release.py",
+    "release",
+    "--output-dir",
+    ".git-exclude/release-evidence",
+]
+
 [tasks.release-check]
-description = "Full pre-release checklist"
-dependencies = ["version-check", "changelog-check", "security-check", "pre-publish"]
+description = "Full pre-release checklist: quality matrix plus the RFC 009 R12 canonical release entry point"
+dependencies = ["fmt-check", "matrix-coverage-check", "matrix", "version-check", "changelog-check", "release"]
 
 # ---------------------------------------------------------------------------
 # RFC 009 M1 source archive verification

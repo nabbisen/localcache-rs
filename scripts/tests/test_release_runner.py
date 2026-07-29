@@ -1,8 +1,11 @@
 import argparse
 import importlib.util
+import io
 import os
+import re
 import subprocess
 import sys
+import tarfile
 import tempfile
 import tomllib
 import unittest
@@ -595,6 +598,16 @@ class ReleaseRunnerTests(unittest.TestCase):
             },
         )
 
+    @staticmethod
+    def _require_job_args(**overrides: str) -> list[str]:
+        """`--require-job` args covering every `CI_REQUIRED_JOBS` entry,
+        defaulting each to "success" unless overridden by name."""
+        args: list[str] = []
+        for name in RUNNER.CI_REQUIRED_JOBS:
+            result = overrides.get(name, "success")
+            args += ["--require-job", f"{name}={result}"]
+        return args
+
     def test_aggregate_ci_passes_when_jobs_succeed_and_evidence_binds(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -613,8 +626,7 @@ class ReleaseRunnerTests(unittest.TestCase):
                     "42",
                     "--sha",
                     "abc123",
-                    "--require-job",
-                    "matrix=success",
+                    *self._require_job_args(),
                     "--evidence-manifest",
                     str(manifest),
                 ]
@@ -636,8 +648,7 @@ class ReleaseRunnerTests(unittest.TestCase):
                     "42",
                     "--sha",
                     "abc123",
-                    "--require-job",
-                    "matrix=failure",
+                    *self._require_job_args(matrix="failure"),
                 ]
             )
             self.assertNotEqual(status, 0)
@@ -664,6 +675,32 @@ class ReleaseRunnerTests(unittest.TestCase):
             )
             self.assertNotEqual(status, 0)
 
+    def test_aggregate_ci_fails_closed_when_a_required_job_is_omitted(self) -> None:
+        # RC-1 (2026-07-29 M6e RC-construction review): before this fix,
+        # supplying only one --require-job value verified only that job and
+        # silently ignored the rest. Reproduces the exact repro from the
+        # review, which used to exit 0.
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "out"
+            status = RUNNER.main(
+                [
+                    "aggregate-ci",
+                    "--output-dir",
+                    str(output),
+                    "--run-id",
+                    "r1",
+                    "--sha",
+                    "deadbeef",
+                    "--require-job",
+                    "source=success",
+                ]
+            )
+            self.assertNotEqual(status, 0)
+            summary = (output / "summary.log").read_text(encoding="utf-8")
+            self.assertIn("omitted from this aggregation", summary)
+            for name in RUNNER.CI_REQUIRED_JOBS:
+                self.assertIn(name, summary)
+
     def test_aggregate_ci_fails_closed_on_run_id_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -682,6 +719,7 @@ class ReleaseRunnerTests(unittest.TestCase):
                     "42",
                     "--sha",
                     "abc123",
+                    *self._require_job_args(),
                     "--evidence-manifest",
                     str(manifest),
                 ]
@@ -711,6 +749,7 @@ class ReleaseRunnerTests(unittest.TestCase):
                     "42",
                     "--sha",
                     "abc123",
+                    *self._require_job_args(),
                     "--evidence-manifest",
                     str(manifest),
                 ]
@@ -729,6 +768,7 @@ class ReleaseRunnerTests(unittest.TestCase):
                     "42",
                     "--sha",
                     "abc123",
+                    *self._require_job_args(),
                     "--evidence-manifest",
                     str(Path(directory) / "does-not-exist.json"),
                 ]
@@ -736,6 +776,36 @@ class ReleaseRunnerTests(unittest.TestCase):
             self.assertNotEqual(status, 0)
             summary = (output / "summary.log").read_text(encoding="utf-8")
             self.assertIn("cannot read evidence manifest", summary)
+
+    def test_ci_required_jobs_matches_release_gate_needs_in_ci_yaml(self) -> None:
+        # Guards exactly the drift class CI_REQUIRED_JOBS's docstring warns
+        # about: a job present in release-gate's `needs:` but absent from
+        # the canonical set would silently stop being required.
+        ci_yaml = (
+            SCRIPTS.parent / ".github" / "workflows" / "ci.yaml"
+        ).read_text(encoding="utf-8")
+        match = re.search(
+            r"release-gate:.*?needs:\n((?:\s+- [a-z-]+\n)+)", ci_yaml, re.DOTALL
+        )
+        assert match is not None, "could not locate release-gate's needs: list"
+        needs = re.findall(r"- ([a-z-]+)", match.group(1))
+        self.assertEqual(set(needs), set(RUNNER.CI_REQUIRED_JOBS))
+
+    def test_release_gates_matches_rc1_specified_order(self) -> None:
+        self.assertEqual(
+            RUNNER.RELEASE_GATES, ("source", "msrv", "doc-package", "security")
+        )
+
+    def test_release_mode_failure_marks_downstream_steps_incomplete(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "evidence"
+            args = argparse.Namespace(mode="release", output_dir=output)
+            error = RUNNER.ReleaseError("deliberate test failure")
+            RUNNER.record_failure_summary(args, error)
+            summary = (output / "summary.log").read_text(encoding="utf-8")
+            self.assertIn("status: FAIL", summary)
+            self.assertIn("deliberate test failure", summary)
+            self.assertIn("required-downstream-steps: NOT COMPLETED", summary)
 
     def test_source_and_security_manifests_embed_ci_identity_fields(self) -> None:
         source_text = (SCRIPTS / "release.py").read_text(encoding="utf-8")

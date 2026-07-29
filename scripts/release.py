@@ -44,6 +44,28 @@ REQUIRED_PATHS = (
     "NOTICE",
 )
 
+# RFC 009 R12/R14, RC-1 (2026-07-29 M6e RC-construction review): the
+# canonical CI job set `aggregate-ci` requires — not whatever the caller
+# happens to pass via `--require-job`. Must track `.github/workflows/ci.yaml`
+# `release-gate`'s `needs:` list exactly; a job present there but absent here
+# would silently stop being required.
+CI_REQUIRED_JOBS: tuple[str, ...] = (
+    "source-integrity",
+    "fmt",
+    "matrix",
+    "bench-compile",
+    "msrv",
+    "dependency-security",
+    "archive",
+    "doc-package",
+)
+
+# RFC 009 R12: the gates `release` (the canonical entry point) invokes, in
+# order, as subprocesses of this same script — not re-implemented. Each is
+# independently runnable and independently testable; `release` only adds
+# fail-fast orchestration and one consolidated R14 summary.
+RELEASE_GATES: tuple[str, ...] = ("source", "msrv", "doc-package", "security")
+
 # RFC 009 R10/R11: install examples that must name the exact coming version.
 # Deliberately a fixed, narrow target list rather than a broad version-string
 # scan — historical CHANGELOG entries, compatibility ranges, and schema-era
@@ -502,6 +524,8 @@ def record_failure_summary(args: argparse.Namespace, error: Exception) -> None:
         if not output.exists():
             return
         summary = output / "summary.log"
+    elif getattr(args, "mode", None) == "release":
+        summary = Path(args.output_dir).resolve() / "summary.log"
     else:
         return
     append_summary(summary, "status: FAIL")
@@ -755,13 +779,25 @@ def doc_package_mode(args: argparse.Namespace) -> int:
 
 
 def aggregate_ci_mode(args: argparse.Namespace) -> int:
-    """RFC 009 M6c item 3: fail-closed final CI aggregator.
+    """RFC 009 M6c item 3 / RC-1: fail-closed final CI aggregator.
 
-    Fails closed when a required job did not succeed, or when a required
-    evidence manifest is missing, unreadable, not a pass, or bound to a
-    different workflow run or commit than the one aggregating it. This is
-    the only gate that reads `needs.*.result`/`github.run_id`/`github.sha` —
-    every other gate is CI-agnostic and runs identically locally.
+    Fails closed when a required job did not succeed, when the canonical
+    required-job set (`CI_REQUIRED_JOBS`) is not fully covered by the
+    supplied `--require-job` values, or when a required evidence manifest is
+    missing, unreadable, not a pass, or bound to a different workflow run or
+    commit than the one aggregating it. This is the only gate that reads
+    `needs.*.result`/`github.run_id`/`github.sha` — every other gate is
+    CI-agnostic and runs identically locally.
+
+    RC-1 (2026-07-29 M6e RC-construction review): the *set* of required job
+    names must come from this tool, not from whatever the caller happens to
+    pass. Before this fix, invoking `aggregate-ci` with only one
+    `--require-job` value verified only that job and silently ignored the
+    rest — `msrv`, `doc-package`, and `security` could all be unrun and the
+    aggregation would still exit 0. Explicit `--require-job` values still
+    supply each job's actual result (this tool has no other way to learn a
+    GitHub Actions `needs.<job>.result`); what they may no longer do is
+    narrow *which* jobs are required.
     """
     root = repository_root()
     output = require_output_boundary(root, args.output_dir)
@@ -773,10 +809,21 @@ def aggregate_ci_mode(args: argparse.Namespace) -> int:
 
     failures: list[str] = []
 
+    supplied: dict[str, str] = {}
     for requirement in args.require_job:
         name, separator, result = requirement.partition("=")
         if not separator or not name or not result:
             raise ReleaseError(f"malformed --require-job value: {requirement!r}")
+        supplied[name] = result
+
+    missing_jobs = sorted(set(CI_REQUIRED_JOBS) - set(supplied))
+    if missing_jobs:
+        raise ReleaseError(
+            "required jobs omitted from this aggregation (RFC 009 R12/R14 "
+            f"fail-closed default set): {missing_jobs}"
+        )
+
+    for name, result in supplied.items():
         if result != "success":
             failures.append(
                 f"required job {name!r} did not succeed (result={result!r})"
@@ -834,6 +881,84 @@ def aggregate_ci_mode(args: argparse.Namespace) -> int:
         },
     )
     append_summary(summary, "status: PASS")
+    return 0
+
+
+def release_mode(args: argparse.Namespace) -> int:
+    """RFC 009 R12: the canonical release entry point.
+
+    Orchestrates `RELEASE_GATES` in order, each as a subprocess of this same
+    script — not re-implemented — so every gate stays independently runnable
+    and independently testable. Fails fast with nonzero status on the first
+    failing gate; `run_gate` already raises `ReleaseError` on a nonzero exit,
+    so no gate after the first failure runs. On success, writes one
+    consolidated manifest folding in the R14 fields each gate produced
+    (archive identity, toolchain identity, declared-MSRV versions, package
+    file lists, and the pointer to the nested security evidence) rather than
+    leaving them one directory down from each other.
+    """
+    root = repository_root()
+    output = require_output_boundary(root, Path(args.output_dir))
+    if output.exists() and any(output.iterdir()):
+        raise ReleaseError(f"output directory is not empty: {output}")
+    output.mkdir(parents=True, exist_ok=True)
+
+    summary = output / "summary.log"
+    append_summary(summary, "context: release")
+    append_summary(summary, f"gates: {', '.join(RELEASE_GATES)}")
+    append_summary(summary, "status: RUNNING")
+    logger = GateLog(output / "gate.log")
+
+    script = str(Path(__file__).resolve())
+    manifests: dict[str, dict[str, object]] = {}
+    for gate in RELEASE_GATES:
+        gate_output = output / gate
+        run_gate(
+            logger,
+            gate,
+            [sys.executable, script, gate, "--output-dir", str(gate_output)],
+            root,
+        )
+        append_summary(summary, f"{gate}: PASS")
+        manifest_path = (
+            gate_output / "evidence" / "manifest.json"
+            if gate == "source"
+            else gate_output / "manifest.json"
+        )
+        with manifest_path.open("rb") as file:
+            manifests[gate] = json.load(file)
+
+    source_manifest = manifests["source"]
+    msrv_manifest = manifests["msrv"]
+    doc_package_manifest = manifests["doc-package"]
+    security_manifest = manifests["security"]
+
+    write_manifest(
+        output / "manifest.json",
+        {
+            "context": "release",
+            "status": "pass",
+            "gates": list(RELEASE_GATES),
+            "commit": source_manifest["commit"],
+            "version": source_manifest["version"],
+            "rc_eligible": source_manifest["rc_eligible"],
+            "archive": source_manifest["archive"],
+            "archive_uncompressed_sha256": source_manifest["archive_uncompressed_sha256"],
+            "archive_compressed_sha256_advisory": source_manifest[
+                "archive_compressed_sha256_advisory"
+            ],
+            "toolchain_identity": source_manifest["toolchain_identity"],
+            "tool_versions": source_manifest["tool_versions"],
+            "declared_rust_version": msrv_manifest["declared_rust_version"],
+            "declared_rustc_version": msrv_manifest["rustc_version"],
+            "declared_cargo_version": msrv_manifest["cargo_version"],
+            "packages": doc_package_manifest["packages"],
+            "advisories_evidence": f"security/{security_manifest['advisories_evidence']}",
+            **ci_identity(),
+        },
+    )
+    append_summary(summary, "status: PASS")
+    print(f"release evidence: {output}")
     return 0
 
 
@@ -1106,6 +1231,15 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         "--run-id/--sha; repeatable",
     )
     aggregate.set_defaults(handler=aggregate_ci_mode)
+
+    release = subparsers.add_parser(
+        "release",
+        help="RFC 009 R12 canonical release entry point: source, msrv, "
+        "doc-package, security in order, fail-fast, one consolidated summary",
+    )
+    release.add_argument("--output-dir", type=Path, required=True)
+    release.set_defaults(handler=release_mode)
+
     return parser.parse_args(argv)
 
 
