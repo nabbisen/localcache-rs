@@ -182,6 +182,17 @@ Checks are grouped by slice; each slice is a separate review point.
       material.
 - [ ] Historical logs from another checkout were not substituted for current RC evidence.
 
+- [ ] **RC-2:** `python3 scripts/release.py release --output-dir <new>` completes end to end in **one**
+      invocation under ambient stable, with the `msrv` gate run under the declared toolchain.
+- [ ] **RC-2:** `release` mode **fails** (not skips) when the declared toolchain is not installed.
+- [ ] **RC-2:** the declared toolchain version is read from `[workspace.package].rust-version`, not
+      hard-coded.
+- [ ] **RC-2:** `Cargo.toml`'s `localcache` requirement is unchanged, and `verify_declared_toolchain`
+      is unchanged.
+- [ ] **RC-2 precondition:** `cargo +1.85.0 package -p localcache-cli --locked --allow-dirty` was run
+      and its resolved `localcache` version reported, confirming (or refuting) the diagnosed mechanism
+      before the fix was implemented.
+
 ## Phase exit readiness (verify before requesting M7)
 
 - [ ] All eight blocking findings B-01…B-08 are closed with tests or reproducible gate evidence.

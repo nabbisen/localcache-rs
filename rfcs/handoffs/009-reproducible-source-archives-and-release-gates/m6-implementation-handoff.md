@@ -189,6 +189,54 @@ Then the RC itself:
     revision and the advisory-database revision. A required step that was skipped must render the
     summary a failure.
 
+
+#### RC-2 — `release` mode must not run every gate under one toolchain
+
+**Finding:** `release` mode cannot currently complete in a single local invocation. Under stable the
+`msrv` gate fails closed by design (`verify_declared_toolchain` correctly rejects a non-1.85 rustc);
+under a 1.85 override, `doc-package`'s `cargo package --workspace --locked` fails because **cargo 1.85
+cannot verify interdependent workspace members** — the CLI's verification does not see the
+just-packaged `localcache` sibling and resolves the published `0.20.0` instead, which requires
+`rusqlite 0.40` → `libsqlite3-sys 0.38.1` → `cfg_select!`, unavailable before Rust 1.95.
+
+**This is not a dependency-requirement problem and requires no manifest change.** The `^0` requirement
+stays; the 2026-07-28 owner resolution under RFC 009 R9 stands. RFC 009 R9 anticipates this case
+directly: *"If that Cargo version cannot verify the joint operation…"*. `cargo package` is release
+tooling and asserts nothing about MSRV compatibility; the MSRV gate's purpose is proving the library
+*compiles* at 1.85 via `cargo check`. Running both under one toolchain was RC-1's composition
+assumption, and that assumption is the defect.
+
+**Required implementation:**
+
+1. In `release` mode, invoke the `msrv` gate under the declared toolchain explicitly — e.g.
+   `rustup run 1.85.0 python3 scripts/release.py msrv …`, with the version read from
+   `[workspace.package].rust-version` rather than hard-coded. Every other gate continues under the
+   ambient (stable) toolchain.
+2. `release` mode must fail closed if the declared toolchain is not installed — a missing toolchain is
+   a failure, not a skip.
+3. `msrv_mode`'s own `verify_declared_toolchain` check stays exactly as is. It is correct and is what
+   made this visible.
+4. Document in `docs/src/source_archives.md` that `release` runs `msrv` under the declared toolchain
+   and everything else under stable, and why packaging is stable-only.
+
+**Explicit non-change scope:** do not touch `Cargo.toml`'s `localcache` requirement; do not weaken
+`verify_declared_toolchain`; do not change `msrv_mode` or `doc_package_mode` internals.
+
+**Verify first, before implementing.** My mechanism above is inference from artifact and manifest
+inspection, not from a reproduction — and my first analysis of this finding was wrong. Run:
+
+```sh
+cargo +1.85.0 package -p localcache-cli --locked --allow-dirty 2>&1 | grep -E "localcache|libsqlite3-sys"
+```
+
+If it reports resolving `localcache 0.20.0`, the mechanism holds and RC-2 is the right fix. If it
+reports something else — an unresolvable requirement, or a different version — **stop and report**,
+because the diagnosis is then wrong and the fix may be too.
+
+**Required evidence:** the command above; a full `python3 scripts/release.py release --output-dir <new>`
+completing end to end in one invocation under ambient stable; and confirmation that removing the 1.85
+toolchain makes `release` fail rather than skip.
+
 ### Explicitly out of scope
 
 - Any tag, push, publication, yank, or hosted release. M6 ends at a verified RC.
