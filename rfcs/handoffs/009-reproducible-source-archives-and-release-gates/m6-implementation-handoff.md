@@ -4,7 +4,7 @@
 
 Implement the M6 release-controls milestone of
 [RFC 009](../../accepted/009-reproducible-source-archives-and-release-gates.md), together with
-[RFC 016](../../accepted/016-published-crate-legal-file-completeness.md), Accepted 2026-07-28.
+[RFC 016](../../archive/016-published-crate-legal-file-completeness.md) — **withdrawn 2026-07-28**; see § M6a.
 
 RFC 009 is Accepted and **its requirements are authoritative**; this handoff sequences the work and
 names the concrete gaps, but adds no design decision and overrides none. Where this document and an
@@ -21,21 +21,64 @@ release runner** — M6 extends `scripts/release.py`, `scripts/release_archive.p
 
 ## 2. Scope followed
 
-### M6a — Published-crate legal files *(RFC 016, Accepted 2026-07-28 — delegable now)*
+### M6a — Published-crate legal files — **WITHDRAWN, revert required**
 
-Gap: `localcache-0.20.0.crate` contains no `LICENSE`/`NOTICE`; `localcache-cli-0.20.0.crate`
-contains neither plus no `README`. Publication is blocked until fixed.
+> **RFC 016 was withdrawn by owner decision on 2026-07-28. Do not implement it.** Its Motivation
+> claimed Apache-2.0 §4(a)/§4(d) require `LICENSE`/`NOTICE` inside each published `.crate`. That was
+> **false**: §1 defines "You" as an entity *exercising permissions granted by this License*, and §4
+> conditions that grant — it binds redistributors, not the copyright holder publishing their own
+> work. Root-only is sufficient. See `rfcs/archive/016-published-crate-legal-file-completeness.md`.
+>
+> You implemented the RFC correctly as written; the RFC was wrong, not your work. Nothing about this
+> revert reflects a defect in what you built.
 
-1. Add tracked `LICENSE` and `NOTICE` to `crates/localcache/` and `crates/cli/` as byte-identical
-   mirrors of the repository-root files.
-2. Add a source-context gate step comparing each mirror to its root original by raw bytes.
-3. Add an **in-artifact** check: after `cargo package --workspace --locked`, open each produced
-   `.crate` and assert both files are present with matching bytes. Presence on disk is not
-   sufficient — that is exactly the condition under which the defect went unnoticed.
-4. Resolve the CLI `readme` situation so the field, if set, names a packaged file.
+**Task:** revert the uncommitted RFC 016 implementation, retaining one unrelated improvement.
 
-Do not use symlinks (RFC 009 R5 forbids link members), and do not materialise files at package time
-(RFC 009 R9 forbids `--allow-dirty`).
+**Change scope — remove:**
+
+1. `crates/localcache/LICENSE`, `crates/localcache/NOTICE`, `crates/cli/LICENSE`,
+   `crates/cli/NOTICE` (untracked; delete).
+2. `scripts/release.py` — `verify_legal_file_mirrors`, `verify_package_legal_files`, the `package`
+   subcommand added for them, the four `REQUIRED_PATHS` entries for the mirrors, and any
+   `LEGAL_FILE_MIRRORS` constant.
+3. `scripts/tests/test_release_runner.py` — the 11 tests added for the above.
+4. `scripts/release-tools.toml` — restore the `release.py` implementation hash pin to match the
+   reverted file.
+5. `docs/src/source_archives.md` — the "Published-crate legal files" section.
+6. `crates/localcache/Cargo.toml` — the explanatory comment about mirrors.
+
+**Change scope — KEEP:**
+
+7. `crates/cli/Cargo.toml`'s **`readme.workspace = true`**. This is unrelated to licensing: without
+   it the CLI's crates.io page is blank. Remove only the mirror-related comment beside it, not the
+   field. Confirm with `cargo package --list -p localcache-cli` that `README.md` still appears.
+
+**Explicit non-change scope:**
+
+- Do **not** touch the repository-root `LICENSE` or `NOTICE`. They remain the sole copies.
+- Do **not** change `license = "Apache-2.0"` in `[workspace.package]`, and do **not** introduce
+  `license-file`.
+- Do **not** touch anything belonging to M6b, M6c, M6d, or M6e's completed items 1-6.
+
+**Required tests:** the suite returns to its pre-M6a state and passes; `cargo package --workspace
+--locked` succeeds with no new warning; `python3 scripts/release.py source --output-dir <new>`
+still passes end to end (the `REQUIRED_PATHS` change touches it).
+
+**Acceptance criteria:**
+
+- `git status` shows no residue of the four mirrors.
+- `grep -rn "verify_legal_file_mirrors\|verify_package_legal_files\|LEGAL_FILE_MIRRORS" scripts/`
+  returns nothing.
+- Every `[implementations]` hash pin matches its file.
+- `cargo package --list -p localcache-cli` includes `README.md` and no `LICENSE`/`NOTICE`.
+- Full test suite, `cargo fmt --all --check`, `source_integrity.py --require-tracked`,
+  `git diff --check` all clean.
+
+**Prohibited shortcuts:** do not leave the functions in place unused "in case"; do not leave the
+mirrors untracked-but-present; do not stale-pin `release-tools.toml`.
+
+**Required evidence:** the greps above, the `cargo package --list` output, the test count returning
+to its prior value, and confirmation that a full `release.py source` run still passes.
 
 ### M6b — Canonical gate consolidation *(RFC 009 R7, R12, R13; RFC 014)*
 
@@ -139,7 +182,7 @@ Then the RC itself:
 
 7. `cargo doc --workspace --no-deps --all-features --locked`, `mdbook build docs`, and
    `cargo package --workspace --locked` — no `--allow-dirty`, no `--no-verify`.
-8. Joint package verification including M6a's in-artifact legal-file assertion.
+8. Joint package verification. *(RFC 016's legal-file assertion was withdrawn 2026-07-28; there is no legal-file check here.)*
 9. Archive plus its uncompressed-tar digest; prove two consecutive builds from one clean commit on
    the same host produce an identical uncompressed-tar digest.
 10. Evidence bundle carrying every R14 field as amended by RFC 017 R4, including the RFC 014 policy

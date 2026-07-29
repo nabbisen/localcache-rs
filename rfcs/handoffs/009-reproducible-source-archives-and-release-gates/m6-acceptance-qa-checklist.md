@@ -1,7 +1,7 @@
 # RFC 009 M6 Acceptance and QA Checklist
 
 Operationalizes M6 of [RFC 009](../../accepted/009-reproducible-source-archives-and-release-gates.md)
-and, for M6a, [RFC 016](../../accepted/016-published-crate-legal-file-completeness.md).
+M6a's governing RFC 016 was [withdrawn](../../archive/016-published-crate-legal-file-completeness.md) on 2026-07-28.
 The RFCs remain authoritative; this list adds and relaxes nothing.
 
 Testing is owned by the testing developer. **Every box must be backed by an observed result. An
@@ -19,24 +19,24 @@ Checks are grouped by slice; each slice is a separate review point.
 - [ ] Deferred items did not creep in: no `#[non_exhaustive]` error-enum change, no size-driven
       splitting of `repository.rs` / `query.rs` / `cli/src/main.rs` / `indexes.rs`.
 
-## M6a — Published-crate legal files
+## M6a — Published-crate legal files — WITHDRAWN
 
-- [ ] RFC 016 is Accepted with the owner decision recorded before implementation began.
-- [ ] `crates/localcache/LICENSE`, `crates/localcache/NOTICE`, `crates/cli/LICENSE`, and
-      `crates/cli/NOTICE` are tracked regular files — **not** symlinks.
-- [ ] Each mirror is byte-identical to the repository-root file of the same name.
-- [ ] The drift gate fails when one mirror is altered by a single byte.
-- [ ] The drift gate fails when one mirror is deleted.
-- [ ] `cargo package --workspace --locked` succeeds without `--allow-dirty` and without
-      `--no-verify`.
-- [ ] **`localcache-<version>.crate` contains `LICENSE` and `NOTICE`, with bytes matching root.**
-- [ ] **`localcache-cli-<version>.crate` contains `LICENSE` and `NOTICE`, with bytes matching root.**
-- [ ] The in-artifact check **fails** when a file is present at the repository root but absent from
-      the `.crate` — the original defect shape, exercised deliberately.
-- [ ] The CLI's `readme` field, if set, names a file present in its package.
-- [ ] `license = "Apache-2.0"` is unchanged; `license-file` was not introduced.
-- [ ] The source archive still validates: no link members, export manifest matches, extraction
-      succeeds, and it now contains the four new members.
+> **RFC 016 was withdrawn 2026-07-28.** Verify the **revert**, not the implementation.
+
+- [ ] `crates/localcache/{LICENSE,NOTICE}` and `crates/cli/{LICENSE,NOTICE}` are absent.
+- [ ] Repository-root `LICENSE` and `NOTICE` are unchanged.
+- [ ] `grep -rn "verify_legal_file_mirrors\|verify_package_legal_files\|LEGAL_FILE_MIRRORS" scripts/`
+      returns nothing.
+- [ ] `scripts/release.py` has no `package` subcommand added for legal files, and `REQUIRED_PATHS`
+      has no mirror entries.
+- [ ] Every `scripts/release-tools.toml` `[implementations]` hash pin matches its file.
+- [ ] `docs/src/source_archives.md` has no "Published-crate legal files" section.
+- [ ] **`crates/cli/Cargo.toml` still has `readme.workspace = true`**, and
+      `cargo package --list -p localcache-cli` includes `README.md`.
+- [ ] `cargo package --workspace --locked` succeeds with no new warning.
+- [ ] `license = "Apache-2.0"` unchanged; no `license-file` introduced.
+- [ ] `python3 scripts/release.py source --output-dir <new>` passes end to end.
+- [ ] Test suite back to its pre-M6a count and passing; fmt, source-integrity, `git diff --check` clean.
 
 ## M6b — Canonical gate consolidation (closes B-07)
 

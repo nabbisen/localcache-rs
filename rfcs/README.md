@@ -71,9 +71,14 @@ The "Background" section is optional in both templates.
 | [013](./accepted/013-panic-free-path-glob-and-cli-text-handling.md) | Panic-free Path, Glob, and CLI Text Handling | Phase 21 M3 |
 | [014](./accepted/014-declared-msrv-and-dependency-security-policy.md) | Declared MSRV and Dependency Security Policy | Phase 21 M4 |
 | [015](./accepted/015-async-runtime-and-watcher-failure-safety.md) | Async Runtime and Watcher Failure Safety | Phase 21 M5 |
-| [016](./accepted/016-published-crate-legal-file-completeness.md) | Published Crate Legal-File Completeness | Phase 21 M6a |
 | [017](./accepted/017-content-reproducible-archives-without-a-container-producer.md) | Content-Reproducible Archives Without a Container Producer (amends RFC 009) | Phase 21 M6c |
 
 ### Proposed
 
 *(none)*
+
+### Archive
+
+| RFC | Title | Reason |
+|-----|-------|--------|
+| [016](./archive/016-published-crate-legal-file-completeness.md) | Published Crate Legal-File Completeness | Withdrawn 2026-07-28 — its Apache-2.0 §4 premise was false; root-only is sufficient |

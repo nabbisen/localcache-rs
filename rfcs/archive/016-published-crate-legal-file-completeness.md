@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
+| Status | **Withdrawn 2026-07-28** — its legal premise was false; root-only is sufficient |
 | Feature | *(release engineering; no Cargo feature)* |
 | Touches | `crates/localcache/`, `crates/cli/`, `scripts/release.py`, `.github/workflows/ci.yaml`, release documentation |
 | Finding | Virtual-workspace relocation review (2026-07-21), §3 R1 — publication blocker |
@@ -178,3 +178,43 @@ nothing to roll back — the files are additive and no consumer can be harmed by
 One, recorded above: whether the owner accepts qualifying the 2026-07-21 no-per-crate-copies ruling
 in favour of verified mirrors, or prefers the symlink amendment this RFC recommends against. No
 other design axis is open.
+
+---
+
+## Withdrawal (2026-07-28)
+
+**Withdrawn by owner decision. Do not implement R1-R5.**
+
+This RFC's Motivation asserted that Apache-2.0 §4(a)/§4(d) *require* `LICENSE` and `NOTICE` inside
+each published `.crate`. **That assertion is false.** Apache-2.0 §1 defines "You" as an entity
+*"exercising permissions granted by this License"*, and §4 conditions the §2/§3 grant on that
+entity. The copyright holder distributing their own work is not exercising a granted permission, so
+§4(a) and §4(d) do not bind this project's own publications. §4(d) fails to apply twice over: it
+governs redistributors of *Derivative Works*, and only where a NOTICE is already part of the
+distribution.
+
+Root-only is therefore sufficient. `license = "Apache-2.0"` declares the terms, and crates.io
+renders the licence and links the repository, so any recipient can identify and obtain them.
+
+**What remains true and worth keeping:** the mechanical finding. `cargo package` cannot include a
+file from outside the package's own directory, so files at the repository root are genuinely absent
+from the published artifacts. That observation was accurate; only the conclusion drawn from it was
+wrong.
+
+**Why the requirement was not retained on discretionary grounds.** With the compliance mandate gone,
+the remaining arguments were convenience for downstream vendoring, third-party licence scanners, and
+ecosystem convention. Against them: four permanently duplicated files plus a drift gate and an
+in-artifact gate, in a single-maintainer library, for a benefit accruing mainly to hypothetical third
+parties. The owner judged that disproportionate; the reviewer who authored this RFC agreed on
+re-examination.
+
+**Corrections this withdrawal carries:**
+
+- The originating finding — virtual-workspace relocation review (2026-07-21) §3 R1 — called this a
+  "publication blocker" on the same false premise. **It was never a blocker.** That record now
+  carries a correction note.
+- `readme.workspace = true` for `localcache-cli` is retained independently of this withdrawal. It is
+  unrelated to licensing and prevents a blank crates.io page.
+
+No superseding RFC is required: root-only is the pre-existing state, so there is no new design to
+record beyond this note.
