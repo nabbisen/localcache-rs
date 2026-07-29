@@ -1,13 +1,13 @@
 [package]
 name                    = "localcache"
 description             = "Cache expensive computation results tied to local files — fast, simple, and SQLite-backed."
+readme.workspace        = true
 version.workspace       = true
 edition.workspace       = true
 rust-version.workspace  = true
 license.workspace       = true
 authors.workspace       = true
 repository.workspace    = true
-readme.workspace        = true
 categories              = ["caching", "filesystem"]
 keywords                = ["cache", "local-file", "sqlite", "embedding", "memoize"]
 exclude                 = ["benches/", "target/"]

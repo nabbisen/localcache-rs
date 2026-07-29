@@ -1,12 +1,13 @@
 [package]
 name        = "localcache-cli"
 description = "CLI inspection and maintenance tool for localcache databases"
-version.workspace      = true
-edition.workspace      = true
-rust-version.workspace = true
-authors.workspace      = true
-license.workspace      = true
-repository.workspace   = true
+readme.workspace        = true
+version.workspace       = true
+edition.workspace       = true
+rust-version.workspace  = true
+license.workspace       = true
+authors.workspace       = true
+repository.workspace    = true
 
 [[bin]]
 name = "localcache"
