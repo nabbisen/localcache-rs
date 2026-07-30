@@ -208,6 +208,48 @@ class ReleaseRunnerTests(unittest.TestCase):
             self.assertIn("gate: deliberate-failure", log)
             self.assertIn("exit-status: 7", log)
 
+    def test_run_gate_default_merges_stderr_into_returned_output(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            logger = RUNNER.GateLog(root / "gate.log")
+            script = "import sys; sys.stderr.write('warn\\n'); sys.stdout.write('ok')"
+            output = RUNNER.run_gate(
+                logger, "merged", [sys.executable, "-c", script], root
+            )
+            self.assertIn("warn", output)
+            self.assertIn("ok", output)
+
+    def test_run_gate_separate_stderr_returns_only_stdout(self) -> None:
+        # RC-4: a cold cargo cache writes progress lines to stderr; a caller
+        # that parses stdout as structured data (cargo_metadata) must not see
+        # them merged in, or the parse breaks non-deterministically depending
+        # on cache state.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            logger = RUNNER.GateLog(root / "gate.log")
+            script = (
+                "import sys; "
+                "sys.stderr.write('Updating crates.io index\\n'); "
+                "sys.stdout.write('{\"ok\": true}')"
+            )
+            output = RUNNER.run_gate(
+                logger,
+                "stderr-emitting",
+                [sys.executable, "-c", script],
+                root,
+                separate_stderr=True,
+            )
+            self.assertEqual(output, '{"ok": true}')
+            log = (root / "gate.log").read_text(encoding="utf-8")
+            self.assertIn("stderr:", log)
+            self.assertIn("Updating crates.io index", log)
+
+    def test_cargo_metadata_uses_separate_stderr(self) -> None:
+        source_text = (SCRIPTS / "release.py").read_text(encoding="utf-8")
+        cargo_metadata_text = source_text[source_text.index("def cargo_metadata(") :]
+        cargo_metadata_text = cargo_metadata_text[: cargo_metadata_text.index("\n\n\n")]
+        self.assertIn("separate_stderr=True", cargo_metadata_text)
+
     def test_artifact_context_rejects_git_before_running_gates(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

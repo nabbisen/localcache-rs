@@ -10,7 +10,7 @@ schema-version = 1
 
 [implementations.release-runner]
 path = "scripts/release.py"
-sha256 = "8e4e36046385f8487fecf23705cabe529a573e3bb49597562438c80790855a7b"
+sha256 = "48d2232bafa19ff0498e68d8f0aa484e3f01dcd5c211a0c2d5374d5d5a5680d8"
 
 [implementations.archive-parser-writer-compressor]
 path = "scripts/release_archive.py"

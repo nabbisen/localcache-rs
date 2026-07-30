@@ -95,6 +95,7 @@ class GateLog:
         cwd: Path,
         status: int,
         output: str,
+        stderr: str | None = None,
     ) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("a", encoding="utf-8") as file:
@@ -106,6 +107,11 @@ class GateLog:
             file.write(output)
             if output and not output.endswith("\n"):
                 file.write("\n")
+            if stderr is not None:
+                file.write("stderr:\n")
+                file.write(stderr)
+                if stderr and not stderr.endswith("\n"):
+                    file.write("\n")
             file.write("---\n")
 
 
@@ -117,7 +123,25 @@ def run_gate(
     *,
     environment: dict[str, str] | None = None,
     echo_output: bool = True,
+    separate_stderr: bool = False,
 ) -> str:
+    """Run one release gate as a subprocess, logging and (by default) echoing
+    its output.
+
+    By default stdout and stderr are merged (`stderr=subprocess.STDOUT`) into
+    the single stream this function logs, echoes, and returns -- correct for
+    the many gates whose output is only ever read by a human. Pass
+    `separate_stderr=True` for a gate whose returned string a caller parses as
+    structured data -- currently only `cargo_metadata`, via `json.loads`.
+    Both streams are still recorded in `gate.log` either way (R14 requires the
+    command's output captured), but with `separate_stderr=True` only stdout is
+    returned. RC-4: on a cold cargo cache, `cargo metadata` writes progress
+    lines ("Updating crates.io index", "Downloading crates ...") to stderr;
+    merging them ahead of parsed stdout broke `json.loads` non-deterministically
+    depending on cache state. Do not add a third caller of `separate_stderr`
+    without a similar structured-parse need -- the merged default is
+    deliberate for everything else.
+    """
     print(f"[{name}] {shlex.join(command)}")
     env = os.environ.copy()
     if environment:
@@ -128,7 +152,7 @@ def run_gate(
             cwd=cwd,
             env=env,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
+            stderr=subprocess.PIPE if separate_stderr else subprocess.STDOUT,
             text=True,
         )
     except OSError as error:
@@ -142,10 +166,12 @@ def run_gate(
         cwd=cwd,
         status=completed.returncode,
         output=completed.stdout,
+        stderr=completed.stderr if separate_stderr else None,
     )
-    if completed.stdout and echo_output:
-        print(completed.stdout, end="" if completed.stdout.endswith("\n") else "\n")
-    elif completed.stdout:
+    console_output = completed.stdout + completed.stderr if separate_stderr else completed.stdout
+    if console_output and echo_output:
+        print(console_output, end="" if console_output.endswith("\n") else "\n")
+    elif console_output:
         print(f"[{name}] output captured in {logger.path}")
     if completed.returncode:
         raise ReleaseError(f"{name} failed with exit status {completed.returncode}")
@@ -315,6 +341,7 @@ def cargo_metadata(
         ["cargo", "metadata", "--locked", "--format-version", "1"],
         root,
         echo_output=False,
+        separate_stderr=True,
     )
     try:
         document = json.loads(output)
