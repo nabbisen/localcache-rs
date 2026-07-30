@@ -461,7 +461,7 @@ Dependency order, not dates. Each is an independent review point.
 | **N1 — Error-type contract** | `#[non_exhaustive]` on `LocalFileCacheError`; distinct poisoning variant replacing the `UnsupportedFeature` misuse; migration note | **new RFC required** | — |
 | **N2 — Advisory dispositions** | Renew, resolve, or replace the `async-std` and `bincode` dispositions | owner decision per package | — |
 | **N3 — Release-tooling hygiene** | `command_version` stderr separation; `target_triple` from `rustc -vV`; thread real gate results into `rc_eligibility`; RFC 014 H1–H3; RFC 011 N-01/N-02 | recorded findings | N0 |
-| **N4 — Performance baseline** | Extend benchmarks to 10k/100k/1M; publish a measured profile; **no tuning** | measurement only | — |
+| **N4 — Performance baseline ✅** | Extend benchmarks to 10k/100k/1M; publish a measured profile; **no tuning** | measurement only | — |
 | **N5 — Module-size debt** | Risk-reducing splits only, per the corrected register below | — | N1 |
 | **N6 — Release and review** | v0.21.0 gates, evidence bundle, independent re-review | owner authorization | all |
 
@@ -474,12 +474,39 @@ carries two indexes (`idx_files_namespace_path`, `idx_files_lru`). Whether 1M
 entries is slow, where, and by how much is unknown.
 
 N4 therefore measures and publishes a profile; tuning becomes Phase 23, scoped from
-real numbers. Hypotheses to test first, from reading the code rather than measuring
-it: `cleanup_missing_files` (stats per entry, so I/O-bound and the most likely real
-problem), `path_glob` (compiles to SQLite `GLOB`, which cannot use the
-`(namespace, path)` index behind a leading wildcard), LRU eviction cost, and
-`preload`. **If N4 shows nothing is slow, that is a valid result** and retires the
-backlog item honestly.
+real numbers.
+
+**N4 is complete, and it overturned the hypotheses it was built to test.** Measured
+on one host (`TMPDIR` on tmpfs, release profile) at 10k / 100k / 1M entries via
+`crates/localcache/benches/scale_profile.rs`:
+
+| Operation | 10k | 1M | Growth |
+|---|---|---|---|
+| `get`, `get_if_fresh` | ~7.0 µs | **~7.5 µs** | **O(1)** |
+| `path_glob`, leading **literal** | 2.87 ms | **3.05 ms** | **O(1)** |
+| `cleanup_missing_files` | 14.4 ms | 1.40 s | linear |
+| LRU eviction (~450k rows) | — | 932 ms | linear, 2.07 µs/row |
+| `path_in_dir` non-recursive | 3.48 ms | 46.2 ms | 13× |
+| `path_glob`, leading **wildcard** | 3.31 ms | 56.3 ms | 17× |
+| **`field_gt` + `order_by` + `limit 25`** | 38 ms | **4.381 s** | **115×** |
+
+Storage is ~950 bytes per entry, so 1M entries ≈ 950 MB.
+
+**The dominant cost — a JSON field query with sort, 4.4 s at 1M to return 25 rows —
+was not predicted.** `dry_run()` shows why: no index can serve JSON field extraction
+or an `ORDER BY` on one, so every row is decoded and sorted before `LIMIT` applies.
+Of the original hypotheses, `cleanup_missing_files` proved real but ~3× cheaper, LRU
+eviction proved a non-issue, and the leading-wildcard glob was real **only at scale**
+(1.15× at 10k, 18.45× at 1M) — a single-point measurement would have dismissed it.
+
+Point operations being O(1) across a 100× range is the most reassuring result and
+retires the broadest concern.
+
+Full findings, limitations, and Phase 23 ranking:
+`.git-exclude/reviewed/architect-n4-scale-profile-findings-2026-07-30.md`. Two
+limitations matter: tmpfs **understates** the I/O-bound `cleanup_missing_files`
+figure, and a single namespace holds every entry, which maximises what a
+`namespace=?` plan scans.
 
 ### Corrected module-size register
 

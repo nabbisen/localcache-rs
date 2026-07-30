@@ -87,6 +87,13 @@ name              = "cache_bench"
 harness           = false
 required-features = ["json"]
 
+## Phase 22 N4 large-namespace scale profile. A one-shot measurement harness
+## rather than a Criterion suite; see the module docs for why. Not a release gate.
+[[bench]]
+name              = "scale_profile"
+harness           = false
+required-features = ["json"]
+
 [[example]]
 name              = "document_pipeline"
 required-features = ["json", "compression"]
