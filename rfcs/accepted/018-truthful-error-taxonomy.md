@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed |
+| Status | Accepted |
 | Feature | *(no Cargo feature; affects the public error type)* |
 | Touches | `crates/localcache/src/error.rs`, `pool.rs`, `read_pool.rs`, `serialization.rs`, `cache/async_engine.rs`, `cache/watcher.rs`, `docs/src/errors.md` |
 | Finding | Phase 21 deferred debt, plus three defects found while designing this RFC |
@@ -122,12 +122,23 @@ lock to a caller returns `Poisoned`. Two exceptions must be documented **at the 
 site**, not merely permitted:
 
 - **`ReadPool::checkout` (`read_pool.rs:161`)** currently calls `into_inner()` and
-  recovers silently. There is an argument for keeping it: a `ReadPool` is read-only
-  apart from `last_accessed_at`, so a panicking holder is unlikely to leave the
-  engine inconsistent. **But that argument is nowhere in the code** — the nearby
-  comment explains slot contention, not poisoning. Either document it as a
-  deliberate exception with that reasoning, or make it return `Poisoned`.
-  **This RFC does not decide which; it requires the decision be made and recorded.**
+  recovers silently.
+
+  > **Owner decision, 2026-07-30: it must return `Poisoned`.** The governing
+  > principle given was that *"functions provided by a common library like ours
+  > should be safe."* Silent recovery is the unsafe option: `into_inner()` hands a
+  > caller state that another thread abandoned mid-panic, and the caller has no way
+  > to know. A library cannot make that judgement on a dependant's behalf. The
+  > convenience argument — that a `ReadPool` only mutates `last_accessed_at`, so the
+  > engine is *probably* consistent — rests on "probably", which is not a basis for
+  > a safety default.
+  >
+  > `ReadPool::checkout` therefore becomes fallible. This widens the change: its
+  > callers currently assume an infallible checkout, so their signatures must
+  > propagate `Result`. That is a larger break than the enum change alone, and it is
+  > deliberate. **The reviewer had recommended keeping current behaviour with
+  > documentation; the owner overruled that on safety grounds, and the owner is
+  > right.**
 - **`CacheWatcher` callbacks (`watcher.rs:179,481`)** skip work on a poisoned lock
   because they run on a notify thread with nowhere to return an error. That is
   legitimate, and must be stated in the code rather than left implicit in an
@@ -188,22 +199,25 @@ signature changes; existing databases open unchanged. The break is confined to
 downstream `match` exhaustiveness and to any code matching `UnsupportedFeature` for
 poisoning or JSON errors.
 
-## Open questions
+## Resolved questions
 
-1. **R4's `ReadPool` decision** — document the silent recovery as deliberate, or
-   make it return `Poisoned`? Preserving current behaviour is safer for existing
-   users; returning `Poisoned` is more consistent. **Owner or reviewer call.**
-2. **Should `Poisoned` be feature-gated?** `AsyncCacheEngine` is, `ConnectionPool` is
-   not. Recommend ungated: a variant appearing and disappearing with features is
-   worse than one occasionally unconstructed.
+Both were settled by the owner on 2026-07-30 under one principle: **a common library
+should be safe by default.**
 
-## Review conflict — recorded, not resolved
+1. **`ReadPool`'s silent poison recovery** — resolved in R4: it must return
+   `Poisoned`. `ReadPool::checkout` becomes fallible and its callers propagate
+   `Result`.
+2. **Should `Poisoned` be feature-gated?** **No — ungated.** The same principle
+   applies: a variant that appears and disappears with feature selection makes a
+   caller's exhaustive handling depend on which features some other crate in the
+   graph enabled. An occasionally-unconstructed variant is the safer failure mode.
+   `ConnectionPool` is ungated, so the variant is constructible in every build
+   anyway.
 
-**This RFC was authored by the same reviewer who would ordinarily review it**, the
-situation recorded against RFC 017 at M7 §6. The owner is aware and has not yet
-decided how to handle it.
+## Review record
 
-Two things make this case lower-risk than RFC 017's: the change is small and fully
-covered by the test plan, and it retires no existing guarantee — RFC 017 retired an
-Accepted security-adjacent requirement, whereas this only adds precision. The open
-questions in R4 and §2 are the places where a second opinion would be worth most.
+**This RFC was authored by the reviewer who would ordinarily review it** — the
+conflict recorded against RFC 017 at M7 §6. The owner resolved it by reviewing and
+accepting the RFC directly on 2026-07-30, and by overruling the reviewer's
+recommendation on R4. That is the separation this project's process needs here, and
+it worked: the owner's ruling changed the design, and made it stricter.

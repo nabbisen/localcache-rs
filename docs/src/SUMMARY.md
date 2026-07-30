@@ -20,6 +20,7 @@
 
 - [CLI Tool](./cli.md)
 - [Error Handling](./errors.md)
+- [Performance and Capacity](./performance.md)
 - [API Overview](./api.md)
 - [Architecture](./architecture.md)
 

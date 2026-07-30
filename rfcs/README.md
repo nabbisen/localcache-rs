@@ -66,13 +66,13 @@ The "Background" section is optional in both templates.
 
 ### Accepted
 
-*(none — all Phase 21 RFCs shipped in v0.20.1)*
+| RFC | Title | Target |
+|-----|-------|--------|
+| [018](./accepted/018-truthful-error-taxonomy.md) | Truthful Error Taxonomy and a Forward-Compatible Error Enum | Phase 22 N1 (v0.21.0) |
 
 ### Proposed
 
-| RFC | Title | Target |
-|-----|-------|--------|
-| [018](./proposed/018-truthful-error-taxonomy.md) | Truthful Error Taxonomy and a Forward-Compatible Error Enum | Phase 22 N1 (v0.21.0) |
+*(none)*
 
 ### Archive
 
