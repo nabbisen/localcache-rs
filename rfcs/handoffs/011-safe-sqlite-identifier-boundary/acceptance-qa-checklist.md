@@ -1,7 +1,7 @@
 # RFC 011 Implementation Acceptance and Hostile-input QA Checklist
 
 This checklist operationalizes the accepted
-[RFC 011](../../accepted/011-safe-sqlite-identifier-boundary.md). The RFC is
+[RFC 011](../../done/011-safe-sqlite-identifier-boundary.md). The RFC is
 authoritative; this checklist adds no permission to weaken or broaden it.
 
 At checklist creation no implementation item is complete. Record the exact

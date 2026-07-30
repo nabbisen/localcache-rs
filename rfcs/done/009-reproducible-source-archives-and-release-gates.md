@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
+| Status | Implemented (0.20.1) |
 | Feature | *(release engineering; no Cargo feature)* |
 | Touches | `Cargo.toml`, `Makefile.toml`, `.github/workflows/ci.yaml`, release scripts, archive metadata, release documentation |
 | Findings | Architect review B-01 and B-07 |

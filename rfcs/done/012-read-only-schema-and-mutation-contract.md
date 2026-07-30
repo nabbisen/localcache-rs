@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
+| Status | Implemented (0.20.1) |
 | Feature | *(core; parity for `watching` and async runtime features)* |
 | Touches | `crates/localcache/src/cache/engine.rs`, schema validation, watcher construction, pool/async forwarding tests, `crates/cli/src/main.rs`, read-only documentation |
 | Finding | Architect review B-04 and CLI read-only observation |
@@ -527,8 +527,8 @@ required. Rejected.
 
 - [RFC 004 — Read-only Shared-memory DB Mode](../done/004-shared-memory-db.md)
 - [RFC 007 — Read-only Connection Pool](../done/007-read-only-connection-pool.md)
-- [RFC 010 — Transactional, Payload-Preserving Schema Migrations](../accepted/010-transactional-payload-preserving-schema-migrations.md)
-- [RFC 011 — Safe SQLite Identifier Boundary](../accepted/011-safe-sqlite-identifier-boundary.md)
+- [RFC 010 — Transactional, Payload-Preserving Schema Migrations](../done/010-transactional-payload-preserving-schema-migrations.md)
+- [RFC 011 — Safe SQLite Identifier Boundary](../done/011-safe-sqlite-identifier-boundary.md)
 - SQLite [`sqlite3_open_v2`](https://www.sqlite.org/c3ref/open.html)
 - SQLite [`PRAGMA query_only`](https://www.sqlite.org/pragma.html#pragma_query_only)
 - SQLite [read-only databases](https://www.sqlite.org/uri.html)

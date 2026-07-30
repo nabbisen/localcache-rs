@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
+| Status | Implemented (0.20.1) |
 | Feature | *(core database safety; no Cargo feature)* |
 | Touches | `crates/localcache/src/cache/engine.rs`, `crates/localcache/src/cache/query.rs`, `crates/localcache/src/db/repository.rs`, shared index-metadata helpers, query/index tests, API documentation |
 | Finding | Architect review B-03 |
@@ -614,7 +614,7 @@ and would not fix create/drop. Rejected.
 - [SQLite schema introspection PRAGMAs](https://www.sqlite.org/pragma.html#pragma_index_list)
 - [SQLite `CREATE INDEX`](https://www.sqlite.org/lang_createindex.html)
 - [RFC 002 — Query Index Hints and Explain Plan](../done/002-query-index-hints.md)
-- [RFC 010 — Transactional, Payload-Preserving Schema Migrations](../accepted/010-transactional-payload-preserving-schema-migrations.md)
+- [RFC 010 — Transactional, Payload-Preserving Schema Migrations](../done/010-transactional-payload-preserving-schema-migrations.md)
 
 ## Design review history
 

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
+| Status | Implemented (0.20.1) |
 | Feature | *(workspace dependency and release policy; no production feature flag)* |
 | Touches | workspace manifests and lockfile, declared-MSRV CI, advisory policy/checker and tests, dependency/security documentation, RFC 009 release-gate integration point |
 | Finding | Architect review B-06 and B-08 |

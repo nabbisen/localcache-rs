@@ -29,10 +29,18 @@ on GitHub for the full backlog with implementation notes.
 | 19 | 0.19 | Read-only pool + compatibility guarantees — `ReadPool<T>`, golden fixture |
 | 20 | 0.20 | Nanosecond mtime precision — schema v5 and overwrite regression coverage |
 
-## Active stabilization schedule
+## Phase 21 — Stabilization and Compatibility Recovery ✅
 
-Phase 21 targets a corrective v0.20.1 release. It closes the findings from
-the 2026-07-17 independent architecture review before new feature work resumes.
+**Released 2026-07-30 as v0.20.1.** Phase 21 closed the findings from the
+2026-07-17 independent architecture review, which had returned **No-Go** on
+v0.20.0. The M7 re-review returned **Accept with notes**, changing the
+recommendation to **Go**, and both `localcache 0.20.1` and
+`localcache-cli 0.20.1` are published.
+
+All eight of the phase's RFCs — 009, 010, 011, 012, 013, 014, 015, and 017 — are
+implemented and now live under `rfcs/done/`. RFC 016 was withdrawn; its
+Apache-2.0 premise was false, and the repository-root `LICENSE` and `NOTICE`
+remain the sole copies.
 
 | Milestone | Target | Outcome |
 |---|---|---|
@@ -56,19 +64,19 @@ M1 completion is not release authorization.
 
 RFC 010 implementation was independently accepted on 2026-07-21 at commit
 `95fd1a0`, closing B-02. RFC 011 implementation was independently accepted on
-2026-07-22 at commit `d4fe505`, closing B-03 and completing M2. Both RFCs remain
-under `rfcs/accepted/` until their implementation ships; this milestone closure
-is not release authorization.
+2026-07-22 at commit `d4fe505`, closing B-03 and completing M2. Both RFCs stayed
+under `rfcs/accepted/` until the implementation shipped; that milestone closure
+was not release authorization.
 
 RFC 012 implementation was independently accepted on 2026-07-22 at commit
 `6c14df3`. RFC 013 implementation was independently accepted on 2026-07-23 at
-commit `34fcc78`, completing M3. Both remain under `rfcs/accepted/` until their
-implementation ships; this milestone closure is not release authorization.
+commit `34fcc78`, completing M3. Both stayed under `rfcs/accepted/` until the
+implementation shipped; that milestone closure was not release authorization.
 
 RFC 014 implementation was independently accepted on 2026-07-28 at commit
 `b5e85da`, closing B-06 and B-08 and completing M4. RFC 015 implementation
-was independently accepted at commit `772b3e5`, completing M5. Both remain
-under `rfcs/accepted/`; neither closure authorizes release work.
+was independently accepted at commit `772b3e5`, completing M5. Both stayed
+under `rfcs/accepted/`; neither closure authorized release work.
 
 M6b (canonical gate consolidation) was independently accepted at commit
 `11a8bc8`, closing **B-07** — the last of the eight original blocking
@@ -77,7 +85,7 @@ action.
 
 M6c (CI provenance) was independently accepted at commit `d86fda7`. Its two
 canonical-producer proof items were withdrawn rather than carried forward:
-[RFC 017](https://github.com/nabbisen/localcache-rs/blob/main/rfcs/accepted/017-content-reproducible-archives-without-a-container-producer.md)
+[RFC 017](https://github.com/nabbisen/localcache-rs/blob/main/rfcs/done/017-content-reproducible-archives-without-a-container-producer.md)
 (accepted 2026-07-28) supersedes RFC 009's canonical-producer requirement (R16)
 entirely, replacing compressed-byte reproducibility in a pinned Docker image
 with content reproducibility: an uncompressed-tar digest, per-host

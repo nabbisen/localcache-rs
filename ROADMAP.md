@@ -79,7 +79,7 @@ Five pending RFCs implemented in a single release:
 - [x] Add regression coverage for same-second, same-size overwrites
 - [x] Preserve payload compatibility through the v4-to-v5 migration fixture
 
-## Phase 21 — Stabilization and Compatibility Recovery (target: v0.20.1) 🚧
+## Phase 21 — Stabilization and Compatibility Recovery (v0.20.1) ✅
 
 ### Goal and scope
 
@@ -319,12 +319,12 @@ to RFC 000.
 | RFC | Working title | Primary review findings | Planned implementation milestone | Handoff expectation |
 |---|---|---|---|---|
 | **009** | Reproducible Source Archives and Release Gates | B-01, B-07 | M1, completed in M6 | Required implementation and QA handoff after acceptance |
-| **[010](rfcs/accepted/010-transactional-payload-preserving-schema-migrations.md)** | Transactional, Payload-Preserving Schema Migrations | B-02 (closed by `95fd1a0`) | M2 | Implementation and fixture handoffs accepted |
-| **[011](rfcs/accepted/011-safe-sqlite-identifier-boundary.md)** | Safe SQLite Identifier Boundary | B-03 (closed by `d4fe505`) | M2 | Hostile-input QA checklist accepted |
-| **[012](rfcs/accepted/012-read-only-schema-and-mutation-contract.md)** | Read-only Schema and Mutation Contract | B-04 (closed by `6c14df3`) | M3 | API-boundary implementation matrix accepted; no handoff required |
-| **[013](rfcs/accepted/013-panic-free-path-glob-and-cli-text-handling.md)** | Panic-free Path, Glob, and CLI Text Handling | B-05 (closed by `34fcc78`) and related path findings | M3 | Detailed RFC matrix; handoff only if delegated |
-| **[014](rfcs/accepted/014-declared-msrv-and-dependency-security-policy.md)** | Declared MSRV and Dependency Security Policy | B-06, B-08 (closed by `b5e85da`) | M4 | Detailed RFC matrix; handoff only if delegated |
-| **[015](rfcs/accepted/015-async-runtime-and-watcher-failure-safety.md)** | Async Runtime and Watcher Failure Safety | Runtime/watcher non-blocking findings | M5 (accepted at `772b3e5`) | Implementation and QA handoffs accepted |
+| **[010](rfcs/done/010-transactional-payload-preserving-schema-migrations.md)** | Transactional, Payload-Preserving Schema Migrations | B-02 (closed by `95fd1a0`) | M2 | Implementation and fixture handoffs accepted |
+| **[011](rfcs/done/011-safe-sqlite-identifier-boundary.md)** | Safe SQLite Identifier Boundary | B-03 (closed by `d4fe505`) | M2 | Hostile-input QA checklist accepted |
+| **[012](rfcs/done/012-read-only-schema-and-mutation-contract.md)** | Read-only Schema and Mutation Contract | B-04 (closed by `6c14df3`) | M3 | API-boundary implementation matrix accepted; no handoff required |
+| **[013](rfcs/done/013-panic-free-path-glob-and-cli-text-handling.md)** | Panic-free Path, Glob, and CLI Text Handling | B-05 (closed by `34fcc78`) and related path findings | M3 | Detailed RFC matrix; handoff only if delegated |
+| **[014](rfcs/done/014-declared-msrv-and-dependency-security-policy.md)** | Declared MSRV and Dependency Security Policy | B-06, B-08 (closed by `b5e85da`) | M4 | Detailed RFC matrix; handoff only if delegated |
+| **[015](rfcs/done/015-async-runtime-and-watcher-failure-safety.md)** | Async Runtime and Watcher Failure Safety | Runtime/watcher non-blocking findings | M5 (accepted at `772b3e5`) | Implementation and QA handoffs accepted |
 | **[016](rfcs/archive/016-published-crate-legal-file-completeness.md)** | Published Crate Legal-File Completeness | Workspace-relocation review R1 — **its Apache-2.0 premise was false; never a blocker** | M6a (withdrawn) | **Withdrawn 2026-07-28**; root-only is sufficient |
 
 An implementation handoff is created only when the approved RFC still needs
@@ -393,6 +393,41 @@ findings that do not affect the crate, the archive, or any published artifact:
 
 Both are tracked for correction. Neither blocks the release, and the owner
 accepted the notes explicitly.
+
+### Phase 21 — released 2026-07-30
+
+**v0.20.1 shipped.** Phase 21 is complete.
+
+| | |
+|---|---|
+| Release commit | `1744378` |
+| Tag | `0.20.1`, GPG-signed, pointing at the release commit |
+| Release archive uncompressed-tar SHA-256 | `9a696e7423b6b4023ec31b9de27f088db5d93e5749eb2298a541c175043a3ed2` |
+| CI on the release commit | run 30514015017, 26/26 green |
+| Published | `localcache 0.20.1` and `localcache-cli 0.20.1` on crates.io |
+
+The eight RFCs implemented in this phase moved from `rfcs/accepted/` to
+`rfcs/done/` with Status **Implemented (0.20.1)** per RFC 000: 009, 010, 011,
+012, 013, 014, 015, and 017. RFC 016 remains withdrawn in `rfcs/archive/`, its
+Apache-2.0 premise having been false. `rfcs/accepted/` is now empty, which RFC
+000 anticipates for a project where review and implementation are close together.
+
+**One release-process lesson worth keeping.** `localcache-cli` was initially not
+published: a bare `cargo publish` in a virtual workspace selects
+`default-members`, which is `["crates/localcache"]`, so it shipped the library
+and said nothing about skipping the CLI. No error, no warning. Because
+`README.md` — which ships inside the published library crate — instructs
+`cargo install localcache-cli`, the release briefly documented a command that
+could not work. Corrected by publishing the CLI the same day.
+
+**For future releases use `cargo publish --workspace --locked`**, which packages
+and verifies every member in dependency order. Do *not* fix this by adding
+`crates/cli` to `default-members`: that would make every routine `cargo build`
+and `cargo test` compile the CLI binary, imposing a daily cost to guard one
+per-release step, and it would replace one implicit behaviour with another.
+
+Publication remains a separate owner-authorized action under RFC 009 R15; the
+release tooling must never publish as a side effect.
 
 ## Future / Unscheduled
 

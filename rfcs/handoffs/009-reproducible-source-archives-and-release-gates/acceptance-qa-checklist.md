@@ -1,7 +1,7 @@
 # RFC 009 M1 Acceptance and QA Checklist
 
 This checklist operationalizes the accepted
-[RFC 009](../../accepted/009-reproducible-source-archives-and-release-gates.md).
+[RFC 009](../../done/009-reproducible-source-archives-and-release-gates.md).
 The RFC remains authoritative.
 
 ## Preconditions

@@ -2,9 +2,9 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
+| Status | Implemented (0.20.1) |
 | Feature | *(release engineering; no Cargo feature)* |
-| Touches | `rfcs/accepted/009-…` R16 and related clauses, `scripts/release.py`, `scripts/release_archive.py`, `scripts/release-tools.toml`, `scripts/canonical-producer.sh`, `.github/workflows/ci.yaml` |
+| Touches | `rfcs/done/009-…` R16 and related clauses, `scripts/release.py`, `scripts/release_archive.py`, `scripts/release-tools.toml`, `scripts/canonical-producer.sh`, `.github/workflows/ci.yaml` |
 | Amends | **RFC 009** — see § Clauses amended |
 | Finding | Owner challenge, 2026-07-28: is the container producer necessary, useful, effective? |
 | Milestone | Phase 21 M6c |
@@ -78,7 +78,7 @@ project's scale.
 
 ## Clauses amended
 
-This RFC replaces the following in `rfcs/accepted/009-reproducible-source-archives-and-release-gates.md`:
+This RFC replaces the following in `rfcs/done/009-reproducible-source-archives-and-release-gates.md`:
 
 | Location | Current | Becomes |
 |---|---|---|

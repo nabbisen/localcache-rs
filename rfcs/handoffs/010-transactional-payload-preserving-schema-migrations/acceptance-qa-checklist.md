@@ -1,7 +1,7 @@
 # RFC 010 Implementation Acceptance and QA Checklist
 
 This checklist operationalizes the accepted
-[RFC 010](../../accepted/010-transactional-payload-preserving-schema-migrations.md).
+[RFC 010](../../done/010-transactional-payload-preserving-schema-migrations.md).
 The RFC remains authoritative. The companion
 [implementation handoff](./implementation-handoff.md) sequences the work but
 does not override it.

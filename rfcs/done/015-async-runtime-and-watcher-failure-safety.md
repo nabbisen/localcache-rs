@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
+| Status | Implemented (0.20.1) |
 | Feature | *(core; parity for `async`/`async-std`/`smol` and `watching` features)* |
 | Touches | `crates/localcache/src/cache/async_engine.rs`, `crates/localcache/src/cache/runtime.rs`, `crates/localcache/src/cache/query.rs`, `crates/localcache/src/cache/watcher.rs`, `crates/localcache/src/cache/engine.rs`, `crates/localcache/src/db/schema/classifier.rs`, `crates/localcache/src/error.rs`, async/watcher documentation and tests |
 | Finding | Architect M4 close-out and M5 handoff review (2026-07-28); originating findings from the 2026-07-17 architecture review; corrected per architect RFC 015 design review (2026-07-28) |

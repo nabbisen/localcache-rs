@@ -160,7 +160,7 @@ synthetic data.
 
 ## Correction in RFC 013
 
-[RFC 013](../accepted/013-panic-free-path-glob-and-cli-text-handling.md)
+[RFC 013](../done/013-panic-free-path-glob-and-cli-text-handling.md)
 clarifies the deleted-source guarantee. Normal writes retain a canonical
 valid UTF-8 stored key; imported records may retain a portable key. After a
 source disappears, observation and removal use only the caller's exact stored

@@ -186,7 +186,7 @@ clause and `GLOB` keyword.  No injection surface beyond the existing
 
 ## Correction in RFC 013
 
-[RFC 013](../accepted/013-panic-free-path-glob-and-cli-text-handling.md)
+[RFC 013](../done/013-panic-free-path-glob-and-cli-text-handling.md)
 defines the shared glob dialect precisely as case-sensitive Unicode-scalar
 matching, adds bounded brace validation/expansion, and defers fallible query
 preparation to `run()`/`dry_run()`. This corrects implementation details

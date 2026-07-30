@@ -1,6 +1,6 @@
 # RFC 009 M6 Acceptance and QA Checklist
 
-Operationalizes M6 of [RFC 009](../../accepted/009-reproducible-source-archives-and-release-gates.md)
+Operationalizes M6 of [RFC 009](../../done/009-reproducible-source-archives-and-release-gates.md)
 M6a's governing RFC 016 was [withdrawn](../../archive/016-published-crate-legal-file-completeness.md) on 2026-07-28.
 The RFCs remain authoritative; this list adds and relaxes nothing.
 

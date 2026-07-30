@@ -1,7 +1,7 @@
 # RFC 015 Implementation Acceptance and QA Checklist
 
 This checklist operationalizes the Accepted
-[RFC 015](../../accepted/015-async-runtime-and-watcher-failure-safety.md).
+[RFC 015](../../done/015-async-runtime-and-watcher-failure-safety.md).
 The RFC remains authoritative; this list does not add or relax a requirement.
 
 Testing is owned by the testing developer. Every box must be backed by an observed result, not by

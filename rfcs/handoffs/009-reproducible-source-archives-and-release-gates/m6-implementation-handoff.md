@@ -3,7 +3,7 @@
 ## 1. Summary
 
 Implement the M6 release-controls milestone of
-[RFC 009](../../accepted/009-reproducible-source-archives-and-release-gates.md), together with
+[RFC 009](../../done/009-reproducible-source-archives-and-release-gates.md), together with
 [RFC 016](../../archive/016-published-crate-legal-file-completeness.md) — **withdrawn 2026-07-28**; see § M6a.
 
 RFC 009 is Accepted and **its requirements are authoritative**; this handoff sequences the work and
@@ -102,7 +102,7 @@ Known gaps, each verified present in the tree:
 ### M6c — CI provenance *(RFC 009 R3–R6, R14)* — ✅ complete
 
 > **Items 1, 2, 5, and 8 below are withdrawn by
-> [RFC 017](../../accepted/017-content-reproducible-archives-without-a-container-producer.md)
+> [RFC 017](../../done/017-content-reproducible-archives-without-a-container-producer.md)
 > (accepted 2026-07-28), which supersedes RFC 009 R16 and retires the container producer.** They are
 > struck rather than deleted so the record of what was originally required, and why it changed,
 > survives. Their replacements live in § M6e. Items 3, 4, 6, 7, and 9 were delivered in `d86fda7`.
@@ -155,7 +155,7 @@ Known gaps, each verified present in the tree:
 ### M6e — RC construction and evidence *(RFC 017; RFC 009 R9, R14)*
 
 **Do the RFC 017 migration first (items 1–6); the RC is built on top of it.**
-[RFC 017](../../accepted/017-content-reproducible-archives-without-a-container-producer.md) was
+[RFC 017](../../done/017-content-reproducible-archives-without-a-container-producer.md) was
 accepted 2026-07-28 and supersedes RFC 009 R16. There is no container producer to execute and no
 compressed-byte identity to prove; M6c's deferred canonical-producer items are **withdrawn**, not
 carried here. RFC 009 **R5's archive-safety controls are unchanged** — do not touch structured header

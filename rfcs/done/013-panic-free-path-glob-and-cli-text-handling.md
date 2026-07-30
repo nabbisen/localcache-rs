@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
+| Status | Implemented (0.20.1) |
 | Feature | *(core; CLI parity; no new production feature flag)* |
 | Touches | shared glob compiler/matcher, path-key resolution, query preparation, scan walking, CLI text formatting, path/glob documentation and tests |
 | Finding | Architect review B-05 and related deleted-path / CLI Unicode findings |
@@ -675,7 +675,7 @@ policy. Scalar-safe truncation is the bounded corrective change.
 
 - [RFC 006 — Directory-scoped Query Predicates](../done/006-directory-scoped-query-predicates.md)
 - [RFC 008 — Compatibility Guarantees](../done/008-compatibility-guarantees.md)
-- [RFC 012 — Read-only Schema and Mutation Contract](../accepted/012-read-only-schema-and-mutation-contract.md)
+- [RFC 012 — Read-only Schema and Mutation Contract](../done/012-read-only-schema-and-mutation-contract.md)
 - Originating reviews:
   `.git-exclude/reviewed/architect-preparation-review-2026-07-17.md` and
   `.git-exclude/reviewed/architect-preparation-review-2026-07-18.md`

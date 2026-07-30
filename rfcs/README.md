@@ -55,23 +55,18 @@ The "Background" section is optional in both templates.
 | [006](./done/006-directory-scoped-query-predicates.md) | Directory-scoped Query Predicates | v0.18.0 |
 | [007](./done/007-read-only-connection-pool.md) | Read-only Connection Pool (`ReadPool<T>`) | v0.19.0 |
 | [008](./done/008-compatibility-guarantees.md) | Compatibility Guarantees: Payload Wire Format and Path Semantics | v0.19.0 |
-
-### Archive
-
-*(none yet)*
+| [009](./done/009-reproducible-source-archives-and-release-gates.md) | Reproducible Source Archives and Release Gates | v0.20.1 |
+| [010](./done/010-transactional-payload-preserving-schema-migrations.md) | Transactional, Payload-Preserving Schema Migrations | v0.20.1 |
+| [011](./done/011-safe-sqlite-identifier-boundary.md) | Safe SQLite Identifier Boundary | v0.20.1 |
+| [012](./done/012-read-only-schema-and-mutation-contract.md) | Read-only Schema and Mutation Contract | v0.20.1 |
+| [013](./done/013-panic-free-path-glob-and-cli-text-handling.md) | Panic-free Path, Glob, and CLI Text Handling | v0.20.1 |
+| [014](./done/014-declared-msrv-and-dependency-security-policy.md) | Declared MSRV and Dependency Security Policy | v0.20.1 |
+| [015](./done/015-async-runtime-and-watcher-failure-safety.md) | Async Runtime and Watcher Failure Safety | v0.20.1 |
+| [017](./done/017-content-reproducible-archives-without-a-container-producer.md) | Content-Reproducible Archives Without a Container Producer (amends RFC 009) | v0.20.1 |
 
 ### Accepted
 
-| RFC | Title | Target |
-|-----|-------|--------|
-| [009](./accepted/009-reproducible-source-archives-and-release-gates.md) | Reproducible Source Archives and Release Gates | Phase 21 M1/M6 |
-| [010](./accepted/010-transactional-payload-preserving-schema-migrations.md) | Transactional, Payload-Preserving Schema Migrations | Phase 21 M2 |
-| [011](./accepted/011-safe-sqlite-identifier-boundary.md) | Safe SQLite Identifier Boundary | Phase 21 M2 |
-| [012](./accepted/012-read-only-schema-and-mutation-contract.md) | Read-only Schema and Mutation Contract | Phase 21 M3 |
-| [013](./accepted/013-panic-free-path-glob-and-cli-text-handling.md) | Panic-free Path, Glob, and CLI Text Handling | Phase 21 M3 |
-| [014](./accepted/014-declared-msrv-and-dependency-security-policy.md) | Declared MSRV and Dependency Security Policy | Phase 21 M4 |
-| [015](./accepted/015-async-runtime-and-watcher-failure-safety.md) | Async Runtime and Watcher Failure Safety | Phase 21 M5 |
-| [017](./accepted/017-content-reproducible-archives-without-a-container-producer.md) | Content-Reproducible Archives Without a Container Producer (amends RFC 009) | Phase 21 M6c |
+*(none — all Phase 21 RFCs shipped in v0.20.1)*
 
 ### Proposed
 

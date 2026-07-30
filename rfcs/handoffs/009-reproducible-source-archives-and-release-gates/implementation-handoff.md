@@ -3,7 +3,7 @@
 ## 1. Summary
 
 Implement the M1 source/archive recovery slice of
-[RFC 009](../../accepted/009-reproducible-source-archives-and-release-gates.md).
+[RFC 009](../../done/009-reproducible-source-archives-and-release-gates.md).
 Extend the same architecture at M6; do not create a second release runner.
 
 RFC 009 is Accepted. Its requirements are authoritative. This handoff sequences

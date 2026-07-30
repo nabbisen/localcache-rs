@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
+| Status | Implemented (0.20.1) |
 | Feature | *(core database compatibility; no Cargo feature)* |
 | Touches | `src/db/schema.rs`, `src/cache/engine.rs`, migration tests, `tests/fixtures/`, `docs/src/migration.md`, `CHANGELOG.md` |
 | Finding | Architect review B-02 |

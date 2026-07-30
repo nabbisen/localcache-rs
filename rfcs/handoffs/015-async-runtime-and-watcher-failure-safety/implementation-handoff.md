@@ -3,7 +3,7 @@
 ## 1. Summary
 
 Implement the M5 async-runtime and watcher failure-safety work defined by
-[RFC 015](../../accepted/015-async-runtime-and-watcher-failure-safety.md).
+[RFC 015](../../done/015-async-runtime-and-watcher-failure-safety.md).
 
 RFC 015 is Accepted. **Its requirements are authoritative.** This handoff sequences the work,
 names the exact call sites, and states the escalation rules; it adds no design decision and

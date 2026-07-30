@@ -3,7 +3,7 @@
 ## 1. Summary
 
 Implement the writable migration/data-integrity boundary defined by
-[RFC 010](../../accepted/010-transactional-payload-preserving-schema-migrations.md).
+[RFC 010](../../done/010-transactional-payload-preserving-schema-migrations.md).
 RFC 010 is Accepted; its requirements are authoritative. This handoff
 sequences the work and identifies review evidence but does not add or override
 design decisions.
@@ -19,7 +19,7 @@ The Accepted transition is commit
 3. focused design acceptance:
    `.git-exclude/reviewed/architect-rfc-010-focused-rereview-2026-07-21.md`;
 4. accepted RFC:
-   `rfcs/accepted/010-transactional-payload-preserving-schema-migrations.md`;
+   `rfcs/done/010-transactional-payload-preserving-schema-migrations.md`;
    and
 5. companion QA authority:
    `rfcs/handoffs/010-transactional-payload-preserving-schema-migrations/acceptance-qa-checklist.md`.
