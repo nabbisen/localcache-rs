@@ -7,6 +7,15 @@ on:
   # manual run
   workflow_dispatch:
 
+# RFC 009 R16 requires explicit least-privilege permissions and every third-party
+# action pinned to a reviewed immutable commit SHA. This workflow is the one
+# documented deviation from R16's "normally `contents: read`" default: publishing
+# to GitHub Pages requires `pages: write`, and `actions/deploy-pages` authenticates
+# via OIDC, which requires `id-token: write`. Both are the minimum for a Pages
+# deploy and neither grants repository-content, package, or registry write access.
+# Because this workflow does hold write scopes, its action pins matter more than
+# `ci.yaml`'s, not less — each SHA below was resolved from the tag this workflow
+# already referenced, and `actions/checkout` matches the pin `ci.yaml` uses.
 permissions:
   contents: read
   pages: write
@@ -25,11 +34,11 @@ jobs:
         working-directory: docs
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Set up Pages
         id: pages
-        uses: actions/configure-pages@v6
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
 
       - name: Install mdBook
         run: cargo install mdbook --no-default-features --features search --vers "^0.5" --locked
@@ -38,7 +47,7 @@ jobs:
         run: mdbook build
 
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v5
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:
           path: docs/book
 
@@ -51,4 +60,4 @@ jobs:
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5

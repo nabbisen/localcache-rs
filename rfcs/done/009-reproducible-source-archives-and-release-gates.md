@@ -522,6 +522,40 @@ release remains a separate owner-authorized action.
 
 ### R16 — Canonical producer and CI trust boundary
 
+
+> **⚠ R16 IS HALF-SUPERSEDED. Read this before applying anything below.**
+>
+> This requirement was written as one section but contains **two unrelated
+> contracts**, and only one of them is still in force.
+>
+> **RETIRED — the canonical producer contract** (from "The owner designates this
+> canonical RC producer environment" down to "...not compressed-byte identity"):
+> superseded in full by
+> [RFC 017](./017-content-reproducible-archives-without-a-container-producer.md),
+> accepted 2026-07-28. There is no pinned container producer, no
+> `[supported-platforms]` or `[supported-host-tools]` table, no
+> `RFC009_PRODUCER_IMAGE`, and no compressed-byte identity requirement anywhere in
+> the contract. `scripts/canonical-producer.sh` is deleted. RFC 017 replaces all of
+> it with an uncompressed-tar content digest, per-host determinism, and
+> `rc_eligible` derived from gates rather than environment. **Do not implement,
+> verify, or cite this half.**
+>
+> **STILL IN FORCE — the CI trust boundary** (from "CI workflow and job permissions
+> are explicitly read-only" to the end of R16): read-only permissions by default, no
+> `pull_request_target` execution of untrusted code, no publish/registry/repository
+> secrets in build jobs, and **every third-party action pinned to a reviewed
+> immutable commit SHA**. RFC 017 did not touch any of this. Both
+> `.github/workflows/ci.yaml` and `.github/workflows/docs.yaml` comply as of
+> 2026-07-30; `docs.yaml` documents its `pages: write` / `id-token: write` deviation
+> inline, since a Pages deploy cannot run read-only.
+>
+> *Recorded 2026-07-30 as M7 finding §5.1. The supersession was noted in this RFC's
+> decisions section but not at the point of use, so a reader arriving here concluded
+> a container producer was still mandatory. Marking it at the point of use is the
+> fix.*
+
+**↓ RETIRED BY RFC 017 — everything from here to the CI trust boundary below.**
+
 The owner designates this canonical RC producer environment:
 
 ```text
@@ -570,6 +604,8 @@ source-context and artifact-context gate in the run. Only an archive and
 SHA-256 digest produced by the canonical environment may become the release
 candidate. Other supported platforms prove behavior and normalized
 content-manifest equivalence, not compressed-byte identity.
+
+**↓ STILL IN FORCE — RFC 017 did not touch the CI trust boundary.**
 
 CI workflow and job permissions are explicitly read-only, normally:
 

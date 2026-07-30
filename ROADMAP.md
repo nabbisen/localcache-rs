@@ -429,11 +429,96 @@ per-release step, and it would replace one implicit behaviour with another.
 Publication remains a separate owner-authorized action under RFC 009 R15; the
 release tooling must never publish as a side effect.
 
+## Phase 22 — Consolidation and Measurement (target: v0.21.0) 🚧
+
+Approved by the owner on 2026-07-30. The version target is v0.21.0 because N1 is a
+breaking public-API change and cannot ride a patch release.
+
+### Goal and scope
+
+Phase 21 restored a trustworthy release baseline; Phase 22 pays down what it
+deliberately deferred and **establishes a performance evidence base that does not
+currently exist**.
+
+In scope: the two M7 findings, the error-type contract, dependency-advisory
+disposition, release-tooling hygiene, a large-namespace performance baseline, and
+the module-size debt with its register corrected.
+
+Out of scope, with reasons recorded below: performance *tuning*, cross-process
+read-write shared cache, and the `#[async_test]` macro.
+
+**This phase is mostly inward-facing.** N1's error types are the only user-visible
+change. That is a deliberate choice, not an oversight — the owner accepted it after
+it was raised as a concern.
+
+### Milestones
+
+Dependency order, not dates. Each is an independent review point.
+
+| Milestone | Scope | Authority | Depends on |
+|---|---|---|---|
+| **N0 — Close M7's notes** | RFC 009 R16 supersession banner; pin `docs.yaml`'s four actions; enable GitHub Pages | M7 findings §5.1/§5.2 | — |
+| **N1 — Error-type contract** | `#[non_exhaustive]` on `LocalFileCacheError`; distinct poisoning variant replacing the `UnsupportedFeature` misuse; migration note | **new RFC required** | — |
+| **N2 — Advisory dispositions** | Renew, resolve, or replace the `async-std` and `bincode` dispositions | owner decision per package | — |
+| **N3 — Release-tooling hygiene** | `command_version` stderr separation; `target_triple` from `rustc -vV`; thread real gate results into `rc_eligibility`; RFC 014 H1–H3; RFC 011 N-01/N-02 | recorded findings | N0 |
+| **N4 — Performance baseline** | Extend benchmarks to 10k/100k/1M; publish a measured profile; **no tuning** | measurement only | — |
+| **N5 — Module-size debt** | Risk-reducing splits only, per the corrected register below | — | N1 |
+| **N6 — Release and review** | v0.21.0 gates, evidence bundle, independent re-review | owner authorization | all |
+
+### Why performance *tuning* is not in this phase
+
+The backlog item read "performance tuning for very large namespaces (> 1M
+entries)." **No measurement supports it.** The benchmark suite's largest dataset is
+**250 entries** — four orders of magnitude below the stated target — and the schema
+carries two indexes (`idx_files_namespace_path`, `idx_files_lru`). Whether 1M
+entries is slow, where, and by how much is unknown.
+
+N4 therefore measures and publishes a profile; tuning becomes Phase 23, scoped from
+real numbers. Hypotheses to test first, from reading the code rather than measuring
+it: `cleanup_missing_files` (stats per entry, so I/O-bound and the most likely real
+problem), `path_glob` (compiles to SQLite `GLOB`, which cannot use the
+`(namespace, path)` index behind a leading wildcard), LRU eviction cost, and
+`preload`. **If N4 shows nothing is slow, that is a valid result** and retires the
+backlog item honestly.
+
+### Corrected module-size register
+
+The previous register named the wrong files. Measured ELOC (non-blank,
+non-comment), against the 500-ELOC guidance:
+
+| File | ELOC | Note |
+|---|---|---|
+| `crates/localcache/src/cache/engine.rs` | 946 | **largest in the crate; was absent from the register** |
+| `crates/localcache/src/db/indexes.rs` | 914 | |
+| `crates/cli/src/main.rs` | 728 | |
+| `crates/localcache/src/db/repository.rs` | 618 | |
+| `crates/localcache/src/db/schema/classifier.rs` | 586 | **was absent from the register** |
+| `crates/localcache/src/cache/query.rs` | 463 | **complies; remove from the register** |
+
+Splits are risk-reducing only. Size alone does not justify restructuring code whose
+behaviour is covered and stable.
+
+### Recorded conflict of interest
+
+N1's RFC would be authored and reviewed by the same high-capability model, with no
+separation — the same structural conflict recorded against RFC 017 at M7 §6. The
+owner is aware; how it is handled is an open decision.
+
 ## Future / Unscheduled
 
 *(all items from the previous Future section shipped in v0.17.0)*
 
-- Performance tuning for very large namespaces (> 1M entries)
-- Cross-process shared-cache via named shared memory (beyond RFC 004 scope)
-- `#[async_test]` proc-macro wrapper for unified async test authoring across
-  runtime backends (deferred from RFC 005)
+- **Performance tuning for very large namespaces (> 1M entries)** — deferred to
+  Phase 23 pending N4's measured profile. Do not scope as tuning before then.
+- **Cross-process shared-cache via named shared memory (beyond RFC 004 scope)** —
+  deferred. RFC 004 delivered read-only shared memory; "beyond" means cross-process
+  read-write, i.e. write coordination and lock contention layered directly on the
+  data-integrity guarantees Phase 21 just restored, while poison handling is still
+  deferred debt. **Blocked on a stated use case from the owner**, since
+  multi-reader/one-writer and symmetric multi-writer are different designs.
+- **`#[async_test]` proc-macro wrapper (deferred from RFC 005)** — deferred. A
+  proc-macro needs its own crate, making a **third publishable workspace member**:
+  a third release surface and a third thing a publish step can silently skip. v0.20.1
+  shipped `localcache-cli` late for exactly that reason (a bare `cargo publish`
+  honours `default-members`). Internal test ergonomics do not justify that risk yet;
+  revisit once `cargo publish --workspace` has been proven on a release.
