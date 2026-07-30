@@ -7,10 +7,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [0.20.1] — Unreleased
+## [0.20.1] — 2026-07-30
 
-RC placeholder date: this section targets the coming v0.20.1 corrective release closing Phase 21.
-The exact release date is set at M7 owner authorization, not before.
+Corrective release closing Phase 21. Release candidate `3005ac2`, accepted by the M7 architecture
+re-review on 2026-07-30, which changed the 2026-07-17 recommendation from No-Go to Go, and authorized
+by the project owner the same day.
 
 ### Security
 

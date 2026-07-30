@@ -126,7 +126,7 @@ has an independent **Go** review.
 | **M4 — MSRV and supply-chain recovery ✅** | Completed Jul 28 | Select a Rust-1.85-compatible SQLite stack or approve a new MSRV; update vulnerable dependencies; define advisory deny/warn/exception policy | Full declared-MSRV build succeeds; security policy gate is green or has approved, expiring exceptions |
 | **M5 — Async and maintainability hardening ✅** | Completed Jul 28 | Remove unnecessary unsafe generic casts; unify runtime panic/poison handling; surface watcher setup failures; perform only risk-reducing module splits | Runtime-backend tests and mutex-panic tests pass; no unexplained unsafe remains; focused review accepted |
 | **M6 — Release controls, docs, and RC ✅** | Completed Jul 30 | Correct CI/Makefile feature matrices; enforce warning policy; reconcile archive and published-crate legal-file rules; refresh docs/RFC final prose; assemble fresh evidence | Stable and MSRV gates, tests, clippy, docs, package/archive smoke, and advisory gate all pass on the RC |
-| **M7 — Independent review and release decision** | Next; only milestone remaining | Independent architecture re-review of the RC and extracted archive | Every blocker closed; reviewer verdict **Accept** or **Accept with notes**; owner authorizes release |
+| **M7 — Independent review and release decision ✅** | Completed Jul 30 | Independent architecture re-review of the RC and extracted archive | Every blocker closed; reviewer verdict **Accept with notes**; owner authorized release 2026-07-30 |
 
 #### M6 slice breakdown
 
@@ -370,6 +370,29 @@ Phase 21 is complete only when all of the following are true:
   results, and archive under review.
 - Independent architecture review changes the release recommendation from
   No-Go to Go, and the project owner authorizes the release.
+
+**Status 2026-07-30: eight of nine met; the release is authorized.** M7 returned
+**Accept with notes** on release candidate `3005ac2` (archive uncompressed-tar
+SHA-256 `46ac66b0616264ae289e089c161a51361fe8c55b67bfa5e8756b358b4e51534d`,
+CI run 30510083815 green on that commit), changing the 2026-07-17 recommendation
+from No-Go to Go, and the owner authorized release the same day.
+
+The unmet criterion is **one consistent contract**, on two documentation and CI
+findings that do not affect the crate, the archive, or any published artifact:
+
+- RFC 009 **R16 is half-retired and marked nowhere**. Its canonical-producer
+  designation was superseded by RFC 017, while its CI trust-boundary clauses —
+  read-only permissions, no `pull_request_target`, immutable action SHAs —
+  remain fully in force. A reader arriving at R16 cannot tell which half
+  applies.
+- **`docs.yaml` violates R16's live action-pinning clause**: its four actions use
+  mutable tags (`@v6`/`@v5`) while the workflow holds `pages: write` and
+  `id-token: write`. `.github/workflows/ci.yaml` pins all five of its actions to
+  commit SHAs and is compliant. This should be fixed **before** GitHub Pages is
+  enabled.
+
+Both are tracked for correction. Neither blocks the release, and the owner
+accepted the notes explicitly.
 
 ## Future / Unscheduled
 
