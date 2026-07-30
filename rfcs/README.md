@@ -72,7 +72,9 @@ The "Background" section is optional in both templates.
 
 ### Proposed
 
-*(none)*
+| RFC | Title | Target |
+|-----|-------|--------|
+| [019](./proposed/019-standing-dispositions-for-unmaintained-dependencies.md) | Standing Dispositions for Unmaintained Dependencies | Phase 22 N2 |
 
 ### Archive
 
