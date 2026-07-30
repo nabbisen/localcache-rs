@@ -42,8 +42,8 @@ the 2026-07-17 independent architecture review before new feature work resumes.
 | M3 ✅ | Completed Jul 23 | Read-only boundaries and Unicode/path handling are non-bypassable and non-panicking |
 | M4 ✅ | Completed Jul 28 | Declared MSRV and dependency-security policy are verified |
 | M5 ✅ | Completed Jul 28 | Async/watcher failure handling and highest-risk maintainability debt are addressed |
-| M6 | Tooling complete; RC production run outstanding | CI, documentation, release gates, and fresh RC evidence agree |
-| M7 | After the RC exists | Independent architecture review and owner release decision |
+| M6 ✅ | Completed Jul 30 | CI, documentation, release gates, and fresh RC evidence agree |
+| M7 | Next; only milestone remaining | Independent architecture review and owner release decision |
 
 Two bounded residual corrections—partial-hash `explain` comparison and the
 CLI import overwrite contract—are complete with regression evidence. They do not
@@ -106,10 +106,21 @@ toolchain; `cargo package` runs under stable by design, because cargo 1.85
 cannot see a just-packaged workspace sibling and would resolve the published
 `localcache` instead.
 
-**M6 is not yet closed.** M6e's own deliverable — the v0.20.1 release-candidate
-archive and its evidence bundle — has not been produced durably; the
-verification runs above were ephemeral by design. One task remains before the
-independent M7 review can begin. These closures authorize no release action.
+**M6 is complete.** The release candidate is commit `3005ac2`, whose project
+source archive has uncompressed-tar SHA-256 `46ac66b0…`, verified by a green CI
+run on that exact commit — all jobs, including the full feature matrix, the
+declared MSRV, and the advisory gate.
+
+Closing M6e took three release-candidate re-cuts. The first push of the phase
+revealed that CI had never run any Phase 21 commit, and two
+environment-dependent defects surfaced once it did: a unit test that required
+`mdbook`/`cargo`/`rustc` in a job that installs none of them, and a
+`cargo metadata` parse that broke when a cold cargo cache made cargo write
+progress to stderr. Both were invisible on a maintainer host with every tool
+installed and a warm cache. A restricted `PATH` and an empty `CARGO_HOME` are now
+standing verification requirements for release-tooling changes.
+
+M7 is the only remaining milestone. These closures authorize no release action.
 
 The virtual-workspace relocation at `fe9fe88` was accepted for continued
 development. Its recorded legal-file publication blocker never existed and was
