@@ -505,3 +505,122 @@ The fix changes a tracked file, so `7cdb674`'s archive digest is void.
 3. The owner pushes; **CI must be green on the new RC commit** before M7 begins. Report the CI run ID
    and its per-job results, and treat a red or skipped required job as a finding rather than something
    to explain away.
+
+> **Status 2026-07-30: RC-3 is confirmed fixed — `source-integrity` passes in CI. But the RC at
+> `c2da67f` is void:** unblocking that job exposed two further failures. See § "RC-4". Keep
+> `.git-exclude/release-candidate-v0.20.1-rc2/` as evidence.
+
+---
+
+## RC-4 — `cargo metadata` parsing breaks on a cold cargo cache
+
+*Added 2026-07-30, from CI run `30507028747` on `c2da67f` — the first Phase 21 run in which the
+archive and doc-package jobs actually executed.*
+
+### The finding
+
+`Docs and package verification` and `Project archive` both failed with the same error, and
+`Release gate aggregation` then failed closed (correctly):
+
+```
+release: FAILED: Cargo metadata was not valid JSON
+[version-metadata] cargo metadata --locked --format-version 1
+```
+
+Everything else passed — including, for the first time in this phase, the declared MSRV in a clean
+environment, all 17 feature-matrix rows, workspace doctests, and the advisory gate against a live
+RustSec database.
+
+### Root cause
+
+`run_gate` (`scripts/release.py:112-133`) captures output with **`stderr=subprocess.STDOUT`**, merging
+stderr into stdout. `cargo_metadata` (`scripts/release.py:309-323`) then parses that merged stream with
+`json.loads`.
+
+On a **cold** cargo cache, `cargo metadata` writes progress lines to **stderr**, so the merged stream is
+prose followed by JSON. The CI evidence shows it, with `exit-status: 0` — cargo itself succeeded:
+
+```
+gate: version-metadata
+exit-status: 0
+output:
+    Updating crates.io index
+ Downloading crates ...
+  Downloaded anstyle-query v1.1.5
+```
+
+Reproduced locally in one command:
+
+```
+$ CARGO_HOME=<empty temp dir> cargo metadata --locked --format-version 1 > out.txt 2> err.txt
+EXIT=0
+out.txt → {"packages":[{"name":"aho-corasick",…     # valid JSON on its own
+err.txt →     Updating crates.io index
+```
+
+**stdout alone is valid JSON.** The ANSI codes from `CARGO_TERM_COLOR: always` are incidental — even
+uncoloured, "Updating crates.io index" breaks the parse. The defect is the merge.
+
+`json.loads` appears **exactly once** in the file, inside `cargo_metadata`, which is called from
+`artifact` (line 557), `doc-package` (line 776), and `source` (line 1090). One fix covers all three.
+`msrv_mode` does not call it, which is why the MSRV job passed.
+
+Locally `~/.cargo` is always warm, so cargo prints nothing and the stream is pure JSON. That is why
+every local `release` run since RC-1 passed.
+
+### Required implementation
+
+1. **Stop parsing a stderr-merged stream.** Keep stderr out of the value `cargo_metadata` parses while
+   still recording it in the evidence log — R14 requires the command's output be captured, so stderr
+   must stay in `gate.log`, just not concatenated into the parsed string. The natural shape is an opt-in
+   on `run_gate` (e.g. `separate_stderr`) that captures both streams independently, logs both, and
+   returns only stdout, with `cargo_metadata` as its sole caller.
+
+2. **Make the distinction explicit.** The merge is correct for the ~30 gates whose output is only
+   logged and wrong for any gate whose stdout is machine-read. Leave a comment at `run_gate` saying so,
+   so the next parsed gate does not silently reintroduce this.
+
+**Do not** strip a non-JSON prefix, search for the first `{`, or suppress cargo's output with
+`--quiet` / `CARGO_TERM_*`. All three leave the defect class in place — the next diagnostic cargo emits
+breaks it again.
+
+### Required evidence
+
+**Reproduce the failure and the fix with a cold cargo cache**, as RC-3 required a restricted `PATH`:
+
+- **Before:** `CARGO_HOME=<empty temp dir> python3 scripts/release.py source --output-dir <tmp>` must
+  fail with `Cargo metadata was not valid JSON`. If it does not, **stop and report** — your
+  reproduction is not reproducing CI.
+- **After:** the same cold-`CARGO_HOME` command must succeed.
+- Confirm the evidence log still contains cargo's stderr text, so R14 coverage did not regress.
+- Full suite count and result, including under RC-3's restricted `PATH` — do not regress that.
+
+A pass with your warm `~/.cargo` proves nothing here, exactly as a pass with mdBook installed proved
+nothing in RC-3.
+
+### Standing verification technique — apply from now on
+
+For anything touching `scripts/`, run both restrictions before requesting review:
+
+| Restriction | Reproduces |
+|---|---|
+| `PATH` without `cargo`/`rustc`/`mdbook`/`rustup`/`cargo-audit` | the `source-integrity` job (RC-3) |
+| `CARGO_HOME` pointed at an empty directory | a fresh runner's cold cache (RC-4) |
+
+One command each, and each has now caught a release-blocking defect that local verification missed.
+
+### Then re-cut the RC, a third time
+
+1. Re-run § "M6e — RC production run" into a **new** durable directory
+   (`.git-exclude/release-candidate-v0.20.1-rc3/`). Keep both earlier bundles as evidence.
+2. Report the new RC commit and uncompressed-tar digest.
+3. Owner pushes; CI must be green. Report the run ID and every job's result.
+
+Do not assume this is the last iteration. If a third push exposes a third environment-dependent defect,
+that is the process working — report it plainly rather than trying to make the run green.
+
+### Optional, if you are editing `scripts/release.py` anyway
+
+`toolchain_identity`'s `target_triple` is built as
+`f"{platform.machine()}-{platform.system().lower()}"` → `x86_64-linux`, which is not a Rust target
+triple; `rustc -vV`'s `host:` line is authoritative. Two lines. Take it or leave it, but say which.

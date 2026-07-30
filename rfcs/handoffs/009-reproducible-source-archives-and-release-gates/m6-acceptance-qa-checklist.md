@@ -235,6 +235,23 @@ the handoff § "M6e — RC production run".*
       job is failed or skipped. *(This is the check no local run can substitute for — the entire RC-3
       finding exists because a green local suite was treated as evidence about CI.)*
 
+### RC-4 — cold-cache metadata parsing (added 2026-07-30)
+
+*RC-3 is confirmed fixed in CI. The RC at `c2da67f` is void: two newly-reachable jobs failed.*
+
+- [ ] `cargo_metadata` no longer parses a stderr-merged stream; stdout is parsed alone.
+- [ ] Cargo's stderr text is **still present** in the evidence log — R14 coverage did not regress.
+- [ ] **Before** the fix, `CARGO_HOME=<empty temp dir> python3 scripts/release.py source` **fails** with
+      `Cargo metadata was not valid JSON` — demonstrated, proving the reproduction reproduces CI.
+- [ ] **After** the fix, the same cold-`CARGO_HOME` command **succeeds**.
+- [ ] The fix is stream separation — **not** prefix stripping, first-`{` searching, or `--quiet` /
+      `CARGO_TERM_*` suppression.
+- [ ] A comment at `run_gate` records which callers may and may not merge stderr.
+- [ ] RC-3's restricted-`PATH` run still passes — no regression.
+- [ ] The RC was re-cut into a **third** new durable directory; both earlier bundles are intact.
+- [ ] **CI is green on the new RC commit**, run ID and every job's result reported. No required job
+      failed or skipped.
+
 ## Phase exit readiness (verify before requesting M7)
 
 - [ ] All eight blocking findings B-01…B-08 are closed with tests or reproducible gate evidence.
