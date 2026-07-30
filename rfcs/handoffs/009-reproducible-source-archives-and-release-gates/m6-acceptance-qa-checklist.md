@@ -215,6 +215,26 @@ the handoff § "M6e — RC production run".*
       pending owner-authorized push. It must not be silently omitted, and no historical CI run from
       another commit may be substituted.
 
+### RC-3 — test isolation and a green CI run (added 2026-07-30)
+
+*The RC at `7cdb674` is void: CI was red on it. These checks gate the re-cut RC.*
+
+- [ ] `test_toolchain_identity_returns_every_r4_field` no longer invokes real host binaries; the
+      subprocess layer is stubbed.
+- [ ] The full suite passes with `mdbook`, `cargo`, and `rustc` **unavailable** — demonstrated under a
+      restricted `PATH`, not asserted from a maintainer-host run.
+- [ ] The suite was audited for other tests invoking real `git`, `cargo`, `rustc`, `mdbook`, `rustup`,
+      or `cargo-audit`, **by execution** with those binaries removed. Findings reported, "nothing else"
+      included.
+- [ ] `source-integrity` remains toolchain-free — no mdBook or Rust install was added to that job.
+- [ ] Nothing outside the test file changed: no `Cargo.toml`, no gate semantics, no `docs.yaml`.
+- [ ] The RC was re-cut into a **new** durable directory; `.git-exclude/release-candidate-v0.20.1/` is
+      intact and unmodified as the evidence for this finding.
+- [ ] The new RC commit SHA and new uncompressed-tar digest are reported.
+- [ ] **CI is green on the new RC commit**, with the run ID and per-job results reported. No required
+      job is failed or skipped. *(This is the check no local run can substitute for — the entire RC-3
+      finding exists because a green local suite was treated as evidence about CI.)*
+
 ## Phase exit readiness (verify before requesting M7)
 
 - [ ] All eight blocking findings B-01…B-08 are closed with tests or reproducible gate evidence.

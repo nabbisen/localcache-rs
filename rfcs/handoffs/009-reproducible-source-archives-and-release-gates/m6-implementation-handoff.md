@@ -420,3 +420,88 @@ secret scan; and the durable path of the bundle. Disclose anything you did not r
 
 Above all: **do not report a pass for any step you did not execute**, and if the RC bundle differs in
 any way from what this section describes, say so rather than reconciling it silently.
+
+> **Status 2026-07-30: the production run was performed correctly and the archive verified, but the
+> resulting RC at `7cdb674` is void — CI is red on that commit.** See § "RC-3" below. The bundle at
+> `.git-exclude/release-candidate-v0.20.1/` must be kept as evidence, not deleted or overwritten.
+
+---
+
+## RC-3 — a unit test requires host tools the CI job does not install
+
+*Added 2026-07-30, after the owner-authorized push of `7cdb674` produced the first CI run of Phase 21.*
+
+### The finding
+
+CI run `30505500545` on `7cdb674`: `source-integrity` **failed**, and all eight downstream jobs skipped
+because each `needs` it.
+
+```
+Ran 132 tests in 3.243s
+FAILED (errors=1)
+
+ERROR: test_toolchain_identity_returns_every_r4_field
+  File "scripts/release.py", line 291, in toolchain_identity
+    "mdbook_version": command_version(["mdbook", "--version"]),
+FileNotFoundError: [Errno 2] No such file or directory: 'mdbook'
+  → ReleaseError: required tool is unavailable: mdbook
+```
+
+`test_toolchain_identity_returns_every_r4_field`
+(`scripts/tests/test_release_runner.py:416`) calls the **real** `RUNNER.toolchain_identity()`, which
+shells out to `mdbook`, `git`, `cargo`, and `rustc`. The `source-integrity` job
+(`.github/workflows/ci.yaml:22-30`) installs none of them — it is `actions/checkout` followed by
+`python3 -m unittest discover`. It fails on `mdbook` first; `cargo_version` and `rustc_version` would
+fail identically.
+
+It passes on the maintainer host only because all four binaries happen to be installed there.
+Introduced at `25b1a4f`, so it has been failing in CI since M6d; nothing was pushed for 62 commits, so
+nobody saw it.
+
+**This is the anti-pattern you correctly avoided in RC-2.** Your RC-2 review request reasoned that the
+`source-integrity` job "runs this test suite with no Rust toolchain installed at all, so any test
+touching real `rustup` would be flaky-to-broken there," and you split
+`matching_installed_toolchains` into a pure function for exactly that reason. This test is the outlier
+in the same file. The reviewer praised that reasoning and still failed to notice this — the miss is
+shared, and the reviewer's is larger: three separate reviews reported "132 tests pass" from the wrong
+environment.
+
+### Required implementation
+
+1. **Decouple the test from host tools.** Its purpose is to assert every R4 field is *present*, which
+   needs no real binaries. Stub the subprocess layer — patch `command_version` — and assert the field
+   set. Use the pure/impure split already established in this file; this test is the exception, not the
+   precedent.
+
+   **Do not fix this by installing mdBook and a Rust toolchain into the `source-integrity` job.** That
+   job is deliberately toolchain-free and fast, and adding two installs to satisfy one unit test
+   inverts the dependency. If you think the real `toolchain_identity()` deserves execution coverage
+   somewhere, propose a job that already has the tools and say so — do not add it silently.
+
+2. **Audit the rest of the suite for the same leak.** Any other test invoking real `git`, `cargo`,
+   `rustc`, `mdbook`, `rustup`, or `cargo-audit` fails in `source-integrity` for the same reason.
+   Determine this by **running the suite with those binaries unavailable**, not by reading the file.
+   Report what you find, including "nothing else" if that is the answer.
+
+3. **Change nothing else.** No `Cargo.toml`, no gate semantics, no `docs.yaml` — that workflow has its
+   own failure and its own R16 pinning gap, both pending an owner decision, tracked separately.
+
+### Required evidence
+
+- The test passes **with `mdbook`, `cargo`, and `rustc` unavailable** — demonstrate it, for example by
+  running the suite under a `PATH` that excludes them. **A pass on your own host proves nothing here;
+  that is the entire finding.**
+- Full suite count and result under that constraint.
+- The item-2 audit result.
+
+### Then re-cut the RC
+
+The fix changes a tracked file, so `7cdb674`'s archive digest is void.
+
+1. Re-run § "M6e — RC production run" in full, into a **new** durable directory
+   (e.g. `.git-exclude/release-candidate-v0.20.1-rc2/`). **Do not overwrite or edit**
+   `.git-exclude/release-candidate-v0.20.1/` — it is the evidence for this finding.
+2. Report the new RC commit SHA and the new uncompressed-tar digest.
+3. The owner pushes; **CI must be green on the new RC commit** before M7 begins. Report the CI run ID
+   and its per-job results, and treat a red or skipped required job as a finding rather than something
+   to explain away.
