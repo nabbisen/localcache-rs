@@ -458,12 +458,34 @@ Dependency order, not dates. Each is an independent review point.
 | Milestone | Scope | Authority | Depends on |
 |---|---|---|---|
 | **N0 — Close M7's notes** | RFC 009 R16 supersession banner; pin `docs.yaml`'s four actions; enable GitHub Pages | M7 findings §5.1/§5.2 | — |
-| **N1 — Error-type contract** | `#[non_exhaustive]` on `LocalFileCacheError`; distinct poisoning variant replacing the `UnsupportedFeature` misuse; migration note | **new RFC required** | — |
+| **N1 — Error-type contract ✅** | `#[non_exhaustive]` on `LocalFileCacheError`; distinct poisoning variant replacing the `UnsupportedFeature` misuse; migration note | **RFC 018** (Accepted) | — |
 | **N2 — Advisory dispositions** | Renew, resolve, or replace the `async-std` and `bincode` dispositions | owner decision per package | — |
 | **N3 — Release-tooling hygiene** | `command_version` stderr separation; `target_triple` from `rustc -vV`; thread real gate results into `rc_eligibility`; RFC 014 H1–H3; RFC 011 N-01/N-02 | recorded findings | N0 |
 | **N4 — Performance baseline ✅** | Extend benchmarks to 10k/100k/1M; publish a measured profile; **no tuning** | measurement only | — |
 | **N5 — Module-size debt** | Risk-reducing splits only, per the corrected register below | — | N1 |
 | **N6 — Release and review** | v0.21.0 gates, evidence bundle, independent re-review | owner authorization | all |
+
+### N1 completion
+
+RFC 018 was implemented and independently accepted at commit `1048686`.
+`LocalFileCacheError` is now `#[non_exhaustive]` with a `Poisoned { resource:
+&'static str }` variant; `ConnectionPool`, `AsyncCacheEngine`, `CacheWatcher`
+construction, and `ReadPool` all report poisoning instead of returning
+`UnsupportedFeature` or — in `ReadPool`'s case — silently recovering the stale
+guard. JSON codec failures now return `Serialization`. 401 tests pass, the full
+feature matrix and the declared-MSRV matrix are green, and no schema, payload wire
+format, SQL, or public type signature changed.
+
+**This is a breaking change and fixes v0.21.0 as the next version**, since an
+exhaustive downstream `match` must now add a `_` arm.
+
+Two things worth recording. `ReadPool::checkout`'s `try_lock` scan still skips a
+poisoned slot exactly as it skips a busy one — only the blocking fallback reports
+poisoning — so contention was not turned into an error, which was the likeliest
+regression in the task. And the exhaustiveness guarantee is enforced by a
+`compile_fail` doctest whose validity was confirmed by mutation: adding a `_` arm
+makes the test fail, so it passes only because the match is genuinely
+non-exhaustive.
 
 ### Why performance *tuning* is not in this phase
 
@@ -507,6 +529,20 @@ Full findings, limitations, and Phase 23 ranking:
 limitations matter: tmpfs **understates** the I/O-bound `cleanup_missing_files`
 figure, and a single namespace holds every entry, which maximises what a
 `namespace=?` plan scans.
+
+### Deferred register
+
+Recorded findings not scheduled into a milestone. Each is tracked, none is lost.
+
+| Item | Origin | Note |
+|---|---|---|
+| `ConnectionPool`'s batch methods return **one** element on lock failure, regardless of `paths.len()` | N1 review §4.1 | Latent correctness bug, pre-existing. A caller doing `paths.iter().zip(results)` silently drops every path but one. `ReadPool` now guarantees and documents one result per path; `ConnectionPool` does neither, so the two pool types disagree on a contract callers would assume is shared. Only manifests on a poisoned lock. Fix alongside future `ConnectionPool` work rather than standalone. |
+| Pin the exhaustiveness `compile_fail` doctest to `E0004` | N1 review §3.1 | Optional hardening. Makes permanent the guarantee currently established only by mutation testing. |
+| `command_version` merges stderr into strings that are prefix-parsed **and** stored as R4 evidence | M7 §5.3 | Same class as RC-4 one layer over; fail-closed. Scheduled in N3. |
+| `toolchain_identity`'s `target_triple` is `x86_64-linux`, not a Rust target triple | M7 §5.3 | Redundant with the richer `platform` field. Scheduled in N3. |
+| `rc_eligible` is three hard-coded `True` literals; derivation lives in control flow | M7 §5.3 | Fail-closed. RFC 017 R3 says "derives from gates". Scheduled in N3. |
+| RFC 014 H1–H3; RFC 011 N-01/N-02 | Phase 21 | Verified safe; hardening only. Scheduled in N3. |
+| `preload`, concurrent access, bincode codec at scale, watcher on large trees, cold-open cost | N4 §6 | Unmeasured. Candidate additions to the scale profile; none blocks Phase 23 scoping. |
 
 ### Corrected module-size register
 
