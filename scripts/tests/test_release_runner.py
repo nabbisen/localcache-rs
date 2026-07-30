@@ -414,7 +414,17 @@ class ReleaseRunnerTests(unittest.TestCase):
         self.assertFalse((SCRIPTS / "canonical-producer.sh").exists())
 
     def test_toolchain_identity_returns_every_r4_field(self) -> None:
-        identity = RUNNER.toolchain_identity()
+        # RC-3: toolchain_identity() shells out to git/python3/cargo/rustc/mdbook,
+        # but the source-integrity CI job that runs this suite does not install
+        # a Rust toolchain or mdBook. Stub command_version rather than depend on
+        # any of those binaries being present in whatever environment runs this
+        # test -- the field-presence assertion needs no real subprocess.
+        original_command_version = RUNNER.command_version
+        RUNNER.command_version = lambda command: f"stub {command[0]} 0.0.0"
+        try:
+            identity = RUNNER.toolchain_identity()
+        finally:
+            RUNNER.command_version = original_command_version
         for field in (
             "platform",
             "target_triple",
