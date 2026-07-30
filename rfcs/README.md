@@ -69,12 +69,11 @@ The "Background" section is optional in both templates.
 | RFC | Title | Target |
 |-----|-------|--------|
 | [018](./accepted/018-truthful-error-taxonomy.md) | Truthful Error Taxonomy and a Forward-Compatible Error Enum | Phase 22 N1 (v0.21.0) |
+| [019](./accepted/019-standing-dispositions-for-unmaintained-dependencies.md) | Standing Dispositions for Unmaintained Dependencies | Phase 22 N2 |
 
 ### Proposed
 
-| RFC | Title | Target |
-|-----|-------|--------|
-| [019](./proposed/019-standing-dispositions-for-unmaintained-dependencies.md) | Standing Dispositions for Unmaintained Dependencies | Phase 22 N2 |
+*(none)*
 
 ### Archive
 
