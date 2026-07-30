@@ -70,7 +70,9 @@ The "Background" section is optional in both templates.
 
 ### Proposed
 
-*(none)*
+| RFC | Title | Target |
+|-----|-------|--------|
+| [018](./proposed/018-truthful-error-taxonomy.md) | Truthful Error Taxonomy and a Forward-Compatible Error Enum | Phase 22 N1 (v0.21.0) |
 
 ### Archive
 
