@@ -50,6 +50,16 @@ Valid legacy public indexes remain listable, usable, and removable even when
 their names no longer satisfy the creation grammar. A removed legacy spelling
 cannot necessarily be recreated.
 
+### `ReadPool` poisoning (v0.21.0)
+
+Every `ReadPool<T>` read method already returns `Result<_, LocalFileCacheError>`
+(or `Vec<Result<_, LocalFileCacheError>>` for the batch methods); no method's
+type signature changed. What changed is behaviour: a poisoned connection slot
+previously recovered silently (`unwrap_or_else(|e| e.into_inner())`) and now
+returns `LocalFileCacheError::Poisoned { resource: "ReadPool" }` instead — for
+the batch methods, one such error per requested path. See
+[Error Handling](./errors.md) for the full migration note.
+
 ## Feature-gated types
 
 | Type | Feature | Description |

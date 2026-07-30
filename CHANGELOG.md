@@ -7,6 +7,34 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [Unreleased]
+
+Phase 22 N1: [RFC 018](rfcs/accepted/018-truthful-error-taxonomy.md) — truthful error taxonomy.
+**Breaking; targets v0.21.0.**
+
+### Changed
+
+- `LocalFileCacheError` is now `#[non_exhaustive]`. Existing exhaustive `match`
+  expressions must add a `_` arm.
+- Added `LocalFileCacheError::Poisoned { resource: &'static str }`. Lock
+  poisoning in `ConnectionPool`, `AsyncCacheEngine`, `CacheWatcher`
+  construction, and `ReadPool` now returns `Poisoned` instead of
+  `UnsupportedFeature`.
+- **Behaviour change:** `ReadPool`'s read methods were previously infallible
+  under lock poisoning and silently recovered the stale guard
+  (`unwrap_or_else(|e| e.into_inner())`). They now return
+  `Poisoned { resource: "ReadPool" }` — the batch methods (`batch_get`,
+  `batch_get_fresh`, `check_status_batch`) return one such error per
+  requested path. No method's type signature changed.
+- **Behaviour change, not a rename:** JSON encode and decode failures
+  (`serialize_json`, `deserialize_json`) now return `Serialization` instead
+  of `UnsupportedFeature`. Code matching `UnsupportedFeature` to catch JSON
+  errors stops matching.
+
+No schema, payload wire format, SQL, or method signature changed; existing
+databases open unchanged. See [Error Handling](docs/src/errors.md#v0210-migration-note)
+for the full migration note.
+
 ## [0.20.1] — 2026-07-30
 
 Corrective release closing Phase 21. Release candidate `3005ac2`, accepted by the M7 architecture

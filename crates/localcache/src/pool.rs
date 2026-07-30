@@ -330,9 +330,11 @@ where
     // ------------------------------------------------------------------
 
     fn lock(&self) -> Result<MutexGuard<'_, CacheEngine<T>>, LocalFileCacheError> {
-        self.inner.lock().map_err(|_| {
-            LocalFileCacheError::UnsupportedFeature("ConnectionPool mutex was poisoned".into())
-        })
+        self.inner
+            .lock()
+            .map_err(|_| LocalFileCacheError::Poisoned {
+                resource: "ConnectionPool",
+            })
     }
 }
 

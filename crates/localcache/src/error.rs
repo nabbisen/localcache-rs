@@ -3,7 +3,37 @@
 use std::path::PathBuf;
 
 /// All errors that can occur when using `localcache`.
+///
+/// # Exhaustiveness
+///
+/// This enum is `#[non_exhaustive]`: a `match` without a `_` arm fails to
+/// compile from outside this crate, even when every variant currently known
+/// is listed, so a new variant can never again become a breaking change.
+///
+/// ```compile_fail
+/// # use localcache::LocalFileCacheError;
+/// fn handle(err: LocalFileCacheError) {
+///     match err {
+///         LocalFileCacheError::Database(_) => {}
+///         LocalFileCacheError::Io(_) => {}
+///         LocalFileCacheError::Serialization(_) => {}
+///         LocalFileCacheError::FileNotFound { .. } => {}
+///         LocalFileCacheError::UnsupportedFeature(_) => {}
+///         LocalFileCacheError::InvalidPath { .. } => {}
+///         LocalFileCacheError::ReadOnly => {}
+///         LocalFileCacheError::UnknownEncoding(_) => {}
+///         LocalFileCacheError::PayloadVersionMismatch { .. } => {}
+///         LocalFileCacheError::Poisoned { .. } => {}
+///         #[cfg(feature = "encryption")]
+///         LocalFileCacheError::EncryptionError(_) => {}
+///         #[cfg(any(feature = "async", feature = "async-std", feature = "smol"))]
+///         LocalFileCacheError::AsyncTaskPanicked => {}
+///         // deliberately no `_` arm
+///     }
+/// }
+/// ```
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum LocalFileCacheError {
     /// An error from the underlying SQLite database.
     #[error("database error: {0}")]
@@ -42,6 +72,13 @@ pub enum LocalFileCacheError {
     /// A payload's schema version does not match the configured version.
     #[error("payload version mismatch: stored={stored}, expected={expected}")]
     PayloadVersionMismatch { stored: u32, expected: u32 },
+
+    /// A lock guarding shared cache state was poisoned by a panic in another
+    /// thread. The data behind it may reflect a partially completed operation;
+    /// this error stops the panic propagating to callers who did nothing wrong,
+    /// and does not attempt to repair state.
+    #[error("lock poisoned: {resource}")]
+    Poisoned { resource: &'static str },
 
     /// An AES-256-GCM encryption or decryption failure.
     ///

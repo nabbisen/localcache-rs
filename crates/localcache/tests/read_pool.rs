@@ -192,6 +192,85 @@ fn read_pool_concurrent_lookups_across_threads() {
     assert_eq!(pool.entry_count().unwrap(), 10);
 }
 
+// RFC 018 R4 regression guard: with exactly one slot, `checkout()`'s
+// `try_lock` scan has only one slot to try, so every checkout beyond the
+// first is guaranteed to take the blocking fallback path under real
+// contention. None of them may error — contention must never be mistaken
+// for poisoning.
+#[test]
+fn read_pool_single_slot_contention_without_poisoning_still_succeeds() {
+    let dir = TempDir::new().unwrap();
+    let db = make_populated_db(&dir);
+    let pool: ReadPool<Vec<f32>> = ReadPool::open(
+        CacheOptions {
+            database_path: db,
+            ..CacheOptions::default()
+        },
+        1,
+    )
+    .unwrap();
+
+    let mut handles = Vec::new();
+    for t in 0..8u32 {
+        let pool = pool.clone();
+        let path = dir.path().join(format!("f0{}.txt", t % 10));
+        handles.push(thread::spawn(move || {
+            for _ in 0..20 {
+                pool.get_if_fresh(&path)
+                    .expect("contended single-slot checkout must not error");
+            }
+        }));
+    }
+    for h in handles {
+        h.join().expect("thread panicked");
+    }
+}
+
+#[test]
+fn read_pool_poisoned_slot_yields_poisoned_error() {
+    let dir = TempDir::new().unwrap();
+    let db = make_populated_db(&dir);
+    let pool: ReadPool<Vec<f32>> = ReadPool::open(
+        CacheOptions {
+            database_path: db,
+            ..CacheOptions::default()
+        },
+        1,
+    )
+    .unwrap();
+
+    // Poison the pool's one slot: `query_run`'s closure holds the slot's
+    // lock guard on the stack for the duration of the call, so a panic
+    // inside it poisons the mutex when the guard drops during unwind.
+    let poison_pool = pool.clone();
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = poison_pool.query_run(|_q| panic!("intentional test panic"));
+    }));
+
+    let path = dir.path().join("f00.txt");
+    let result = pool.get_if_fresh(&path);
+    assert!(
+        matches!(
+            result,
+            Err(LocalFileCacheError::Poisoned {
+                resource: "ReadPool"
+            })
+        ),
+        "expected Poisoned {{ resource: \"ReadPool\" }}, got {result:?}"
+    );
+
+    // Batch variants report Poisoned per element rather than panicking or
+    // silently recovering.
+    let batch = pool.batch_get_fresh(&[path]);
+    assert_eq!(batch.len(), 1);
+    assert!(matches!(
+        batch[0],
+        Err(LocalFileCacheError::Poisoned {
+            resource: "ReadPool"
+        })
+    ));
+}
+
 #[test]
 fn read_pool_concurrent_writer_and_readers() {
     // Writer + 4-slot ReadPool running simultaneously — no SQLITE_BUSY.

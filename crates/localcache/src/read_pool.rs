@@ -148,17 +148,27 @@ where
     /// `try_lock` and falling back to a blocking `lock` on the
     /// round-robin slot if all are busy.  No lock-ordering issues
     /// because only one slot is ever held at a time.
-    fn checkout(&self) -> MutexGuard<'_, CacheEngine<T>> {
+    ///
+    /// RFC 018 R4: a poisoned lock is reported, not silently recovered from.
+    /// The `try_lock` scan still treats a poisoned slot the same as a busy
+    /// one — it just moves on, exactly as before — so contention is never
+    /// mistaken for poisoning. Only the blocking fallback, which has no
+    /// other slot left to try, turns poisoning into an error.
+    fn checkout(&self) -> Result<MutexGuard<'_, CacheEngine<T>>, LocalFileCacheError> {
         let len = self.slots.len();
         let start = self.next.fetch_add(1, Ordering::Relaxed) % len;
         for i in 0..len {
             let idx = (start + i) % len;
             if let Ok(g) = self.slots[idx].try_lock() {
-                return g;
+                return Ok(g);
             }
         }
         // All slots busy — block on the round-robin slot.
-        self.slots[start].lock().unwrap_or_else(|e| e.into_inner())
+        self.slots[start]
+            .lock()
+            .map_err(|_| LocalFileCacheError::Poisoned {
+                resource: "ReadPool",
+            })
     }
 
     // ------------------------------------------------------------------
@@ -177,7 +187,7 @@ where
     where
         T: Clone,
     {
-        self.checkout().get(path)
+        self.checkout()?.get(path)
     }
 
     /// Return the cached entry only if it is still fresh.
@@ -188,10 +198,13 @@ where
     where
         T: Clone,
     {
-        self.checkout().get_if_fresh(path)
+        self.checkout()?.get_if_fresh(path)
     }
 
     /// Fetch multiple entries by path.
+    ///
+    /// If the pool's connection is poisoned, every element is
+    /// `Err(LocalFileCacheError::Poisoned { resource: "ReadPool" })`.
     pub fn batch_get<P: AsRef<Path>>(
         &self,
         paths: &[P],
@@ -199,10 +212,23 @@ where
     where
         T: Clone,
     {
-        self.checkout().batch_get(paths)
+        match self.checkout() {
+            Ok(guard) => guard.batch_get(paths),
+            Err(_) => paths
+                .iter()
+                .map(|_| {
+                    Err(LocalFileCacheError::Poisoned {
+                        resource: "ReadPool",
+                    })
+                })
+                .collect(),
+        }
     }
 
     /// Fetch multiple entries, returning `None` for stale or missing ones.
+    ///
+    /// If the pool's connection is poisoned, every element is
+    /// `Err(LocalFileCacheError::Poisoned { resource: "ReadPool" })`.
     pub fn batch_get_fresh<P: AsRef<Path>>(
         &self,
         paths: &[P],
@@ -210,7 +236,17 @@ where
     where
         T: Clone,
     {
-        self.checkout().batch_get_fresh(paths)
+        match self.checkout() {
+            Ok(guard) => guard.batch_get_fresh(paths),
+            Err(_) => paths
+                .iter()
+                .map(|_| {
+                    Err(LocalFileCacheError::Poisoned {
+                        resource: "ReadPool",
+                    })
+                })
+                .collect(),
+        }
     }
 
     /// Check whether a cached entry for `path` is fresh, stale, or absent.
@@ -218,20 +254,33 @@ where
         &self,
         path: P,
     ) -> Result<CacheStatus, LocalFileCacheError> {
-        self.checkout().check_status(path)
+        self.checkout()?.check_status(path)
     }
 
     /// Check status for multiple paths.
+    ///
+    /// If the pool's connection is poisoned, every element is
+    /// `Err(LocalFileCacheError::Poisoned { resource: "ReadPool" })`.
     pub fn check_status_batch<P: AsRef<Path>>(
         &self,
         paths: &[P],
     ) -> Vec<Result<CacheStatus, LocalFileCacheError>> {
-        self.checkout().check_status_batch(paths)
+        match self.checkout() {
+            Ok(guard) => guard.check_status_batch(paths),
+            Err(_) => paths
+                .iter()
+                .map(|_| {
+                    Err(LocalFileCacheError::Poisoned {
+                        resource: "ReadPool",
+                    })
+                })
+                .collect(),
+        }
     }
 
     /// Return `true` if `path` has a cached entry (fresh or stale).
     pub fn contains<P: AsRef<Path>>(&self, path: P) -> Result<bool, LocalFileCacheError> {
-        self.checkout().contains(path)
+        self.checkout()?.contains(path)
     }
 
     /// Return a staleness diagnosis for `path`.
@@ -239,32 +288,32 @@ where
     where
         T: Clone,
     {
-        self.checkout().explain(path)
+        self.checkout()?.explain(path)
     }
 
     /// Return all cached paths, optionally filtered by a LIKE pattern.
     pub fn keys(&self, path_like: Option<&str>) -> Result<Vec<PathBuf>, LocalFileCacheError> {
-        self.checkout().keys(path_like)
+        self.checkout()?.keys(path_like)
     }
 
     /// List all entries' metadata (no payloads loaded).
     pub fn list_entries(&self) -> Result<Vec<EntryInfo>, LocalFileCacheError> {
-        self.checkout().list_entries()
+        self.checkout()?.list_entries()
     }
 
     /// Total number of entries in the current namespace.
     pub fn entry_count(&self) -> Result<usize, LocalFileCacheError> {
-        self.checkout().entry_count()
+        self.checkout()?.entry_count()
     }
 
     /// Hit-rate and count statistics for the current namespace.
     pub fn cache_stats(&self) -> Result<CacheStats, LocalFileCacheError> {
-        self.checkout().cache_stats()
+        self.checkout()?.cache_stats()
     }
 
     /// Export all entries as portable records.
     pub fn export_entries(&self) -> Result<Vec<ExportRecord>, LocalFileCacheError> {
-        self.checkout().export_entries()
+        self.checkout()?.export_entries()
     }
 
     /// Scan a directory and return each file's path and cache status.
@@ -273,7 +322,7 @@ where
         dir: P,
         recursive: bool,
     ) -> Result<Vec<(PathBuf, CacheStatus)>, LocalFileCacheError> {
-        self.checkout().scan_dir(dir, recursive)
+        self.checkout()?.scan_dir(dir, recursive)
     }
 
     /// Scan with extension, glob, and depth filters.
@@ -282,7 +331,7 @@ where
         dir: P,
         opts: ScanOptions,
     ) -> Result<Vec<(PathBuf, CacheStatus)>, LocalFileCacheError> {
-        self.checkout().scan_dir_filtered(dir, opts)
+        self.checkout()?.scan_dir_filtered(dir, opts)
     }
 
     // ------------------------------------------------------------------
@@ -308,7 +357,7 @@ where
     where
         F: for<'e> FnOnce(QueryBuilder<'e, T>) -> QueryBuilder<'e, T>,
     {
-        let guard = self.checkout();
+        let guard = self.checkout()?;
         let q = guard.query();
         build(q).run()
     }
@@ -321,7 +370,7 @@ where
     where
         F: for<'e> FnOnce(QueryBuilder<'e, T>) -> QueryBuilder<'e, T>,
     {
-        let guard = self.checkout();
+        let guard = self.checkout()?;
         let q = guard.query();
         build(q).dry_run()
     }

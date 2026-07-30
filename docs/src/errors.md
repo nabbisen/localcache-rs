@@ -2,21 +2,45 @@
 
 All `localcache` operations return `Result<T, LocalFileCacheError>`.
 
+`LocalFileCacheError` is `#[non_exhaustive]`: an exhaustive `match` without a
+`_` arm fails to compile, so a future variant is never a breaking change.
+Existing exhaustive matches must add a `_` arm to upgrade to v0.21.0.
+
 ## Error variants
 
 | Variant | Cause | Recovery |
 |---|---|---|
 | `Database(rusqlite::Error)` | SQLite error | Check path permissions; file not corrupt |
 | `Io(std::io::Error)` | File read/write failure | Check file existence and permissions |
-| `Serialization(String)` | bincode encode/decode failed | Payload type mismatch; check `payload_version` |
+| `Serialization(String)` | bincode or JSON encode/decode failed | Payload type mismatch; check `payload_version` |
 | `FileNotFound { path }` | Source file does not exist | Normal — check with `check_status` first |
 | `UnsupportedFeature(String)` | Feature or operation not available | Check Cargo features; read the message |
 | `InvalidPath { path }` | Path cannot be represented as an exact SQLite `TEXT` key | Use a valid UTF-8 filesystem/database path |
 | `ReadOnly` | Mutation requested on a read-only engine | Use a deliberately writable engine if mutation is intended |
 | `UnknownEncoding(String)` | Stored encoding tag not recognised | Wrong feature enabled for decoding |
 | `PayloadVersionMismatch { stored, expected }` | Version tag mismatch | Call `purge_stale_versions()` |
+| `Poisoned { resource: &'static str }` | A lock guarding shared cache state was poisoned by a panic in another thread | The poisoning caller's bug, not yours — recreate the pool/engine/watcher |
 | `EncryptionError(String)` *(encryption)* | Wrong key or corrupt data | Verify encryption key |
 | `AsyncTaskPanicked` *(async / async-std / smol)* | `spawn_blocking` task panicked | Check payload type and encoding |
+
+### v0.21.0 migration note
+
+v0.21.0 makes `LocalFileCacheError` truthful about lock poisoning and JSON
+codec failures:
+
+- **Add a `_` arm** to any exhaustive `match` on `LocalFileCacheError` — the
+  enum is now `#[non_exhaustive]`.
+- **Lock poisoning now returns `Poisoned`**, not `UnsupportedFeature`. This
+  affects `ConnectionPool`, `AsyncCacheEngine`, `CacheWatcher` construction,
+  and `ReadPool` (a **behaviour change**: `ReadPool`'s read methods were
+  previously infallible under poisoning and silently recovered; they now
+  return `Poisoned` instead).
+- **JSON codec failures now return `Serialization`**, not
+  `UnsupportedFeature`. Code matching `UnsupportedFeature` to catch JSON
+  encode/decode errors stops matching.
+- **No schema, payload wire format, SQL, or other method signature changed.**
+  Recompiling — after adding the `_` arm and updating any `UnsupportedFeature`
+  matches above — is the only work; existing databases open unchanged.
 
 ## Common patterns
 

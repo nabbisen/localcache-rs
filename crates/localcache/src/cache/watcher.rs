@@ -147,9 +147,9 @@ where
         // Build the shared inner state: a *dedicated* engine connection for
         // the watcher callback (SQLite connections are not Send).
         let watcher_engine = {
-            let g = engine
-                .lock()
-                .map_err(|_| LocalFileCacheError::UnsupportedFeature("mutex poisoned".into()))?;
+            let g = engine.lock().map_err(|_| LocalFileCacheError::Poisoned {
+                resource: "CacheWatcher",
+            })?;
             CacheEngine::<T>::open(crate::cache::options::CacheOptions {
                 database_path: g.database_path.clone(),
                 change_detection_mode: g.mode,
@@ -176,6 +176,11 @@ where
                     Some(r) => r,
                     None => return,
                 };
+                // RFC 018 R4: deliberate skip, not silent. This callback runs
+                // on the OS notify thread and has no caller to return a
+                // `Poisoned` error to; skipping is the only option available,
+                // and a poisoned lock here just means this batch of
+                // invalidations is missed rather than applied incorrectly.
                 if let Ok(eng) = inner_cb.engine.lock() {
                     for path in &ev.paths {
                         // With recursive directory watching, OS events arrive
@@ -478,6 +483,10 @@ where
                         // no remove variant; treat all as FileModified.
                         let reason = InvalidationReason::FileModified;
                         let mut invalidation_failed = false;
+                        // RFC 018 R4: deliberate skip, not silent — same
+                        // reasoning as the non-debounced watcher's callback:
+                        // this runs on the debouncer's own thread, with no
+                        // caller to return a `Poisoned` error to.
                         if let Ok(eng) = inner_cb.lock() {
                             // Recursive directory watching delivers events
                             // for uncached files too — filter them out. An
@@ -626,3 +635,6 @@ fn unique_parent_dirs(paths: &[PathBuf]) -> Vec<PathBuf> {
     let set: std::collections::HashSet<&Path> = paths.iter().filter_map(|p| p.parent()).collect();
     set.into_iter().map(Path::to_path_buf).collect()
 }
+
+#[cfg(test)]
+mod tests;

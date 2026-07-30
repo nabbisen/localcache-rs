@@ -208,16 +208,14 @@ pub(crate) fn deserialize_bincode<T: DeserializeOwned>(
 
 #[cfg(feature = "json")]
 fn serialize_json<T: Serialize>(payload: &T) -> Result<Vec<u8>, LocalFileCacheError> {
-    serde_json::to_vec(payload).map_err(|e| {
-        LocalFileCacheError::UnsupportedFeature(format!("json serialization error: {e}"))
-    })
+    serde_json::to_vec(payload)
+        .map_err(|e| LocalFileCacheError::Serialization(format!("json serialization error: {e}")))
 }
 
 #[cfg(feature = "json")]
 fn deserialize_json<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, LocalFileCacheError> {
-    serde_json::from_slice(bytes).map_err(|e| {
-        LocalFileCacheError::UnsupportedFeature(format!("json deserialization error: {e}"))
-    })
+    serde_json::from_slice(bytes)
+        .map_err(|e| LocalFileCacheError::Serialization(format!("json deserialization error: {e}")))
 }
 
 // ---------------------------------------------------------------------------

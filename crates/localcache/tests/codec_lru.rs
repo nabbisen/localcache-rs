@@ -80,6 +80,75 @@ mod json_tests {
         assert_eq!(e2.payload, payload);
     }
 
+    // RFC 018 R3 — JSON codec failures use `Serialization`, not
+    // `UnsupportedFeature`.
+    #[test]
+    fn json_encode_failure_yields_serialization_error() {
+        use localcache::LocalFileCacheError;
+        use std::collections::HashMap;
+
+        // JSON object keys must be strings; serde_json rejects a map with a
+        // non-string-serializable key ("key must be a string") -- a reliable
+        // way to force `serde_json::to_vec` to fail without any internal-API
+        // access. (An f32 payload containing NaN does *not* work: serde_json
+        // silently encodes non-finite floats as `null` rather than erroring.)
+        let dir = TempDir::new().unwrap();
+        let engine: CacheEngine<HashMap<Vec<u8>, i32>> = CacheEngine::open(CacheOptions {
+            database_path: ":memory:".into(),
+            codec: Codec::Json,
+            ..CacheOptions::default()
+        })
+        .unwrap();
+
+        let path = write_file(&dir, "json_encode_fail.txt", b"content");
+        let mut payload = HashMap::new();
+        payload.insert(vec![1u8, 2, 3], 42);
+        let result = engine.set(&path, &payload);
+        assert!(
+            matches!(result, Err(LocalFileCacheError::Serialization(_))),
+            "expected Serialization, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn json_decode_failure_yields_serialization_error() {
+        use localcache::LocalFileCacheError;
+
+        // There is no public API to write invalid JSON -- `set` always
+        // encodes through a real serializer -- so corrupt an already-stored
+        // JSON payload's raw bytes directly via SQL.
+        let dir = TempDir::new().unwrap();
+        let db = dir.path().join("json_decode_fail.sqlite3");
+        let engine: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
+            database_path: db.clone(),
+            codec: Codec::Json,
+            ..CacheOptions::default()
+        })
+        .unwrap();
+
+        let path = write_file(&dir, "json_decode_fail.txt", b"content");
+        engine.set(&path, &vec![1.0_f32]).unwrap();
+        let stored_paths = engine.keys(None).unwrap();
+        assert_eq!(stored_paths.len(), 1);
+        let stored_path = stored_paths[0].to_str().unwrap().to_owned();
+
+        {
+            let conn = rusqlite::Connection::open(&db).unwrap();
+            conn.execute(
+                "UPDATE payloads SET content = ?1
+                 WHERE file_id = (SELECT id FROM files WHERE path = ?2)",
+                rusqlite::params![b"not-json".to_vec(), stored_path],
+            )
+            .unwrap();
+        }
+
+        let result = engine.get(&path);
+        assert!(
+            matches!(result, Err(LocalFileCacheError::Serialization(_))),
+            "expected Serialization, got {result:?}"
+        );
+    }
+
     #[cfg(feature = "compression")]
     #[test]
     fn json_zstd_roundtrip() {

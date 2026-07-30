@@ -147,6 +147,37 @@ fn pool_query_run() {
     assert_eq!(results.len(), 5);
 }
 
+// RFC 018 R2 — poisoning is reported, not silently recovered from.
+#[test]
+fn connection_pool_poisoned_mutex_yields_poisoned_error() {
+    use localcache::LocalFileCacheError;
+
+    let pool = localcache::ConnectionPool::<Vec<f32>>::open(CacheOptions {
+        database_path: ":memory:".into(),
+        ..CacheOptions::default()
+    })
+    .unwrap();
+
+    // Poison the pool's mutex: `with`'s closure holds the lock guard on the
+    // stack for the duration of the call, so a panic inside it poisons the
+    // mutex when the guard drops during unwind.
+    let poison_pool = pool.clone();
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = poison_pool.with::<(), _>(|_engine| panic!("intentional test panic"));
+    }));
+
+    let result = pool.entry_count();
+    assert!(
+        matches!(
+            result,
+            Err(LocalFileCacheError::Poisoned {
+                resource: "ConnectionPool"
+            })
+        ),
+        "expected Poisoned {{ resource: \"ConnectionPool\" }}, got {result:?}"
+    );
+}
+
 // ====================================================================
 // Phase 12 — CacheOptionsExt
 // ====================================================================
@@ -893,12 +924,16 @@ mod rfc005_async_std {
             let first = engine.contains(path.clone()).await;
             assert!(matches!(
                 first,
-                Err(LocalFileCacheError::UnsupportedFeature(_))
+                Err(LocalFileCacheError::Poisoned {
+                    resource: "AsyncCacheEngine"
+                })
             ));
             let second = engine.contains(path).await;
             assert!(matches!(
                 second,
-                Err(LocalFileCacheError::UnsupportedFeature(_))
+                Err(LocalFileCacheError::Poisoned {
+                    resource: "AsyncCacheEngine"
+                })
             ));
         });
     }
@@ -978,12 +1013,16 @@ mod rfc005_smol {
             let first = engine.contains(path.clone()).await;
             assert!(matches!(
                 first,
-                Err(LocalFileCacheError::UnsupportedFeature(_))
+                Err(LocalFileCacheError::Poisoned {
+                    resource: "AsyncCacheEngine"
+                })
             ));
             let second = engine.contains(path).await;
             assert!(matches!(
                 second,
-                Err(LocalFileCacheError::UnsupportedFeature(_))
+                Err(LocalFileCacheError::Poisoned {
+                    resource: "AsyncCacheEngine"
+                })
             ));
         });
     }
@@ -1040,8 +1079,13 @@ mod rfc015_tokio_async_engine {
         let path = std::path::PathBuf::from("does-not-matter.txt");
         let first = engine.contains(path.clone()).await;
         assert!(
-            matches!(first, Err(LocalFileCacheError::UnsupportedFeature(_))),
-            "expected UnsupportedFeature, got {first:?}"
+            matches!(
+                first,
+                Err(LocalFileCacheError::Poisoned {
+                    resource: "AsyncCacheEngine"
+                })
+            ),
+            "expected Poisoned {{ resource: \"AsyncCacheEngine\" }}, got {first:?}"
         );
 
         // A second and third subsequent call also return the error — the
@@ -1050,12 +1094,16 @@ mod rfc015_tokio_async_engine {
         let second = engine.contains(path.clone()).await;
         assert!(matches!(
             second,
-            Err(LocalFileCacheError::UnsupportedFeature(_))
+            Err(LocalFileCacheError::Poisoned {
+                resource: "AsyncCacheEngine"
+            })
         ));
         let third = engine.contains(path).await;
         assert!(matches!(
             third,
-            Err(LocalFileCacheError::UnsupportedFeature(_))
+            Err(LocalFileCacheError::Poisoned {
+                resource: "AsyncCacheEngine"
+            })
         ));
     }
 

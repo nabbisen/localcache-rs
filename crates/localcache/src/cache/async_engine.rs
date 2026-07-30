@@ -63,8 +63,8 @@ where
     fn lock(
         inner: &Mutex<CacheEngine<T>>,
     ) -> Result<MutexGuard<'_, CacheEngine<T>>, LocalFileCacheError> {
-        inner.lock().map_err(|_| {
-            LocalFileCacheError::UnsupportedFeature("AsyncCacheEngine mutex was poisoned".into())
+        inner.lock().map_err(|_| LocalFileCacheError::Poisoned {
+            resource: "AsyncCacheEngine",
         })
     }
 
