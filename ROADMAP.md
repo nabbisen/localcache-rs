@@ -462,7 +462,7 @@ Dependency order, not dates. Each is an independent review point.
 | **N2 — Advisory dispositions ✅** | Renew, resolve, or replace the `async-std` and `bincode` dispositions | **RFC 019** (Accepted) | — |
 | **N3 — Release-tooling hygiene ✅** | `command_version` stderr separation; `target_triple` from `rustc -vV`; thread real gate results into `rc_eligibility`; RFC 014 H1–H4 | recorded findings | N0 |
 | **N4 — Performance baseline ✅** | Extend benchmarks to 10k/100k/1M; publish a measured profile; **no tuning** | measurement only | — |
-| **N5 — Module-size debt** | Risk-reducing splits only, per the corrected register below | — | N1 |
+| **N5 — Module-size debt ✅** | Risk-reducing splits only, per the corrected register below; plus RFC 011 N-01/N-02 | — | N1 |
 | **N6 — Release and review** | v0.21.0 gates, evidence bundle, independent re-review | owner authorization | all |
 
 ### N1 completion
@@ -533,6 +533,31 @@ drift into a test failure before it can occur. And moving `target_triple` off
 RC-3 test stubbed only `command_version`; that was caught before it shipped and
 confirmed with a real restricted-`PATH` run.
 
+### N5 completion
+
+Both parts were implemented and independently accepted, in two commits: RFC 011's
+N-01/N-02 at `10434ac`, and the module splits at `f9fe0fd`.
+
+**N-01 changed two of three quote sites.** The third — `create_path_index` — was
+declined with reasoning, and correctly: control only reaches that branch because
+`resolve_schema_object` returned `None`, so there is no catalog spelling to
+substitute. Independently, `full` is `"lc_user_"` plus a suffix that
+`validate_new_suffix` restricts to ASCII alphanumerics and `_` **before** the quote
+runs, so no `"` is representable there at all.
+
+**The split was verified as a pure move at token level**, not by reading the diff. A
+whitespace- and comment-insensitive token comparison of the old `indexes.rs` against
+the new `indexes.rs` plus `indexes/tests.rs` shows the only changes are `full` →
+`object.name` at exactly two sites and the `mod tests { … }` wrapper collapsing to
+`mod tests;`. Line-based comparison had been misleading, because rustfmt rejoined
+`set_hook`'s signature after it dedented one level.
+
+374 tests pass with no count change anywhere, the hostile-identifier suite passes with
+zero test edits, the full feature matrix is green across 17 rows, and both default and
+all-features builds are clean — the last of which mattered: an unconditional
+`use crate::now_secs;` compiled under `--all-features` and failed without them,
+because `now_secs` is itself feature-gated. Caught before it shipped.
+
 ### Why performance *tuning* is not in this phase
 
 The backlog item read "performance tuning for very large namespaces (> 1M
@@ -587,24 +612,29 @@ Recorded findings not scheduled into a milestone. Each is tracked, none is lost.
 | `follow-up` in `advisory-policy.json` is a sentence fragment that only reads correctly once the reporter prepends "reassess if" | N2 review §4.1 | Data that parses only inside one template is fragile once a second consumer appears. Prefer self-describing data and a reporter that emits it verbatim. Fold into any future touch of the reporting code. |
 | `fetch_with_retry` catches a broad `AdvisoryGateError` rather than a dedicated transient type | N3 review §4.1 | Correct today, because `live_fetch`'s only failure mode is `OSError`/`URLError`. But `Fetch` is an injection point: a substitute raising `AdvisoryGateError` non-transiently would be retried three times, turning a fast failure into a slow one. Fix is a `TransientFetchError` so the fetcher declares transience rather than the wrapper inferring it. |
 | RFC 011 N-01/N-02 (quote the catalog's spelling; comment the ASCII-fold invariant) | Phase 21 | Verified safe; hardening only. **Moved from N3 to N5**, since both land in `indexes.rs`, which N5 also touches. |
+| `namespace_copy`'s body is byte-identical to `import_from`'s in `cache/engine/portable.rs` | N5 review §2 | Verified identical (184 chars each). Became visible once the concern was isolated in one file. Reported and deliberately **not** fixed during a move commit. |
 | `preload`, concurrent access, bincode codec at scale, watcher on large trees, cold-open cost | N4 §6 | Unmeasured. Candidate additions to the scale profile; none blocks Phase 23 scoping. |
 
-### Corrected module-size register
+### Module-size register — after N5
 
-The previous register named the wrong files. Measured ELOC (non-blank,
-non-comment), against the 500-ELOC guidance:
+Production ELOC (non-blank, non-comment). **Measure production and test code
+separately**: `indexes.rs`'s original 914 was mostly an embedded `#[cfg(test)]`
+module, so the register previously read a *file* size as a *production* size and
+ranked it second-worst when its production surface was always ~338.
 
-| File | ELOC | Note |
-|---|---|---|
-| `crates/localcache/src/cache/engine.rs` | 946 | **largest in the crate; was absent from the register** |
-| `crates/localcache/src/db/indexes.rs` | 914 | |
-| `crates/cli/src/main.rs` | 728 | |
-| `crates/localcache/src/db/repository.rs` | 618 | |
-| `crates/localcache/src/db/schema/classifier.rs` | 586 | **was absent from the register** |
-| `crates/localcache/src/cache/query.rs` | 463 | **complies; remove from the register** |
+| File | Before | After | Outcome |
+|---|---|---|---|
+| `crates/localcache/src/cache/engine.rs` | 946 | **762** | two genuine seams extracted (`engine/diagnose.rs` 128, `engine/portable.rs` 74); core CRUD surface deliberately left together |
+| `crates/localcache/src/db/indexes.rs` | 914 | **338** | complies; 573 ELOC were an embedded test module, moved to `db/indexes/tests.rs` |
+| `crates/cli/src/main.rs` | 728 | **257** | complies; 15 subcommand handlers split along the existing `DatabaseAuthority` boundary into `commands/read.rs` (294) and `commands/write.rs` (193) |
+| `crates/localcache/src/db/repository.rs` | 618 | 618 | **reasoned refusal** — ~28 free functions over `&Connection` sharing SQL-construction helpers; any split scatters coupled query building rather than isolating a concern |
+| `crates/localcache/src/db/schema/classifier.rs` | 586 | 586 | **reasoned refusal** — one DDL-tokenising and validating pipeline over shared types; tests already external, so no measurement artefact to recover |
+| `crates/localcache/src/cache/query.rs` | 463 | 463 | complies; removed from the register |
 
-Splits are risk-reducing only. Size alone does not justify restructuring code whose
-behaviour is covered and stable.
+`engine.rs` remains above the 500 guidance and that is accepted deliberately. The
+guidance exists to prompt the question, not to be satisfied at any cost; two real
+seams were found and taken, and the remainder all reads or writes the same
+`Connection` and fields.
 
 ### Recorded conflict of interest
 
