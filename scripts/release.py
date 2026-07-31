@@ -306,7 +306,7 @@ def toolchain_identity() -> dict[str, object]:
     """
     return {
         "platform": platform.platform(),
-        "target_triple": f"{platform.machine()}-{platform.system().lower()}",
+        "target_triple": rustc_target_triple(),
         "git_version": command_version(["git", "--version"]),
         "python_version": command_version(["python3", "--version"]),
         "zlib_version": zlib.ZLIB_RUNTIME_VERSION,
@@ -319,17 +319,67 @@ def toolchain_identity() -> dict[str, object]:
 
 
 def command_version(command: Sequence[str]) -> str:
+    """Run `command` and return its stdout, stripped.
+
+    N3 Part A: stdout and stderr are captured on separate pipes -- not merged
+    (the earlier `stderr=subprocess.STDOUT` let a diagnostic a tool writes to
+    stderr on an otherwise-successful run corrupt both the value this
+    function returns (parsed by `verify_declared_toolchain`) and the R4
+    evidence field it becomes in `toolchain_identity()`; the same defect
+    class RC-4 fixed in `run_gate`, one layer over). On failure, stderr (or
+    stdout, if stderr is empty) is still surfaced in the raised error, so a
+    genuine failure stays diagnosable.
+    """
     try:
         completed = subprocess.run(
             list(command),
             check=True,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
+            stderr=subprocess.PIPE,
             text=True,
         )
-    except (OSError, subprocess.CalledProcessError) as error:
-        raise ReleaseError(f"required tool is unavailable: {command[0]}") from error
+    except subprocess.CalledProcessError as error:
+        detail = (error.stderr or "").strip() or (error.stdout or "").strip()
+        raise ReleaseError(
+            f"required tool is unavailable: {command[0]}: {detail}"
+        ) from error
+    except OSError as error:
+        raise ReleaseError(
+            f"required tool is unavailable: {command[0]}: {error}"
+        ) from error
     return completed.stdout.strip()
+
+
+def rustc_target_triple() -> str:
+    """The real Rust target triple, read from `rustc -vV`'s `host:` line.
+
+    N3 Part B: `toolchain_identity()` previously built this as
+    `f"{platform.machine()}-{platform.system().lower()}"` (e.g.
+    `x86_64-linux`), which is not a Rust target triple -- the real one is
+    `x86_64-unknown-linux-gnu`. RFC 009 R14 names "target triple" as a
+    required evidence field, so the bundle was recording a field it did not
+    actually contain. `platform` already carries the richer
+    `Linux-...-with-glibc2.44` string; the two answer different questions
+    and both stay.
+    """
+    try:
+        completed = subprocess.run(
+            ["rustc", "-vV"],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except subprocess.CalledProcessError as error:
+        detail = (error.stderr or "").strip() or (error.stdout or "").strip()
+        raise ReleaseError(f"required tool is unavailable: rustc -vV: {detail}") from error
+    except OSError as error:
+        raise ReleaseError(f"required tool is unavailable: rustc -vV: {error}") from error
+    for line in completed.stdout.splitlines():
+        prefix = "host: "
+        if line.startswith(prefix):
+            return line[len(prefix) :].strip()
+    raise ReleaseError("rustc -vV output has no host: line")
 
 
 def cargo_metadata(
@@ -1097,9 +1147,35 @@ def rc_eligibility(
     return clean_worktree and all_required_gates_passed and evidence_complete
 
 
+#: N3 Part C: the exact steps `source_mode` must complete, in order, for
+#: `all_required_gates_passed` to be true. Kept as one source so the manifest
+#: check and the function body cannot silently drift apart.
+REQUIRED_SOURCE_STEPS: tuple[str, ...] = (
+    "tracked-source-integrity",
+    "version-contract",
+    "version-reference-consistency",
+    "changelog-coming-version",
+    "checkout-m1-smoke",
+    "structured-archive-validation",
+    "same-commit-determinism",
+    "git-free-artifact-m1-smoke",
+    "post-smoke-layout-reassertion",
+)
+
+
 def source_mode(args: argparse.Namespace) -> int:
     root = repository_root()
     commit = require_clean_commit(root)
+    # N3 Part C: `rc_eligibility`'s three inputs were previously hard-coded
+    # `True` literals, true only because control flow never reaches
+    # `write_manifest` after a failure (every failure raises `ReleaseError`
+    # first, so no manifest -- not a manifest saying `false` -- is written).
+    # That fail-closed shape is preserved unchanged here; what changes is
+    # that the three values are now genuinely computed from what happened,
+    # not asserted, so a future control-flow change that *did* reach this
+    # point after a partial failure would compute `False` instead of lying.
+    clean_worktree = bool(commit)
+    completed_steps: list[str] = []
     tool_versions = verify_implementations(root)
     output = require_output_boundary(root, Path(args.output_dir))
     if output.exists() and any(output.iterdir()):
@@ -1114,12 +1190,16 @@ def source_mode(args: argparse.Namespace) -> int:
     logger = GateLog(evidence / "checkout-smoke.log")
     run_source_integrity(root, logger, require_tracked=True)
     append_summary(summary, "tracked-source-integrity: PASS")
+    completed_steps.append("tracked-source-integrity")
     version, _metadata = cargo_metadata(root, logger, gate_name="version-metadata")
     append_summary(summary, f"version-contract: PASS ({version})")
+    completed_steps.append("version-contract")
     verify_version_references(root, version)
     append_summary(summary, "version-reference-consistency: PASS")
+    completed_steps.append("version-reference-consistency")
     verify_changelog_has_coming_version_section(root, version)
     append_summary(summary, "changelog-coming-version: PASS")
+    completed_steps.append("changelog-coming-version")
     with tempfile.TemporaryDirectory(prefix="checkout-", dir=output) as temporary:
         checkout_temporary = Path(temporary)
         run_m1_smoke(
@@ -1129,11 +1209,13 @@ def source_mode(args: argparse.Namespace) -> int:
             checkout_temporary / "docs",
         )
     append_summary(summary, "checkout-m1-smoke: PASS")
+    completed_steps.append("checkout-m1-smoke")
 
     expected = release_archive.expected_manifest(root, commit)
     raw_first = release_archive.build_git_tar(root, commit)
     members = release_archive.validate_tar(raw_first, expected, commit)
     append_summary(summary, "structured-archive-validation: PASS")
+    completed_steps.append("structured-archive-validation")
     raw_second = release_archive.build_git_tar(root, commit)
     uncompressed_sha256 = release_archive.sha256_bytes(raw_first)
     # RFC 017 R2: per-host determinism is gated on the *uncompressed* tar
@@ -1145,6 +1227,7 @@ def source_mode(args: argparse.Namespace) -> int:
             "(uncompressed-tar digest)"
         )
     append_summary(summary, "same-commit-determinism: PASS")
+    completed_steps.append("same-commit-determinism")
 
     archive_gzip = release_archive.compress_tar(raw_first)
     archive_name = f"localcache-v{version}.tar.gz"
@@ -1194,6 +1277,7 @@ def source_mode(args: argparse.Namespace) -> int:
         ]
         run_gate(logger, "artifact-context", command, extraction)
         append_summary(summary, "git-free-artifact-m1-smoke: PASS")
+        completed_steps.append("git-free-artifact-m1-smoke")
         # Re-assert the R4/R5 layout *after* the artifact smoke run, not only
         # before it. `--target-dir`/evidence-dir already place build output
         # outside `extraction` by construction, but this proves that stayed
@@ -1202,6 +1286,15 @@ def source_mode(args: argparse.Namespace) -> int:
         # caught here before it ever reaches evidence as a pass.
         verify_required_layout(extraction)
     append_summary(summary, "post-smoke-layout-reassertion: PASS")
+    completed_steps.append("post-smoke-layout-reassertion")
+
+    all_required_gates_passed = tuple(completed_steps) == REQUIRED_SOURCE_STEPS
+    evidence_complete = (
+        archive_path.exists()
+        and (archive_evidence / "members.txt").exists()
+        and (archive_evidence / "sha256.txt").exists()
+        and (artifact_evidence / "manifest.json").exists()
+    )
 
     write_manifest(
         evidence / "manifest.json",
@@ -1215,15 +1308,16 @@ def source_mode(args: argparse.Namespace) -> int:
             "layout": LAYOUT,
             "member_count": len(members),
             "status": "pass",
-            # RFC 017 R3: reaching this point already proves the tree was
-            # clean (require_clean_commit, above) and every required gate in
-            # this straight-line function passed (any failure would have
-            # raised before this write_manifest call) -- so all three
-            # conditions are literally true here, not merely assumed.
+            # RFC 017 R3 / N3 Part C: reaching this point already proves the
+            # tree was clean and every required gate in this straight-line
+            # function passed (any failure would have raised before this
+            # write_manifest call) -- but the three inputs below are now
+            # genuinely computed (see the top of this function), not
+            # asserted, so they stay truthful if that ever changes.
             "rc_eligible": rc_eligibility(
-                clean_worktree=True,
-                all_required_gates_passed=True,
-                evidence_complete=True,
+                clean_worktree=clean_worktree,
+                all_required_gates_passed=all_required_gates_passed,
+                evidence_complete=evidence_complete,
             ),
             "release_tool_manifest_sha256": sha256_file(
                 root / "scripts/release-tools.toml"

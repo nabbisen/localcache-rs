@@ -34,6 +34,11 @@ MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 MAX_SNAPSHOT_BYTES = 256 * 1024 * 1024
 FETCH_TIMEOUT_SECONDS = 30
 FETCH_DEADLINE_SECONDS = 15 * 60
+# N3 Part E (RFC 014 M4 review H2): bounded retry for transient sparse-index
+# failures only -- a flaky security gate gets disabled, and a disabled gate
+# is the real risk.
+MAX_FETCH_ATTEMPTS = 3
+RETRY_BACKOFF_BASE_SECONDS = 1.0
 
 
 class AdvisoryGateError(Exception):
@@ -73,6 +78,19 @@ class RegistryPackage:
     name: str
     version: str
     checksum: str
+
+
+@dataclass(frozen=True, order=True)
+class ExcludedPackage:
+    """N3 Part F (RFC 014 M4 review H3): a Cargo.lock package with no
+    crates.io registry source -- a path or git dependency -- excluded from
+    advisory-gate coverage. Recorded in evidence so completeness is
+    self-evidencing rather than requiring a manual Cargo.lock cross-check.
+    """
+
+    name: str
+    version: str
+    reason: str  # "path" or "git"
 
 
 def repository_root() -> Path:
@@ -358,7 +376,11 @@ def classify_findings(
             )
             denied = True
             continue
-        classification = "WARN" if entry.action == "warn" else "PASS"
+        # N3 Part D (RFC 014 M4 review H1): a knowingly accepted
+        # vulnerability/unsound finding must never render as a bare PASS --
+        # `action` is validated elsewhere to be exactly "warn" or
+        # "exception", so this lookup cannot land on a third case.
+        classification = {"warn": "WARN", "exception": "EXCEPTION"}[entry.action]
         if entry.expires is not None:
             lines.append(
                 f"{classification} {identity}: {entry.action} until "
@@ -381,7 +403,9 @@ def classify_findings(
     return lines, denied
 
 
-def load_registry_packages(path: Path) -> list[RegistryPackage]:
+def load_registry_packages(
+    path: Path,
+) -> tuple[list[RegistryPackage], list[ExcludedPackage]]:
     raw = read_bounded(path, MAX_LOCK_BYTES, "Cargo.lock")
     try:
         document = tomllib.loads(raw.decode("utf-8"))
@@ -391,11 +415,20 @@ def load_registry_packages(path: Path) -> list[RegistryPackage]:
     if not isinstance(packages, list):
         raise AdvisoryGateError("Cargo.lock package array is missing")
     eligible: list[RegistryPackage] = []
+    excluded: list[ExcludedPackage] = []
     for index, raw_package in enumerate(packages):
         if not isinstance(raw_package, dict):
             raise AdvisoryGateError(f"Cargo.lock package {index} is malformed")
         source = raw_package.get("source")
         if source is None or (isinstance(source, str) and source.startswith("git+")):
+            name = raw_package.get("name")
+            version = raw_package.get("version")
+            if not isinstance(name, str) or not PACKAGE_RE.fullmatch(name):
+                raise AdvisoryGateError(f"invalid excluded package name: {name!r}")
+            if not isinstance(version, str) or not VERSION_RE.fullmatch(version):
+                raise AdvisoryGateError(f"invalid excluded package version: {version!r}")
+            reason = "git" if isinstance(source, str) else "path"
+            excluded.append(ExcludedPackage(name, version, reason))
             continue
         if source != CRATES_IO_SOURCE:
             raise AdvisoryGateError(
@@ -413,7 +446,9 @@ def load_registry_packages(path: Path) -> list[RegistryPackage]:
         eligible.append(RegistryPackage(source, name, version, checksum))
     if len(set(eligible)) != len(eligible):
         raise AdvisoryGateError("Cargo.lock contains duplicate registry package identities")
-    return sorted(eligible)
+    if len(set(excluded)) != len(excluded):
+        raise AdvisoryGateError("Cargo.lock contains duplicate excluded package identities")
+    return sorted(eligible), sorted(excluded)
 
 
 def sparse_path(name: str) -> str:
@@ -513,6 +548,51 @@ def live_fetch(url: str, timeout: int) -> tuple[int, Mapping[str, str], bytes]:
     return status, headers, body
 
 
+Sleep = Callable[[float], None]
+
+
+def fetch_with_retry(
+    fetch: Fetch,
+    url: str,
+    timeout: int,
+    deadline: float,
+    sleep: Sleep = time.sleep,
+) -> tuple[int, Mapping[str, str], bytes, int]:
+    """N3 Part E (RFC 014 M4 review H2): retry a transient sparse-index
+    failure -- a network error (`live_fetch`'s only failure mode; it never
+    raises for a validation problem, only `OSError`/`URLError`) or an HTTP
+    5xx -- up to `MAX_FETCH_ATTEMPTS` times with exponential backoff.
+
+    Never retries a non-200/non-5xx status, a validation failure, or a
+    size-limit breach -- those are genuine gate failures, not flakiness, and
+    retrying them would mask a real problem behind a slow failure instead of
+    a fast one. Returns the attempt count alongside the result so it can be
+    recorded in evidence.
+    """
+    last_error: AdvisoryGateError | None = None
+    for attempt in range(1, MAX_FETCH_ATTEMPTS + 1):
+        if time.monotonic() >= deadline:
+            raise AdvisoryGateError("registry snapshot exceeded overall deadline")
+        try:
+            status, headers, body = fetch(url, timeout)
+        except AdvisoryGateError as error:
+            last_error = error
+        else:
+            if status == 200:
+                return status, headers, body, attempt
+            if not 500 <= status < 600:
+                raise AdvisoryGateError(
+                    f"sparse-index request returned HTTP {status}: {url}"
+                )
+            last_error = AdvisoryGateError(
+                f"sparse-index request returned HTTP {status}: {url}"
+            )
+        if attempt < MAX_FETCH_ATTEMPTS:
+            sleep(RETRY_BACKOFF_BASE_SECONDS * (2 ** (attempt - 1)))
+    assert last_error is not None
+    raise last_error
+
+
 def canonical_json(value: object) -> bytes:
     return (
         json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
@@ -522,9 +602,11 @@ def canonical_json(value: object) -> bytes:
 
 def build_registry_snapshot(
     packages: Sequence[RegistryPackage],
+    excluded: Sequence[ExcludedPackage],
     output: Path,
     fetched_at: str,
     fetch: Fetch = live_fetch,
+    sleep: Sleep = time.sleep,
 ) -> tuple[bytes, list[dict[str, object]]]:
     groups: dict[str, list[RegistryPackage]] = {}
     for package in packages:
@@ -532,18 +614,19 @@ def build_registry_snapshot(
     responses_dir = output / "registry-responses"
     responses_dir.mkdir()
     started = time.monotonic()
+    deadline = started + FETCH_DEADLINE_SECONDS
     total = 0
     response_manifest: list[dict[str, object]] = []
     selected: list[dict[str, object]] = []
     for lowered in sorted(groups):
-        remaining = FETCH_DEADLINE_SECONDS - (time.monotonic() - started)
+        remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise AdvisoryGateError("registry snapshot exceeded overall deadline")
         timeout = max(1, min(FETCH_TIMEOUT_SECONDS, int(remaining)))
         url = SPARSE_BASE + sparse_path(lowered)
-        status, headers, body = fetch(url, timeout)
-        if status != 200:
-            raise AdvisoryGateError(f"sparse-index request returned HTTP {status}: {url}")
+        status, headers, body, attempts = fetch_with_retry(
+            fetch, url, timeout, deadline, sleep
+        )
         if len(body) > MAX_RESPONSE_BYTES:
             raise AdvisoryGateError(f"sparse-index response exceeds limit: {url}")
         total += len(body)
@@ -563,12 +646,17 @@ def build_registry_snapshot(
                 "etag": headers.get("etag"),
                 "last-modified": headers.get("last-modified"),
                 "date": headers.get("date"),
+                "attempts": attempts,
             }
         )
     manifest = {
         "schema": 1,
         "fetched-at": fetched_at,
         "responses": response_manifest,
+        "excluded": [
+            {"name": item.name, "version": item.version, "reason": item.reason}
+            for item in sorted(excluded)
+        ],
         "selected": sorted(
             selected,
             key=lambda item: (
@@ -585,6 +673,7 @@ def load_registry_snapshot(
     manifest_path: Path,
     expected_digest: str,
     packages: Sequence[RegistryPackage],
+    excluded: Sequence[ExcludedPackage],
     output: Path,
 ) -> list[dict[str, object]]:
     require_digest(manifest_path, expected_digest, "registry manifest")
@@ -596,15 +685,47 @@ def load_registry_snapshot(
         "registry manifest",
     )
     require_exact_keys(
-        manifest, {"schema", "fetched-at", "responses", "selected"}, "registry manifest"
+        manifest,
+        {"schema", "fetched-at", "responses", "selected", "excluded"},
+        "registry manifest",
     )
     if manifest["schema"] != 1:
         raise AdvisoryGateError("unsupported registry manifest schema")
     require_string(manifest["fetched-at"], "registry manifest fetched-at")
     raw_responses = manifest["responses"]
     raw_selected = manifest["selected"]
-    if not isinstance(raw_responses, list) or not isinstance(raw_selected, list):
+    raw_excluded = manifest["excluded"]
+    if (
+        not isinstance(raw_responses, list)
+        or not isinstance(raw_selected, list)
+        or not isinstance(raw_excluded, list)
+    ):
         raise AdvisoryGateError("registry manifest arrays are malformed")
+
+    excluded_fields = {"name", "version", "reason"}
+    parsed_excluded: list[tuple[str, str, str]] = []
+    for index, raw_item in enumerate(raw_excluded):
+        item = require_object(raw_item, f"excluded registry record {index}")
+        require_exact_keys(item, excluded_fields, f"excluded registry record {index}")
+        excluded_name = require_string(
+            item["name"], f"excluded registry record {index} name"
+        )
+        excluded_version = require_string(
+            item["version"], f"excluded registry record {index} version"
+        )
+        reason = item["reason"]
+        if reason not in {"path", "git"}:
+            raise AdvisoryGateError(
+                f"excluded registry record {index} has invalid reason: {reason!r}"
+            )
+        if not PACKAGE_RE.fullmatch(excluded_name):
+            raise AdvisoryGateError(f"excluded registry record {index} has invalid name")
+        if not VERSION_RE.fullmatch(excluded_version):
+            raise AdvisoryGateError(f"excluded registry record {index} has invalid version")
+        parsed_excluded.append((excluded_name, excluded_version, reason))
+    expected_excluded = [(item.name, item.version, item.reason) for item in excluded]
+    if sorted(parsed_excluded) != sorted(expected_excluded):
+        raise AdvisoryGateError("excluded registry records do not match Cargo.lock exactly")
 
     groups: dict[str, list[RegistryPackage]] = {}
     for package in packages:
@@ -618,6 +739,7 @@ def load_registry_snapshot(
         "etag",
         "last-modified",
         "date",
+        "attempts",
     }
     for index, raw_response in enumerate(raw_responses):
         response = require_object(raw_response, f"registry response {index}")
@@ -637,6 +759,13 @@ def load_registry_snapshot(
         for header in ("etag", "last-modified", "date"):
             if response[header] is not None and not isinstance(response[header], str):
                 raise AdvisoryGateError(f"invalid registry response header for {key}")
+        attempts = response["attempts"]
+        if (
+            not isinstance(attempts, int)
+            or isinstance(attempts, bool)
+            or not 1 <= attempts <= MAX_FETCH_ATTEMPTS
+        ):
+            raise AdvisoryGateError(f"invalid registry response attempt count for {key}")
         response_path = output / expected_relative
         require_digest(response_path, digest, f"registry response {key}")
         responses[key] = response
@@ -735,6 +864,11 @@ def require_audit_result(status: int, path: Path, description: str) -> bytes:
 
 
 def advisory_database() -> Path:
+    # N3 Part G (RFC 014 M4 review H4): this deliberately mirrors
+    # cargo-audit's own `CARGO_HOME` resolution (default `~/.cargo`, or
+    # `$CARGO_HOME` if set) rather than hard-coding a path, so the identity
+    # check below actually describes the same advisory database `cargo
+    # audit` used for the scan, not a different one that happens to exist.
     cargo_home = Path(os.environ.get("CARGO_HOME", Path.home() / ".cargo"))
     return cargo_home / "advisory-db"
 
@@ -800,9 +934,10 @@ def execute(output_arg: Path) -> int:
             policy_digest + "\n", encoding="ascii"
         )
 
-        packages = load_registry_packages(lock_path)
+        packages, excluded = load_registry_packages(lock_path)
         manifest_bytes, _ = build_registry_snapshot(
             packages,
+            excluded,
             output,
             scan_time.isoformat().replace("+00:00", "Z"),
         )
@@ -827,7 +962,7 @@ def execute(output_arg: Path) -> int:
         if before != after:
             raise AdvisoryGateError("RustSec database identity changed during the gate")
         selected = load_registry_snapshot(
-            manifest_path, manifest_digest, packages, output
+            manifest_path, manifest_digest, packages, excluded, output
         )
 
         _, entries = load_policy(policy_path)
@@ -841,14 +976,15 @@ def execute(output_arg: Path) -> int:
             denied = True
         lines.append(
             f"PASS registry coverage: {len(selected)} locked crates.io packages, "
-            f"{len(yanked)} yanked"
+            f"{len(excluded)} excluded (path/git), {len(yanked)} yanked"
         )
         lines.append(
             f"RESULT findings={len(findings)} warnings="
             f"{sum(line.startswith('WARN ') for line in lines)} "
+            f"exceptions={sum(line.startswith('EXCEPTION ') for line in lines)} "
             f"denied={sum(line.startswith('DENY ') for line in lines)}"
         )
-        load_registry_snapshot(manifest_path, manifest_digest, packages, output)
+        load_registry_snapshot(manifest_path, manifest_digest, packages, excluded, output)
         summary = "\n".join(lines) + "\n"
         summary_path.write_text(summary, encoding="utf-8")
         print(summary, end="")

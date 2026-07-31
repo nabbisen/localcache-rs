@@ -463,6 +463,26 @@ class ClassificationTests(unittest.TestCase):
         self.assertTrue(denied)
         self.assertIn("expired", lines[0])
 
+    def test_exception_disposition_is_labeled_distinctly_not_pass(self) -> None:
+        # N3 Part D (RFC 014 M4 review H1): a knowingly accepted
+        # vulnerability/unsound must never render as a bare PASS.
+        finding = CHECKER.Finding("RUSTSEC-2026-0002", "sample", "1.0.0", "vulnerability")
+        entry = CHECKER.PolicyEntry(
+            finding=finding,
+            action="exception",
+            owner="maintainers",
+            approved=date(2026, 7, 1),
+            expires=date(2026, 12, 1),
+            reason="deferred fix",
+            follow_up="patch by expiry",
+        )
+        lines, denied = CHECKER.classify_findings([finding], [entry], date(2026, 7, 24))
+        self.assertFalse(denied)  # exit status stays 0
+        self.assertTrue(lines[0].startswith("EXCEPTION "))
+        self.assertEqual(sum(line.startswith("EXCEPTION ") for line in lines), 1)
+        self.assertEqual(sum(line.startswith("PASS ") for line in lines), 0)
+        self.assertEqual(sum(line.startswith("WARN ") for line in lines), 0)
+
 
 class RegistryTests(unittest.TestCase):
     CHECKSUM = "a" * 64
@@ -483,8 +503,13 @@ class RegistryTests(unittest.TestCase):
                 + 'source = "git+https://example.invalid/repository"\n',
                 encoding="utf-8",
             )
-            packages = CHECKER.load_registry_packages(path)
+            packages, excluded = CHECKER.load_registry_packages(path)
             self.assertEqual([package.name for package in packages], ["sample"])
+            # N3 Part F: path and git dependencies are reported, not dropped.
+            self.assertEqual(
+                sorted((item.name, item.version, item.reason) for item in excluded),
+                [("git-package", "1.0.0", "git"), ("workspace", "0.1.0", "path")],
+            )
 
             path.write_text(
                 self.lock_package(
@@ -532,36 +557,140 @@ class RegistryTests(unittest.TestCase):
             output = Path(directory)
             with self.assertRaisesRegex(CHECKER.AdvisoryGateError, "HTTP 503"):
                 CHECKER.build_registry_snapshot(
-                    packages, output, "2026-07-23T00:00:00Z", fetch
+                    packages, [], output, "2026-07-23T00:00:00Z", fetch,
+                    sleep=lambda _: None,
                 )
 
         def successful_fetch(url: str, _timeout: int):
             name = url.rsplit("/", 1)[-1]
             return 200, {"date": "fixture"}, self.record(name=name)
 
+        excluded = [CHECKER.ExcludedPackage("local-only", "0.1.0", "path")]
+
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory)
             manifest, selected = CHECKER.build_registry_snapshot(
-                packages, output, "2026-07-23T00:00:00Z", successful_fetch
+                packages, excluded, output, "2026-07-23T00:00:00Z", successful_fetch,
             )
             parsed = json.loads(manifest)
             self.assertEqual(len(parsed["responses"]), 2)
             self.assertEqual(len(selected), 2)
+            # N3 Part E: every response records how many attempts it took.
+            self.assertTrue(all(r["attempts"] == 1 for r in parsed["responses"]))
+            # N3 Part F: excluded packages travel with the manifest.
+            self.assertEqual(
+                parsed["excluded"],
+                [{"name": "local-only", "version": "0.1.0", "reason": "path"}],
+            )
             original = CHECKER.sha256_bytes(manifest)
             path = output / "manifest.json"
             path.write_bytes(manifest)
             loaded = CHECKER.load_registry_snapshot(
-                path, original, packages, output
+                path, original, packages, excluded, output
             )
             self.assertEqual(loaded, selected)
             response = output / parsed["responses"][0]["response-file"]
             response.write_bytes(response.read_bytes() + b" ")
             with self.assertRaisesRegex(CHECKER.AdvisoryGateError, "changed"):
-                CHECKER.load_registry_snapshot(path, original, packages, output)
+                CHECKER.load_registry_snapshot(path, original, packages, excluded, output)
             response.write_bytes(response.read_bytes()[:-1])
             path.write_bytes(manifest + b" ")
             with self.assertRaisesRegex(CHECKER.AdvisoryGateError, "changed"):
-                CHECKER.load_registry_snapshot(path, original, packages, output)
+                CHECKER.load_registry_snapshot(path, original, packages, excluded, output)
+            path.write_bytes(manifest)
+            # A caller-supplied `excluded` list that no longer matches what
+            # the manifest recorded (a fresh, empty list here) must fail
+            # closed too -- the manifest's digest is unchanged, so this
+            # isolates the excluded-array cross-check specifically.
+            with self.assertRaisesRegex(CHECKER.AdvisoryGateError, "excluded"):
+                CHECKER.load_registry_snapshot(path, original, packages, [], output)
+
+    # N3 Part E — bounded retry on transient sparse-index failures only.
+
+    def test_fetch_with_retry_succeeds_after_transient_5xx_failures(self) -> None:
+        attempts = []
+
+        def flaky(url: str, _timeout: int):
+            attempts.append(1)
+            if len(attempts) < 3:
+                return 503, {}, b""
+            return 200, {"etag": "ok"}, self.record()
+
+        sleeps: list[float] = []
+        status, _headers, _body, count = CHECKER.fetch_with_retry(
+            flaky, "https://example.invalid/x", 5,
+            CHECKER.time.monotonic() + 60, sleeps.append,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(count, 3)
+        self.assertEqual(len(attempts), 3)
+        # Exponential backoff: two sleeps, the second longer than the first.
+        self.assertEqual(len(sleeps), 2)
+        self.assertLess(sleeps[0], sleeps[1])
+
+    def test_fetch_with_retry_gives_up_after_max_attempts(self) -> None:
+        def always_503(url: str, _timeout: int):
+            return 503, {}, b""
+
+        with self.assertRaisesRegex(CHECKER.AdvisoryGateError, "HTTP 503"):
+            CHECKER.fetch_with_retry(
+                always_503, "https://example.invalid/x", 5,
+                CHECKER.time.monotonic() + 60, lambda _: None,
+            )
+
+    def test_fetch_with_retry_does_not_retry_a_non_5xx_status(self) -> None:
+        calls = []
+
+        def not_found(url: str, _timeout: int):
+            calls.append(1)
+            return 404, {}, b""
+
+        with self.assertRaisesRegex(CHECKER.AdvisoryGateError, "HTTP 404"):
+            CHECKER.fetch_with_retry(
+                not_found, "https://example.invalid/x", 5,
+                CHECKER.time.monotonic() + 60, lambda _: None,
+            )
+        self.assertEqual(len(calls), 1)
+
+    def test_fetch_with_retry_does_not_retry_a_network_error_more_than_the_limit(
+        self,
+    ) -> None:
+        # live_fetch's only failure mode is OSError/URLError, surfaced as
+        # AdvisoryGateError -- confirm that is retried up to the limit and
+        # no further, distinct from a validation failure raised elsewhere
+        # (this function never sees those; they happen after it returns).
+        calls = []
+
+        def network_error(url: str, _timeout: int):
+            calls.append(1)
+            raise CHECKER.AdvisoryGateError(f"sparse-index request failed for {url}: boom")
+
+        with self.assertRaisesRegex(CHECKER.AdvisoryGateError, "boom"):
+            CHECKER.fetch_with_retry(
+                network_error, "https://example.invalid/x", 5,
+                CHECKER.time.monotonic() + 60, lambda _: None,
+            )
+        self.assertEqual(len(calls), CHECKER.MAX_FETCH_ATTEMPTS)
+
+    def test_size_limit_breach_is_not_retried(self) -> None:
+        # A size-limit breach is detected by the caller (build_registry_snapshot)
+        # after fetch_with_retry returns 200 -- not something fetch_with_retry
+        # itself retries, since it is a validation failure, not a transient one.
+        packages = [self.package("alpha")]
+        calls = []
+
+        def oversized(url: str, _timeout: int):
+            calls.append(1)
+            return 200, {}, b"x" * (CHECKER.MAX_RESPONSE_BYTES + 1)
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            with self.assertRaisesRegex(CHECKER.AdvisoryGateError, "exceeds limit"):
+                CHECKER.build_registry_snapshot(
+                    packages, [], output, "2026-07-23T00:00:00Z", oversized,
+                    sleep=lambda _: None,
+                )
+        self.assertEqual(len(calls), 1)
 
     def test_live_cli_exposes_no_date_policy_or_snapshot_override(self) -> None:
         for option in ("--today", "--policy", "--snapshot", "--ignore"):

@@ -42,6 +42,25 @@ input, and stale or expired policy entries are denied by default. A zero exit
 status means every current finding exactly matches reviewed policy; it does
 not mean the dependency graph has no warnings.
 
+### Output labels
+
+Every classified finding renders as exactly one of three labels — a
+knowingly accepted vulnerability or unsound finding is never a bare `PASS`:
+
+| Label | Meaning |
+|---|---|
+| `WARN` | `unmaintained`/`notice`, `action: "warn"` — visible, not denied |
+| `EXCEPTION` | `vulnerability`/`unsound`, `action: "exception"` — a knowingly accepted defect, deliberately distinguished from `WARN` |
+| `DENY` | no exact policy disposition, a stale entry, an expired one, or a yanked package |
+
+The final `RESULT` line reports `findings`, `warnings`, `exceptions`, and
+`denied` counts separately. The coverage line also reports how many locked
+packages were excluded from advisory coverage because they have no crates.io
+registry source (`path` or `git` dependencies) — see each excluded package's
+name, version, and reason in the evidence bundle's registry manifest, under
+`excluded`, so completeness does not require a manual `Cargo.lock`
+cross-check.
+
 ### Standing dispositions vs. deferred fixes
 
 Each policy entry matches exactly one finding: `(advisory ID, package,

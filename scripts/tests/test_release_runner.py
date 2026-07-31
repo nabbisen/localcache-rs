@@ -458,15 +458,20 @@ class ReleaseRunnerTests(unittest.TestCase):
     def test_toolchain_identity_returns_every_r4_field(self) -> None:
         # RC-3: toolchain_identity() shells out to git/python3/cargo/rustc/mdbook,
         # but the source-integrity CI job that runs this suite does not install
-        # a Rust toolchain or mdBook. Stub command_version rather than depend on
-        # any of those binaries being present in whatever environment runs this
-        # test -- the field-presence assertion needs no real subprocess.
+        # a Rust toolchain or mdBook. Stub command_version and (N3 Part B)
+        # rustc_target_triple -- the latter shells out to `rustc -vV` on its
+        # own, not through command_version -- rather than depend on any of
+        # those binaries being present in whatever environment runs this
+        # test. The field-presence assertion needs no real subprocess.
         original_command_version = RUNNER.command_version
+        original_target_triple = RUNNER.rustc_target_triple
         RUNNER.command_version = lambda command: f"stub {command[0]} 0.0.0"
+        RUNNER.rustc_target_triple = lambda: "stub-target-triple"
         try:
             identity = RUNNER.toolchain_identity()
         finally:
             RUNNER.command_version = original_command_version
+            RUNNER.rustc_target_triple = original_target_triple
         for field in (
             "platform",
             "target_triple",
@@ -481,6 +486,91 @@ class ReleaseRunnerTests(unittest.TestCase):
         ):
             self.assertIn(field, identity)
             self.assertTrue(identity[field], f"{field} must not be empty")
+
+    # N3 Part A — command_version must not merge stderr into the parsed/evidence value.
+
+    def test_command_version_ignores_stderr_diagnostics_in_returned_value(self) -> None:
+        script = (
+            "import sys; "
+            "sys.stderr.write('warning: something noisy\\n'); "
+            "sys.stdout.write('tool 1.2.3')"
+        )
+        output = RUNNER.command_version([sys.executable, "-c", script])
+        self.assertEqual(output, "tool 1.2.3")
+
+    def test_command_version_failure_message_includes_stderr(self) -> None:
+        script = "import sys; sys.stderr.write('boom: missing config\\n'); sys.exit(1)"
+        with self.assertRaisesRegex(RUNNER.ReleaseError, "boom: missing config"):
+            RUNNER.command_version([sys.executable, "-c", script])
+
+    def test_command_version_fails_closed_when_binary_is_missing(self) -> None:
+        with self.assertRaisesRegex(RUNNER.ReleaseError, "required tool is unavailable"):
+            RUNNER.command_version(["localcache-nonexistent-tool-xyz"])
+
+    # N3 Part B — target_triple must come from `rustc -vV`'s `host:` line.
+
+    def test_rustc_target_triple_reads_the_host_line(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            fake_rustc = Path(directory) / "rustc"
+            fake_rustc.write_text(
+                "#!/bin/sh\n"
+                "echo 'rustc 1.99.0 (deadbeef 2026-01-01)'\n"
+                "echo 'binary: rustc'\n"
+                "echo 'commit-hash: deadbeef'\n"
+                "echo 'host: x86_64-unknown-linux-gnu'\n"
+                "echo 'release: 1.99.0'\n",
+                encoding="utf-8",
+            )
+            fake_rustc.chmod(0o755)
+            original_path = os.environ.get("PATH", "")
+            os.environ["PATH"] = f"{directory}{os.pathsep}{original_path}"
+            try:
+                triple = RUNNER.rustc_target_triple()
+            finally:
+                os.environ["PATH"] = original_path
+            self.assertEqual(triple, "x86_64-unknown-linux-gnu")
+
+    def test_rustc_target_triple_fails_closed_without_a_host_line(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            fake_rustc = Path(directory) / "rustc"
+            fake_rustc.write_text(
+                "#!/bin/sh\necho 'rustc 1.99.0 (deadbeef 2026-01-01)'\n",
+                encoding="utf-8",
+            )
+            fake_rustc.chmod(0o755)
+            original_path = os.environ.get("PATH", "")
+            os.environ["PATH"] = f"{directory}{os.pathsep}{original_path}"
+            try:
+                with self.assertRaisesRegex(RUNNER.ReleaseError, "no host: line"):
+                    RUNNER.rustc_target_triple()
+            finally:
+                os.environ["PATH"] = original_path
+
+    # N3 Part C — rc_eligible's inputs are computed, and the fail-closed shape holds.
+
+    def test_source_mode_step_tracking_matches_required_source_steps_exactly(
+        self,
+    ) -> None:
+        source_text = (SCRIPTS / "release.py").read_text(encoding="utf-8")
+        start = source_text.index("def source_mode(")
+        end = source_text.index("\n\n\ndef ", start)
+        body = source_text[start:end]
+        appended = re.findall(r'completed_steps\.append\("([^"]+)"\)', body)
+        self.assertEqual(tuple(appended), RUNNER.REQUIRED_SOURCE_STEPS)
+
+    def test_source_mode_writes_manifest_at_most_once_unconditionally(self) -> None:
+        # The fail-closed property (no manifest at all on any failure, never
+        # one asserting rc_eligible: false) depends on write_manifest being
+        # reachable only by falling all the way through the function -- so
+        # there must be exactly one call to it, and no try/except anywhere
+        # in the function that could catch a failure and continue past it.
+        source_text = (SCRIPTS / "release.py").read_text(encoding="utf-8")
+        start = source_text.index("def source_mode(")
+        end = source_text.index("\n\n\ndef ", start)
+        body = source_text[start:end]
+        self.assertEqual(body.count("write_manifest("), 1)
+        self.assertNotIn("try:", body)
+        self.assertNotIn("except", body)
 
     def test_security_mode_failure_marks_downstream_steps_incomplete(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
