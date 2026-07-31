@@ -54,6 +54,59 @@ No library, schema, payload, or CLI change. See
 [Dependency Security](docs/src/dependency_security.md#standing-dispositions-vs-deferred-fixes)
 for the full reasoning.
 
+Phase 22 N3: release and security tooling hygiene. **Not breaking** — no library change.
+
+### Fixed
+
+- `command_version` no longer merges a tool's stderr into the string it returns, which is
+  both prefix-parsed by the MSRV check and stored verbatim as an evidence field. A
+  diagnostic written to stderr on an otherwise-successful run could previously corrupt
+  either. Failures still surface stderr, so they stay diagnosable.
+- The evidence bundle's `target_triple` is now read from `rustc -vV`'s `host:` line and
+  records a real target triple (`x86_64-unknown-linux-gnu`) instead of an invented
+  `x86_64-linux`. The richer `platform` field is unchanged.
+- `rc_eligible` is now computed from tracked gate completion, a clean-worktree flag, and
+  on-disk evidence, rather than three hard-coded `true` literals whose correctness depended
+  entirely on control flow.
+- A knowingly accepted vulnerability or unsound finding now renders as `EXCEPTION` rather
+  than a bare `PASS`, and the `RESULT` line counts exceptions separately.
+- Transient sparse-index failures — a network error or HTTP 5xx — now retry up to three
+  times with exponential backoff, within the existing overall deadline. A non-5xx status, a
+  validation failure, and a size-limit breach are never retried. A flaky security gate gets
+  disabled, and a disabled gate is the real risk.
+- Packages excluded from advisory coverage because they have no crates.io registry source
+  are now enumerated in the evidence bundle with name, version, and reason, so the
+  completeness claim no longer requires a manual `Cargo.lock` cross-check.
+
+Phase 22 N5: identifier hygiene and module-size debt. **Not breaking** — no public API change.
+
+### Changed
+
+- `drop_path_index` and `authorize_query_index_in_snapshot` now quote the identifier
+  spelling resolved from the SQLite catalog rather than the caller's string (RFC 011 N-01).
+  Both were already safe; quoting the catalog value makes that locally evident instead of
+  resting on an argument spanning two functions. `create_path_index` deliberately still
+  quotes its constructed name — at that point the index does not yet exist, so there is no
+  catalog spelling to use.
+- `identifier_eq`'s ASCII-only case folding is now documented as deliberate, matching
+  SQLite's own identifier comparison (RFC 011 N-02).
+- Oversized modules were split along seams the code already declared, with no public API,
+  behaviour, or test-count change: `cache/engine.rs` 946 → 762 ELOC
+  (`engine/diagnose.rs`, `engine/portable.rs`), `db/indexes.rs` 914 → 338 (its embedded
+  test module moved to `db/indexes/tests.rs`), and `cli/src/main.rs` 728 → 257 (the 15
+  subcommand handlers split by `DatabaseAuthority` into `commands/read.rs` and
+  `commands/write.rs`). `db/repository.rs` and `db/schema/classifier.rs` were deliberately
+  left intact — no seam in either earns the churn.
+
+### Security
+
+- `event-listener` moved from 5.4.1 to 5.4.2, resolving **RUSTSEC-2026-0221**: affected
+  versions unconditionally implement `Send`/`Sync` for `StackSlot<'_, T>`, allowing a
+  `!Send` tag set via `Event::with_tag` to cross a thread boundary and cause a data race in
+  safe code. It reaches this crate only transitively, through the optional `async-std` and
+  `smol` runtime backends. The patch was taken rather than dispositioned — an unsound
+  finding with an available fix should be fixed, not time-boxed.
+
 ## [0.20.1] — 2026-07-30
 
 Corrective release closing Phase 21. Release candidate `3005ac2`, accepted by the M7 architecture
