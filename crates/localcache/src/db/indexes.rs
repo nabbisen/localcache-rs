@@ -114,7 +114,7 @@ pub(crate) fn drop_path_index(
     };
     validate_owned_path_index(&transaction, &object)?;
 
-    let quoted = quote_identifier(&full);
+    let quoted = quote_identifier(&object.name);
     let sql = format!("DROP INDEX main.{}", quoted.as_sql());
     transaction.execute(&sql, [])?;
     #[cfg(test)]
@@ -174,7 +174,7 @@ pub(crate) fn authorize_query_index_in_snapshot(
         }
     }
 
-    let quoted = quote_identifier(name);
+    let quoted = quote_identifier(&object.name);
     #[cfg(test)]
     test_hook(TestPoint::Authorization)?;
     Ok(Some(quoted))
@@ -274,6 +274,13 @@ fn quote_identifier(name: &str) -> QuotedIdentifier {
     QuotedIdentifier(format!("\"{}\"", name.replace('"', "\"\"")))
 }
 
+/// RFC 011 N-02: this ASCII-only case folding is deliberate, matching
+/// SQLite's own identifier comparison, which is also ASCII-only. Widening it
+/// to Unicode-aware casefolding would change which identifiers this crate
+/// considers equal to which the database considers equal, reopening exactly
+/// the mismatch this function exists to prevent. Do not "fix" this to use
+/// `str::eq_ignore_ascii_case` on the whole string or a Unicode-aware
+/// comparison without re-deriving that SQLite's own behavior changed too.
 fn identifier_eq(left: &str, right: &str) -> bool {
     left.len() == right.len()
         && left
