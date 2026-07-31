@@ -28,7 +28,8 @@ class AdvisoryPolicyTests(unittest.TestCase):
                 ("RUSTSEC-2025-0141", "bincode", "2.0.1", "unmaintained"),
             ],
         )
-        self.assertTrue(all(entry.expires == date(2026, 10, 21) for entry in entries))
+        # RFC 019: both live entries are now standing dispositions — no expiry.
+        self.assertTrue(all(entry.expires is None for entry in entries))
 
     def test_policy_rejects_unknown_duplicate_and_wildcard_entries(self) -> None:
         for mutate, message in (
@@ -74,6 +75,98 @@ class AdvisoryPolicyTests(unittest.TestCase):
             _, entries = CHECKER.load_policy(path)
 
             self.assertEqual(len(entries), 2)
+
+    # RFC 019 R1/R2 — kind-aware expiry.
+
+    def test_unmaintained_entry_without_expires_key_is_accepted_as_standing(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            policy = self.policy_document()
+            del policy["findings"][0]["expires"]
+            path = Path(directory) / "policy.json"
+            path.write_text(json.dumps(policy), encoding="utf-8")
+
+            _, entries = CHECKER.load_policy(path)
+
+            self.assertIsNone(entries[0].expires)
+
+    def test_unmaintained_entry_with_null_expires_is_accepted_as_standing(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            policy = self.policy_document()
+            policy["findings"][0]["expires"] = None
+            path = Path(directory) / "policy.json"
+            path.write_text(json.dumps(policy), encoding="utf-8")
+
+            _, entries = CHECKER.load_policy(path)
+
+            self.assertIsNone(entries[0].expires)
+
+    def test_notice_entry_without_expires_is_accepted_as_standing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            policy = self.policy_document()
+            policy["findings"][0]["kind"] = "notice"
+            del policy["findings"][0]["expires"]
+            path = Path(directory) / "policy.json"
+            path.write_text(json.dumps(policy), encoding="utf-8")
+
+            _, entries = CHECKER.load_policy(path)
+
+            self.assertIsNone(entries[0].expires)
+
+    def test_vulnerability_entry_without_expires_is_a_schema_error(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            policy = self.policy_document()
+            policy["findings"][0].update({"kind": "vulnerability", "action": "exception"})
+            del policy["findings"][0]["expires"]
+            path = Path(directory) / "policy.json"
+            path.write_text(json.dumps(policy), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                CHECKER.AdvisoryGateError, "expires is required for kind"
+            ):
+                CHECKER.load_policy(path)
+
+    def test_unsound_entry_without_expires_is_a_schema_error(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            policy = self.policy_document()
+            policy["findings"][0].update({"kind": "unsound", "action": "exception"})
+            del policy["findings"][0]["expires"]
+            path = Path(directory) / "policy.json"
+            path.write_text(json.dumps(policy), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                CHECKER.AdvisoryGateError, "expires is required for kind"
+            ):
+                CHECKER.load_policy(path)
+
+    def test_expires_must_still_postdate_approved_when_present_on_a_standing_kind(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            policy = self.policy_document()
+            policy["findings"][0]["expires"] = "2026-07-23"  # == approved
+            path = Path(directory) / "policy.json"
+            path.write_text(json.dumps(policy), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                CHECKER.AdvisoryGateError, "expiry must be after approval"
+            ):
+                CHECKER.load_policy(path)
+
+    def test_unknown_key_in_a_finding_entry_is_still_an_error(self) -> None:
+        # RFC 019's widening (making `expires` optional) must not become a
+        # hole: a misspelled or unexpected key is still rejected.
+        with tempfile.TemporaryDirectory() as directory:
+            policy = self.policy_document()
+            policy["findings"][0]["expiration"] = "2026-10-21"
+            path = Path(directory) / "policy.json"
+            path.write_text(json.dumps(policy), encoding="utf-8")
+
+            with self.assertRaisesRegex(CHECKER.AdvisoryGateError, "keys differ"):
+                CHECKER.load_policy(path)
 
     @staticmethod
     def policy_document() -> dict[str, object]:
@@ -275,6 +368,100 @@ class ClassificationTests(unittest.TestCase):
         lines, denied = CHECKER.classify_findings([], [], date(2026, 7, 23))
         self.assertEqual(lines, [])
         self.assertFalse(denied)
+
+    # RFC 019 — standing dispositions.
+
+    def test_standing_unmaintained_disposition_does_not_cover_a_vulnerability_finding(
+        self,
+    ) -> None:
+        # This is the requirement the whole RFC rests on: the policy key
+        # includes `kind`, so a standing `unmaintained` entry must not be
+        # mistaken for coverage of a `vulnerability` finding for the same
+        # package and version. If this fails, RFC 019's premise is wrong.
+        standing_entry = CHECKER.PolicyEntry(
+            finding=self.finding,  # kind="unmaintained"
+            action="warn",
+            owner="maintainers",
+            approved=date(2026, 7, 23),
+            expires=None,
+            reason="compatibility",
+            follow_up="reassess if a vulnerability advisory is published",
+        )
+        vulnerability_finding = CHECKER.Finding(
+            "RUSTSEC-2025-0052", "async-std", "1.13.2", "vulnerability"
+        )
+        lines, denied = CHECKER.classify_findings(
+            [vulnerability_finding], [standing_entry], date(2026, 7, 24)
+        )
+        self.assertTrue(denied)
+        # Both the uncovered new finding and the now-unmatched standing
+        # entry must be reported.
+        self.assertEqual(sum(line.startswith("DENY ") for line in lines), 2)
+        self.assertTrue(
+            any("no exact policy disposition" in line for line in lines)
+        )
+        self.assertTrue(any("stale policy entry" in line for line in lines))
+
+    def test_standing_entry_reports_without_expiry_and_names_condition(self) -> None:
+        standing_entry = CHECKER.PolicyEntry(
+            finding=self.finding,
+            action="warn",
+            owner="maintainers",
+            approved=date(2026, 7, 23),
+            expires=None,
+            reason="compatibility",
+            follow_up="reassess if a maintained fork gains adoption",
+        )
+        lines, denied = CHECKER.classify_findings(
+            [self.finding], [standing_entry], date(2026, 7, 24)
+        )
+        self.assertFalse(denied)
+        self.assertTrue(lines[0].startswith("WARN "))
+        self.assertNotIn("until", lines[0])
+        self.assertIn("standing disposition", lines[0])
+        self.assertIn("reassess if a maintained fork gains adoption", lines[0])
+
+    def test_standing_entry_version_change_denies_both_new_and_stale(self) -> None:
+        standing_entry = CHECKER.PolicyEntry(
+            finding=self.finding,  # version="1.13.2"
+            action="warn",
+            owner="maintainers",
+            approved=date(2026, 7, 23),
+            expires=None,
+            reason="compatibility",
+            follow_up="reassess if a vulnerability advisory is published",
+        )
+        new_version_finding = CHECKER.Finding(
+            "RUSTSEC-2025-0052", "async-std", "1.14.0", "unmaintained"
+        )
+        lines, denied = CHECKER.classify_findings(
+            [new_version_finding], [standing_entry], date(2026, 7, 24)
+        )
+        self.assertTrue(denied)
+        self.assertEqual(sum(line.startswith("DENY ") for line in lines), 2)
+        self.assertTrue(
+            any("no exact policy disposition" in line for line in lines)
+        )
+        self.assertTrue(any("stale policy entry" in line for line in lines))
+
+    def test_vulnerability_entry_with_past_expires_still_denies(self) -> None:
+        vulnerability_finding = CHECKER.Finding(
+            "RUSTSEC-2026-0001", "sample", "1.0.0", "vulnerability"
+        )
+        entry = CHECKER.PolicyEntry(
+            finding=vulnerability_finding,
+            action="exception",
+            owner="maintainers",
+            approved=date(2026, 7, 1),
+            expires=date(2026, 7, 20),
+            reason="deferred fix",
+            follow_up="patch by expiry",
+        )
+        lines, denied = CHECKER.classify_findings(
+            [vulnerability_finding], [entry], date(2026, 7, 20)
+        )
+        self.assertTrue(denied)
+        self.assertIn("expired", lines[0])
 
 
 class RegistryTests(unittest.TestCase):

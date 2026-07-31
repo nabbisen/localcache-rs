@@ -217,8 +217,17 @@ Default actions are:
 An exact policy entry may downgrade an informational finding to a visible
 warning. An otherwise denied RustSec finding requires an explicit exception.
 Both forms must name the advisory ID, package, exact locked version, kind,
-owner, rationale, approval date, expiry date, and follow-up decision. Policy
-uniqueness is the complete `(advisory ID, package, version, kind)` tuple; the
+owner, rationale, approval date, expiry date, and follow-up decision.
+
+> **Amended by [RFC 019](../accepted/019-standing-dispositions-for-unmaintained-dependencies.md)
+> (2026-07-30): expiry date is no longer mandatory for every entry.** It remains
+> required for `vulnerability` and `unsound`. An `unmaintained` or `notice` entry may omit
+> it (or set it `null`) to become a **standing disposition** — valid until the version,
+> kind, or dependency graph changes, with no expiry date. `reason` and `follow-up` remain
+> mandatory either way; a standing disposition's `follow-up` must state the condition that
+> would change the decision.
+
+Policy uniqueness is the complete `(advisory ID, package, version, kind)` tuple; the
 same advisory may legitimately affect two locked versions. Entries may not use
 wildcards, version ranges, advisory categories, or package-only matching, and
 contradictory entries for one complete tuple are invalid.
@@ -230,7 +239,9 @@ package.
 
 The checker fails on or after the entry's expiry date. It also fails on a stale
 entry, so an obsolete acknowledgement cannot silently authorize a future
-different version or hide after the dependency is repaired.
+different version or hide after the dependency is repaired. **A standing
+disposition (RFC 019) has no expiry date and so cannot fail this way** — only the
+stale-entry check still applies to it.
 
 ### R5 — Initial advisory dispositions
 
@@ -238,7 +249,9 @@ The accepted M4 implementation must have no vulnerability, unsoundness,
 yanked-package, or notice exceptions.
 
 Two exact unmaintained findings are acknowledged as warnings through
-2026-10-21:
+2026-10-21 — **the historical state at M4 acceptance. RFC 019 (2026-07-30)
+migrated both to standing dispositions with no expiry date; this table
+records the original decision, not the current policy file.**
 
 | Advisory/package/version | Rationale | Follow-up boundary |
 |---|---|---|

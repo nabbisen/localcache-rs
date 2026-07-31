@@ -58,7 +58,11 @@ class PolicyEntry:
     action: str
     owner: str
     approved: date
-    expires: date
+    # RFC 019: `None` is a *standing disposition* — valid until the version,
+    # kind, or dependency graph changes, with no expiry date. Only permitted
+    # for `unmaintained`/`notice`; `vulnerability`/`unsound` still require a
+    # real date, enforced in `load_policy`.
+    expires: date | None
     reason: str
     follow_up: str
 
@@ -128,6 +132,38 @@ def require_exact_keys(
         )
 
 
+POLICY_FINDING_REQUIRED_FIELDS = {
+    "id",
+    "package",
+    "version",
+    "kind",
+    "action",
+    "owner",
+    "approved",
+    "reason",
+    "follow-up",
+}
+POLICY_FINDING_OPTIONAL_FIELDS = {"expires"}
+STANDING_DISPOSITION_KINDS = {"unmaintained", "notice"}
+
+
+def require_policy_finding_keys(value: Mapping[str, object], description: str) -> None:
+    """RFC 019: `expires` is the one optional key on a policy finding --
+    every other field is still required, and no entry may carry an unknown
+    key. Deliberately its own function rather than a parameter threaded
+    through `require_exact_keys`, so the "no unknown keys" guarantee cannot
+    be accidentally widened by a future caller reusing the wrong set.
+    """
+    actual = set(value)
+    allowed = POLICY_FINDING_REQUIRED_FIELDS | POLICY_FINDING_OPTIONAL_FIELDS
+    missing = sorted(POLICY_FINDING_REQUIRED_FIELDS - actual)
+    unknown = sorted(actual - allowed)
+    if missing or unknown:
+        raise AdvisoryGateError(
+            f"{description} keys differ: missing={missing} unknown={unknown}"
+        )
+
+
 def require_string(value: object, description: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise AdvisoryGateError(f"{description} must be a non-empty string")
@@ -174,21 +210,9 @@ def load_policy(path: Path) -> tuple[dict[str, str], list[PolicyEntry]]:
         raise AdvisoryGateError("policy findings must be an array")
     entries: list[PolicyEntry] = []
     seen: set[tuple[str, str, str, str]] = set()
-    fields = {
-        "id",
-        "package",
-        "version",
-        "kind",
-        "action",
-        "owner",
-        "approved",
-        "expires",
-        "reason",
-        "follow-up",
-    }
     for index, raw_entry in enumerate(findings_value):
         entry = require_object(raw_entry, f"policy finding {index}")
-        require_exact_keys(entry, fields, f"policy finding {index}")
+        require_policy_finding_keys(entry, f"policy finding {index}")
         advisory_id = require_string(entry["id"], f"policy finding {index} id")
         package = require_string(entry["package"], f"policy finding {index} package")
         version = require_string(entry["version"], f"policy finding {index} version")
@@ -207,8 +231,23 @@ def load_policy(path: Path) -> tuple[dict[str, str], list[PolicyEntry]]:
         if kind in {"vulnerability", "unsound"} and action != "exception":
             raise AdvisoryGateError(f"{kind} policy action must be exception")
         approved = parse_iso_date(entry["approved"], f"policy finding {index} approved")
-        expires = parse_iso_date(entry["expires"], f"policy finding {index} expires")
-        if expires <= approved:
+        raw_expires = entry.get("expires")
+        if kind in STANDING_DISPOSITION_KINDS:
+            # RFC 019 R1: omitted or explicit `null` means a standing
+            # disposition -- no expiry date.
+            expires = (
+                None
+                if raw_expires is None
+                else parse_iso_date(raw_expires, f"policy finding {index} expires")
+            )
+        else:
+            # RFC 019 R2: vulnerability/unsound keep mandatory expiry.
+            if raw_expires is None:
+                raise AdvisoryGateError(
+                    f"policy finding {index} expires is required for kind {kind!r}"
+                )
+            expires = parse_iso_date(raw_expires, f"policy finding {index} expires")
+        if expires is not None and expires <= approved:
             raise AdvisoryGateError(
                 f"policy finding {index} expiry must be after approval"
             )
@@ -313,17 +352,26 @@ def classify_findings(
             lines.append(f"DENY {identity}: no exact policy disposition")
             denied = True
             continue
-        if today >= entry.expires:
+        if entry.expires is not None and today >= entry.expires:
             lines.append(
                 f"DENY {identity}: policy expired on {entry.expires.isoformat()}"
             )
             denied = True
             continue
         classification = "WARN" if entry.action == "warn" else "PASS"
-        lines.append(
-            f"{classification} {identity}: {entry.action} until "
-            f"{entry.expires.isoformat()} ({entry.owner})"
-        )
+        if entry.expires is not None:
+            lines.append(
+                f"{classification} {identity}: {entry.action} until "
+                f"{entry.expires.isoformat()} ({entry.owner})"
+            )
+        else:
+            # RFC 019 R4: no expiry to report; name the re-raise condition
+            # instead, so a reader can tell the two forms apart without
+            # opening the policy file.
+            lines.append(
+                f"{classification} {identity}: {entry.action}, standing "
+                f"disposition ({entry.owner}) — reassess if {entry.follow_up}"
+            )
     for entry in sorted(entries, key=lambda item: item.finding.key):
         if entry.finding.key not in observed:
             lines.append(

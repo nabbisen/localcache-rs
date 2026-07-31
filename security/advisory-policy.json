@@ -16,9 +16,8 @@
       "action": "warn",
       "owner": "localcache maintainers",
       "approved": "2026-07-23",
-      "expires": "2026-10-21",
       "reason": "Preserve the advertised v0.20.1 async-std runtime feature.",
-      "follow-up": "Decide replacement, deprecation, removal, or renewed acceptance before expiry."
+      "follow-up": "a maintained fork of async-std gains adoption, or any vulnerability or unsound advisory is published against async-std at the locked version."
     },
     {
       "id": "RUSTSEC-2025-0141",
@@ -28,9 +27,8 @@
       "action": "warn",
       "owner": "localcache maintainers",
       "approved": "2026-07-23",
-      "expires": "2026-10-21",
       "reason": "Preserve the established bincode legacy payload wire format for v0.20.1.",
-      "follow-up": "Assess a maintained format-compatible implementation against every historical fixture before expiry."
+      "follow-up": "a maintained format-compatible implementation becomes available (verify it against every historical fixture before switching), or any vulnerability or unsound advisory is published against bincode at the locked version."
     }
   ]
 }

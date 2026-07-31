@@ -35,6 +35,25 @@ No schema, payload wire format, SQL, or method signature changed; existing
 databases open unchanged. See [Error Handling](docs/src/errors.md#v0210-migration-note)
 for the full migration note.
 
+Phase 22 N2: [RFC 019](rfcs/accepted/019-standing-dispositions-for-unmaintained-dependencies.md)
+— standing dispositions for unmaintained dependencies. **Not breaking** — release tooling only.
+
+### Changed
+
+- `security/advisory-policy.json`'s `expires` field is now optional for `unmaintained` and
+  `notice` disposition kinds (a **standing disposition** — valid until the version, kind, or
+  dependency graph changes, with no expiry date). It remains mandatory for `vulnerability` and
+  `unsound`.
+- The two live `async-std`/`bincode` unmaintained dispositions were migrated to standing
+  dispositions; their `follow-up` now states the condition that would change the decision
+  instead of a date. No renewal date was chosen — none is needed.
+- Advisory-gate output for a standing disposition reads `standing disposition` and names the
+  re-raise condition, instead of printing an expiry date that no longer exists.
+
+No library, schema, payload, or CLI change. See
+[Dependency Security](docs/src/dependency_security.md#standing-dispositions-vs-deferred-fixes)
+for the full reasoning.
+
 ## [0.20.1] — 2026-07-30
 
 Corrective release closing Phase 21. Release candidate `3005ac2`, accepted by the M7 architecture
