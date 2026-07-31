@@ -11,16 +11,23 @@ API. It changes no gate's pass/fail semantics except where a finding says so exp
 
 ## 2. Sequencing — read before starting
 
-**Items D–G modify `scripts/check_advisories.py`, which N2 (RFC 019) is modifying right
-now.**
+> **Discharged 2026-07-30.** N2 was committed at `ae07d79` and independently accepted.
+> `scripts/check_advisories.py` is stable, so **all parts A–G may proceed** with no
+> ordering constraint between them. The note below is retained as the record of why the
+> constraint existed.
 
-- **Do not start D–G until N2 is committed.** Two people editing the same file for
+~~**Items D–G modify `scripts/check_advisories.py`, which N2 (RFC 019) is modifying right
+now.**~~
+
+- ~~**Do not start D–G until N2 is committed.**~~ Two people editing the same file for
   unrelated reasons produces a conflict neither can review cleanly, and both change the
   same `[implementations]` hash pin.
-- **A–C touch `scripts/release.py` only** and are independent of N2. Start there.
+- **A–C touch `scripts/release.py` only** and were always independent of N2.
 
-If N2 is already committed when you pick this up, that constraint is discharged — say so
-in the review request rather than leaving it ambiguous.
+**Rebase before starting.** N2 changed `check_advisories.py` substantially — `expires`
+is now `date | None`, and `classify_findings` reports standing dispositions. D's
+`classification = {...}[entry.action]` change lands in code that N2 already edited, so
+work from `ae07d79` or later, not from an older checkout.
 
 ## 3. Part A–C: `scripts/release.py`
 

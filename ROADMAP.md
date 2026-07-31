@@ -459,7 +459,7 @@ Dependency order, not dates. Each is an independent review point.
 |---|---|---|---|
 | **N0 — Close M7's notes** | RFC 009 R16 supersession banner; pin `docs.yaml`'s four actions; enable GitHub Pages | M7 findings §5.1/§5.2 | — |
 | **N1 — Error-type contract ✅** | `#[non_exhaustive]` on `LocalFileCacheError`; distinct poisoning variant replacing the `UnsupportedFeature` misuse; migration note | **RFC 018** (Accepted) | — |
-| **N2 — Advisory dispositions** | Renew, resolve, or replace the `async-std` and `bincode` dispositions | owner decision per package | — |
+| **N2 — Advisory dispositions ✅** | Renew, resolve, or replace the `async-std` and `bincode` dispositions | **RFC 019** (Accepted) | — |
 | **N3 — Release-tooling hygiene** | `command_version` stderr separation; `target_triple` from `rustc -vV`; thread real gate results into `rc_eligibility`; RFC 014 H1–H3; RFC 011 N-01/N-02 | recorded findings | N0 |
 | **N4 — Performance baseline ✅** | Extend benchmarks to 10k/100k/1M; publish a measured profile; **no tuning** | measurement only | — |
 | **N5 — Module-size debt** | Risk-reducing splits only, per the corrected register below | — | N1 |
@@ -486,6 +486,25 @@ regression in the task. And the exhaustiveness guarantee is enforced by a
 `compile_fail` doctest whose validity was confirmed by mutation: adding a `_` arm
 makes the test fail, so it passes only because the match is genuinely
 non-exhaustive.
+
+### N2 completion
+
+RFC 019 was implemented and independently accepted at commit `ae07d79`. `expires` is now
+optional for `unmaintained` and `notice` dispositions and still mandatory for
+`vulnerability` and `unsound`. Both live entries — `async-std 1.13.2` and
+`bincode 2.0.1` — are standing dispositions with condition-based follow-ups and **no
+renewal date**, so the 2026-10-21 deadline no longer exists.
+
+The premise was verified rather than assumed: a `vulnerability` finding against a
+package already accepted as `unmaintained` is denied twice over — the new finding has no
+disposition, and the old entry goes stale — because the policy key includes `kind`. Nine
+independent schema probes confirmed the widening did not become a hole; a misspelled
+`expries` key is still rejected.
+
+RFC 014 carries three inline amendments at the point of use, including one marking its
+historical acknowledgement table as historical. That last one matters most: a normative
+clause invites checking, whereas a stated fact invites belief, so an unmarked stale fact
+is the more dangerous of the two.
 
 ### Why performance *tuning* is not in this phase
 
@@ -542,6 +561,7 @@ Recorded findings not scheduled into a milestone. Each is tracked, none is lost.
 | `toolchain_identity`'s `target_triple` is `x86_64-linux`, not a Rust target triple | M7 §5.3 | Redundant with the richer `platform` field. Scheduled in N3. |
 | `rc_eligible` is three hard-coded `True` literals; derivation lives in control flow | M7 §5.3 | Fail-closed. RFC 017 R3 says "derives from gates". Scheduled in N3. |
 | RFC 014 H1–H3; RFC 011 N-01/N-02 | Phase 21 | Verified safe; hardening only. Scheduled in N3. |
+| `follow-up` in `advisory-policy.json` is a sentence fragment that only reads correctly once the reporter prepends "reassess if" | N2 review §4.1 | Data that parses only inside one template is fragile once a second consumer appears. Prefer self-describing data and a reporter that emits it verbatim. Fold into any future touch of the reporting code. |
 | `preload`, concurrent access, bincode codec at scale, watcher on large trees, cold-open cost | N4 §6 | Unmeasured. Candidate additions to the scale profile; none blocks Phase 23 scoping. |
 
 ### Corrected module-size register
