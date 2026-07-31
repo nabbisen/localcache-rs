@@ -460,7 +460,7 @@ Dependency order, not dates. Each is an independent review point.
 | **N0 — Close M7's notes** | RFC 009 R16 supersession banner; pin `docs.yaml`'s four actions; enable GitHub Pages | M7 findings §5.1/§5.2 | — |
 | **N1 — Error-type contract ✅** | `#[non_exhaustive]` on `LocalFileCacheError`; distinct poisoning variant replacing the `UnsupportedFeature` misuse; migration note | **RFC 018** (Accepted) | — |
 | **N2 — Advisory dispositions ✅** | Renew, resolve, or replace the `async-std` and `bincode` dispositions | **RFC 019** (Accepted) | — |
-| **N3 — Release-tooling hygiene** | `command_version` stderr separation; `target_triple` from `rustc -vV`; thread real gate results into `rc_eligibility`; RFC 014 H1–H3; RFC 011 N-01/N-02 | recorded findings | N0 |
+| **N3 — Release-tooling hygiene ✅** | `command_version` stderr separation; `target_triple` from `rustc -vV`; thread real gate results into `rc_eligibility`; RFC 014 H1–H4 | recorded findings | N0 |
 | **N4 — Performance baseline ✅** | Extend benchmarks to 10k/100k/1M; publish a measured profile; **no tuning** | measurement only | — |
 | **N5 — Module-size debt** | Risk-reducing splits only, per the corrected register below | — | N1 |
 | **N6 — Release and review** | v0.21.0 gates, evidence bundle, independent re-review | owner authorization | all |
@@ -505,6 +505,33 @@ RFC 014 carries three inline amendments at the point of use, including one marki
 historical acknowledgement table as historical. That last one matters most: a normative
 clause invites checking, whereas a stated fact invites belief, so an unmarked stale fact
 is the more dangerous of the two.
+
+### N3 completion
+
+All seven parts were implemented and independently accepted at commit `47f7417`.
+`command_version` no longer merges stderr into strings that are both prefix-parsed
+and stored as evidence — the same defect class RC-4 fixed in `run_gate`, one layer
+over. `target_triple` is now read from `rustc -vV`'s `host:` line and records
+`x86_64-unknown-linux-gnu` rather than the invented `x86_64-linux`. `rc_eligible` is
+computed from tracked step completion, a clean-worktree flag, and on-disk evidence
+rather than three hard-coded `True` literals. On the advisory side, a knowingly
+accepted vulnerability now renders as `EXCEPTION` rather than a bare `PASS`;
+transient sparse-index failures retry up to three times with backoff while a 404,
+a validation failure, and a size-limit breach never do; and packages excluded from
+advisory coverage are enumerated in evidence — which immediately revealed that the
+two silently dropped packages were the workspace's own members.
+
+159 script tests pass, including under a `PATH` stripped of every Rust and mdBook
+binary, and the live gate exits 0.
+
+Two things worth recording. The `rc_eligible` change means drift between
+`REQUIRED_SOURCE_STEPS` and the tracking calls could now write a manifest asserting
+`rc_eligible: false` — which is **safer** than the old behaviour, where the same
+drift would have asserted `true` and lied — and a source-inspection test turns that
+drift into a test failure before it can occur. And moving `target_triple` off
+`command_version` would have broken the toolchain-free CI job, because the existing
+RC-3 test stubbed only `command_version`; that was caught before it shipped and
+confirmed with a real restricted-`PATH` run.
 
 ### Why performance *tuning* is not in this phase
 
@@ -557,11 +584,9 @@ Recorded findings not scheduled into a milestone. Each is tracked, none is lost.
 |---|---|---|
 | `ConnectionPool`'s batch methods return **one** element on lock failure, regardless of `paths.len()` | N1 review §4.1 | Latent correctness bug, pre-existing. A caller doing `paths.iter().zip(results)` silently drops every path but one. `ReadPool` now guarantees and documents one result per path; `ConnectionPool` does neither, so the two pool types disagree on a contract callers would assume is shared. Only manifests on a poisoned lock. Fix alongside future `ConnectionPool` work rather than standalone. |
 | Pin the exhaustiveness `compile_fail` doctest to `E0004` | N1 review §3.1 | Optional hardening. Makes permanent the guarantee currently established only by mutation testing. |
-| `command_version` merges stderr into strings that are prefix-parsed **and** stored as R4 evidence | M7 §5.3 | Same class as RC-4 one layer over; fail-closed. Scheduled in N3. |
-| `toolchain_identity`'s `target_triple` is `x86_64-linux`, not a Rust target triple | M7 §5.3 | Redundant with the richer `platform` field. Scheduled in N3. |
-| `rc_eligible` is three hard-coded `True` literals; derivation lives in control flow | M7 §5.3 | Fail-closed. RFC 017 R3 says "derives from gates". Scheduled in N3. |
-| RFC 014 H1–H3; RFC 011 N-01/N-02 | Phase 21 | Verified safe; hardening only. Scheduled in N3. |
 | `follow-up` in `advisory-policy.json` is a sentence fragment that only reads correctly once the reporter prepends "reassess if" | N2 review §4.1 | Data that parses only inside one template is fragile once a second consumer appears. Prefer self-describing data and a reporter that emits it verbatim. Fold into any future touch of the reporting code. |
+| `fetch_with_retry` catches a broad `AdvisoryGateError` rather than a dedicated transient type | N3 review §4.1 | Correct today, because `live_fetch`'s only failure mode is `OSError`/`URLError`. But `Fetch` is an injection point: a substitute raising `AdvisoryGateError` non-transiently would be retried three times, turning a fast failure into a slow one. Fix is a `TransientFetchError` so the fetcher declares transience rather than the wrapper inferring it. |
+| RFC 011 N-01/N-02 (quote the catalog's spelling; comment the ASCII-fold invariant) | Phase 21 | Verified safe; hardening only. **Moved from N3 to N5**, since both land in `indexes.rs`, which N5 also touches. |
 | `preload`, concurrent access, bincode codec at scale, watcher on large trees, cold-open cost | N4 §6 | Unmeasured. Candidate additions to the scale profile; none blocks Phase 23 scoping. |
 
 ### Corrected module-size register
