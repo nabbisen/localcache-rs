@@ -7,7 +7,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [Unreleased]
+## [0.21.0] — Unreleased
+
+RC placeholder date: this section targets the coming v0.21.0 release closing Phase 22.
+The exact release date is set at owner authorization, not before.
 
 Phase 22 N1: [RFC 018](rfcs/accepted/018-truthful-error-taxonomy.md) — truthful error taxonomy.
 **Breaking; targets v0.21.0.**

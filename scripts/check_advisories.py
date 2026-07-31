@@ -532,7 +532,7 @@ def live_fetch(url: str, timeout: int) -> tuple[int, Mapping[str, str], bytes]:
     request = urllib.request.Request(
         url,
         headers={
-            "User-Agent": "localcache-rfc014-security-gate/0.20.1",
+            "User-Agent": "localcache-rfc014-security-gate/0.21.0",
             "Cache-Control": "no-cache",
             "Pragma": "no-cache",
             "Accept": "application/octet-stream",

@@ -16,7 +16,7 @@
       "action": "warn",
       "owner": "localcache maintainers",
       "approved": "2026-07-23",
-      "reason": "Preserve the advertised v0.20.1 async-std runtime feature.",
+      "reason": "Preserve the advertised async-std runtime feature.",
       "follow-up": "a maintained fork of async-std gains adoption, or any vulnerability or unsound advisory is published against async-std at the locked version."
     },
     {
@@ -27,7 +27,7 @@
       "action": "warn",
       "owner": "localcache maintainers",
       "approved": "2026-07-23",
-      "reason": "Preserve the established bincode legacy payload wire format for v0.20.1.",
+      "reason": "Preserve the established bincode legacy payload wire format.",
       "follow-up": "a maintained format-compatible implementation becomes available (verify it against every historical fixture before switching), or any vulnerability or unsound advisory is published against bincode at the locked version."
     }
   ]

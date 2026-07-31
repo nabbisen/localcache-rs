@@ -22,7 +22,7 @@ sha256 = "07587f3ece397b3be523a2142ce9a68130936599cda67a22b3c5b56383907f77"
 
 [implementations.check-advisories]
 path = "scripts/check_advisories.py"
-sha256 = "8d2c3c9ec757a3a07a960af621c3123bf104eb25cedf5dba25024ad6098800ac"
+sha256 = "e585a49a1963972fc0e08224455d56cb8bea41604e20a4a3e49fa34f8ef68c44"
 
 [implementations.feature-matrix]
 path = "scripts/feature_matrix.py"
