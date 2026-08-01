@@ -219,7 +219,7 @@ warning. An otherwise denied RustSec finding requires an explicit exception.
 Both forms must name the advisory ID, package, exact locked version, kind,
 owner, rationale, approval date, expiry date, and follow-up decision.
 
-> **Amended by [RFC 019](../accepted/019-standing-dispositions-for-unmaintained-dependencies.md)
+> **Amended by [RFC 019](../done/019-standing-dispositions-for-unmaintained-dependencies.md)
 > (2026-07-30): expiry date is no longer mandatory for every entry.** It remains
 > required for `vulnerability` and `unsound`. An `unmaintained` or `notice` entry may omit
 > it (or set it `null`) to become a **standing disposition** — valid until the version,

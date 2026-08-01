@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
+| Status | Implemented (0.21.0) |
 | Feature | *(no Cargo feature; affects the public error type)* |
 | Touches | `crates/localcache/src/error.rs`, `pool.rs`, `read_pool.rs`, `serialization.rs`, `cache/async_engine.rs`, `cache/watcher.rs`, `docs/src/errors.md` |
 | Finding | Phase 21 deferred debt, plus three defects found while designing this RFC |

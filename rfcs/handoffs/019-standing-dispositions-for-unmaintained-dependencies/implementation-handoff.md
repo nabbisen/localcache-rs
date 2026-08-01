@@ -2,7 +2,7 @@
 
 ## 1. Summary
 
-Implement [RFC 019](../../accepted/019-standing-dispositions-for-unmaintained-dependencies.md),
+Implement [RFC 019](../../done/019-standing-dispositions-for-unmaintained-dependencies.md),
 Phase 22 **N2**.
 
 Make `expires` optional for `unmaintained` and `notice` dispositions, keep it

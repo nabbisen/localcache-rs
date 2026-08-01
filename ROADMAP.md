@@ -429,7 +429,7 @@ per-release step, and it would replace one implicit behaviour with another.
 Publication remains a separate owner-authorized action under RFC 009 R15; the
 release tooling must never publish as a side effect.
 
-## Phase 22 — Consolidation and Measurement (target: v0.21.0) 🚧
+## Phase 22 — Consolidation and Measurement (v0.21.0) ✅
 
 Approved by the owner on 2026-07-30. The version target is v0.21.0 because N1 is a
 breaking public-API change and cannot ride a patch release.
@@ -463,7 +463,7 @@ Dependency order, not dates. Each is an independent review point.
 | **N3 — Release-tooling hygiene ✅** | `command_version` stderr separation; `target_triple` from `rustc -vV`; thread real gate results into `rc_eligibility`; RFC 014 H1–H4 | recorded findings | N0 |
 | **N4 — Performance baseline ✅** | Extend benchmarks to 10k/100k/1M; publish a measured profile; **no tuning** | measurement only | — |
 | **N5 — Module-size debt ✅** | Risk-reducing splits only, per the corrected register below; plus RFC 011 N-01/N-02 | — | N1 |
-| **N6 — Release and review** *(coming-version housekeeping ✅)* | v0.21.0 gates, evidence bundle, independent re-review | owner authorization | all |
+| **N6 — Release and review ✅** | v0.21.0 gates, evidence bundle, independent re-review | owner authorization | all |
 
 ### N1 completion
 
@@ -586,6 +586,48 @@ Verified after commit: the full `source` gate exits 0 with all ten steps passing
 
 Remaining in N6: the RC production run, the release review, and the owner's
 tag/publish/tarball actions.
+
+### Phase 22 — released 2026-08-01
+
+**v0.21.0 shipped.** Phase 22 is complete.
+
+| | |
+|---|---|
+| Release commit | `90a2c0b` |
+| Tag | `0.21.0`, GPG-signed, on the release commit |
+| Release archive uncompressed-tar SHA-256 | `9630a182edd3366707504fdedbc010a014b2e63487feabb952c334038e79c937` |
+| CI on the release commit | run 30684858900, 26/26 green |
+| Published | `localcache 0.21.0` and `localcache-cli 0.21.0` on crates.io |
+
+RFCs **018** and **019** moved to `rfcs/done/` with Status **Implemented (0.21.0)**.
+`rfcs/accepted/` is empty again.
+
+`cargo publish --workspace --locked` published both crates in dependency order in one
+command — the correction to v0.20.1, where a bare `cargo publish` silently honoured
+`default-members` and shipped only the library.
+
+**One result worth keeping.** The v0.21.0 release-candidate archive reproduced
+**byte-identically** on an unrelated host — this workstation and a GitHub runner, with
+different OS, `git`, zlib, locale and timezone — with identical 213-member lists. RFC 017
+R2 guarantees only per-host determinism and RFC 009's non-goals disclaim cross-
+implementation byte identity, so both were conservative. This retrospectively validates
+RFC 017 R1's choice of the uncompressed-tar digest as the primary identifier, and the
+decision to label the compressed digest advisory: only the compressed digest differed.
+
+**Two process findings, recorded because they should change how Phase 23 runs.**
+
+*Release cadence was mishandled.* The project's cadence rule names logical breaking
+points — an RFC resolved, a compliance process completed. Phase 22 hit four (RFC 018,
+RFC 019, the N3 tooling audit, the N5 code audit) and proposed a release at none,
+treating the phase as one block. Two costs followed: non-breaking work (N2, N3, N5) was
+trapped behind a breaking release when it could have shipped as a patch first, and
+thirteen commits accumulated with no CI verification — during which RUSTSEC-2026-0221 was
+public for eighteen days before a push surfaced it.
+
+*Phase 22 defined no exit criteria.* Phase 21 had nine and M7 assessed against each; this
+phase had goal, scope, milestones and registers but no completion checklist, so its
+release decision assessed against the stated goal instead. **Phase 23 must define exit
+criteria before work starts.**
 
 ### Why performance *tuning* is not in this phase
 

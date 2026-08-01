@@ -18,7 +18,7 @@ must add a `_` arm. Lock poisoning and JSON codec failures also return different
 before — see the N1 entry below. No schema, payload wire format, SQL, or method signature changed;
 existing databases open unchanged.
 
-Phase 22 N1: [RFC 018](rfcs/accepted/018-truthful-error-taxonomy.md) — truthful error taxonomy.
+Phase 22 N1: [RFC 018](rfcs/done/018-truthful-error-taxonomy.md) — truthful error taxonomy.
 **Breaking; targets v0.21.0.**
 
 ### Changed
@@ -44,7 +44,7 @@ No schema, payload wire format, SQL, or method signature changed; existing
 databases open unchanged. See [Error Handling](docs/src/errors.md#v0210-migration-note)
 for the full migration note.
 
-Phase 22 N2: [RFC 019](rfcs/accepted/019-standing-dispositions-for-unmaintained-dependencies.md)
+Phase 22 N2: [RFC 019](rfcs/done/019-standing-dispositions-for-unmaintained-dependencies.md)
 — standing dispositions for unmaintained dependencies. **Not breaking** — release tooling only.
 
 ### Changed

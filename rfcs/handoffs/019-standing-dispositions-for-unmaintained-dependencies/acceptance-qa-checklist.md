@@ -1,6 +1,6 @@
 # RFC 019 Acceptance and QA Checklist — Standing Dispositions
 
-Operationalizes [RFC 019](../../accepted/019-standing-dispositions-for-unmaintained-dependencies.md)
+Operationalizes [RFC 019](../../done/019-standing-dispositions-for-unmaintained-dependencies.md)
 (Phase 22 N2). The RFC is authoritative; this list adds and relaxes nothing.
 
 **Every box must be backed by an observed result. An unrun check is a failure, not a

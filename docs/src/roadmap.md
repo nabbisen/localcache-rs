@@ -28,6 +28,31 @@ on GitHub for the full backlog with implementation notes.
 | 18 | 0.18 | Directory-scoped query predicates — `path_in_dir`, `path_glob` |
 | 19 | 0.19 | Read-only pool + compatibility guarantees — `ReadPool<T>`, golden fixture |
 | 20 | 0.20 | Nanosecond mtime precision — schema v5 and overwrite regression coverage |
+| 21 | 0.20.1 | Stabilization — eight release blockers closed, reproducible source archives, release gates |
+
+## Phase 22 — Consolidation and Measurement ✅
+
+**Released 2026-08-01 as v0.21.0.** A consolidation release paying down what Phase 21
+deferred, plus the first real measurement of how the cache behaves at scale.
+
+**Breaking:** `LocalFileCacheError` is now `#[non_exhaustive]`, so exhaustive `match`
+expressions need a `_` arm. Lock poisoning returns a dedicated `Poisoned` variant, and
+JSON codec failures return `Serialization` — both previously `UnsupportedFeature`. A
+`ReadPool` whose connection is poisoned now reports it instead of silently handing back
+state another thread abandoned mid-panic. No schema, payload wire format, SQL, or method
+signature changed; existing databases open unchanged. See
+[Error Handling](./errors.md) for the migration note.
+
+Also in this release: standing dispositions for unmaintained dependencies, seven
+release-tooling fixes, identifier-quoting hardening, module splits along existing seams,
+and an unsound advisory in a transitive dependency resolved by taking the upstream patch.
+
+**The measurement work produced the most useful result.** Point lookups turn out to be
+**O(1)** from ten thousand entries to a million (~7.5 µs throughout), and a `path_glob`
+with a leading literal is equally flat. The real cost is a JSON field query with a sort —
+about **4 seconds per million entries**, because no index can serve an `ORDER BY` on a
+JSON field. See [Performance and Capacity](./performance.md) for the full profile and
+what to do about it.
 
 ## Phase 21 — Stabilization and Compatibility Recovery ✅
 

@@ -1,6 +1,6 @@
 # RFC 018 Acceptance and QA Checklist — Truthful Error Taxonomy
 
-Operationalizes [RFC 018](../../accepted/018-truthful-error-taxonomy.md) (Phase 22 N1).
+Operationalizes [RFC 018](../../done/018-truthful-error-taxonomy.md) (Phase 22 N1).
 The RFC is authoritative; this list adds and relaxes nothing.
 
 Testing is owned by the testing developer. **Every box must be backed by an observed

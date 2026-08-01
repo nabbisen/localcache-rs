@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
+| Status | Implemented (0.21.0) |
 | Feature | *(release engineering; no Cargo feature)* |
 | Touches | `scripts/check_advisories.py`, `security/advisory-policy.json`, `scripts/release-tools.toml`, `docs/src/dependency_security.md` |
 | Amends | **RFC 014** — advisory policy schema |

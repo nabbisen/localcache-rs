@@ -63,13 +63,12 @@ The "Background" section is optional in both templates.
 | [014](./done/014-declared-msrv-and-dependency-security-policy.md) | Declared MSRV and Dependency Security Policy | v0.20.1 |
 | [015](./done/015-async-runtime-and-watcher-failure-safety.md) | Async Runtime and Watcher Failure Safety | v0.20.1 |
 | [017](./done/017-content-reproducible-archives-without-a-container-producer.md) | Content-Reproducible Archives Without a Container Producer (amends RFC 009) | v0.20.1 |
+| [018](./done/018-truthful-error-taxonomy.md) | Truthful Error Taxonomy and a Forward-Compatible Error Enum | v0.21.0 |
+| [019](./done/019-standing-dispositions-for-unmaintained-dependencies.md) | Standing Dispositions for Unmaintained Dependencies | v0.21.0 |
 
 ### Accepted
 
-| RFC | Title | Target |
-|-----|-------|--------|
-| [018](./accepted/018-truthful-error-taxonomy.md) | Truthful Error Taxonomy and a Forward-Compatible Error Enum | Phase 22 N1 (v0.21.0) |
-| [019](./accepted/019-standing-dispositions-for-unmaintained-dependencies.md) | Standing Dispositions for Unmaintained Dependencies | Phase 22 N2 |
+*(none — all Phase 22 RFCs shipped in v0.21.0)*
 
 ### Proposed
 

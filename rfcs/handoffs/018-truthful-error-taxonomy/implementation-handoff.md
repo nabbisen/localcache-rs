@@ -2,7 +2,7 @@
 
 ## 1. Summary
 
-Implement [RFC 018](../../accepted/018-truthful-error-taxonomy.md), Phase 22 **N1**.
+Implement [RFC 018](../../done/018-truthful-error-taxonomy.md), Phase 22 **N1**.
 
 RFC 018 is Accepted and **its requirements are authoritative**; this handoff sequences
 the work and names the exact sites, but adds no design decision and overrides none.
