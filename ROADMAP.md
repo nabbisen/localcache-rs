@@ -761,7 +761,7 @@ shortfall.
 | **P0b — `ConnectionPool` batch length ✅** | Fix `batch_get`/`batch_get_fresh`/`check_status_batch` returning one element on lock failure regardless of `paths.len()`; fold in the `namespace_copy`/`import_from` duplication | recorded findings | — |
 | **P0c — Tooling hygiene ✅** | `TransientFetchError`; self-describing `follow-up`; pin the exhaustiveness doctest to `E0004` | recorded findings | — |
 | **P0e — Async test deduplication ✅** | Collapse `pool_observe.rs`'s three runtime modules with a `macro_rules!` helper. **Not a proc-macro** — see below | — | — |
-| **P0d — Release v0.21.1** *(housekeeping ✅)* | gates, evidence, publish | owner | P0a–P0c, P0e |
+| **P0d — Release v0.21.1 ✅** | gates, evidence, publish | owner | P0a–P0c, P0e |
 | **P1a — Real-storage measurement** | Re-run the scale profile with `TMPDIR` on real storage; add `preload`, concurrent access, bincode-at-scale, cold-open | — | — |
 | **P1b — JSON query design** | **New RFC** | RFC required | P1a |
 | **P1c — Implementation** | per the accepted RFC | that RFC | P1b |
@@ -816,6 +816,39 @@ green on `f41ea4e`, 26/26 jobs — the first CI run covering all of Phase 23 P0.
 
 Remaining for the release: the RC production run, the release decision, and the owner's
 tag/publish.
+
+### P0 complete — v0.21.1 released 2026-08-01
+
+| | |
+|---|---|
+| Release commit | `a4b1f90` |
+| Tag | `0.21.1`, GPG-signed, on the release commit |
+| Release archive uncompressed-tar SHA-256 | `16cfddfa43ba0f5be32e33b02d384be387cefa2246032bf06d163936dc0f3b0a` |
+| CI on the release commit | run 30701243893, 26/26 green — confirmed **before** tagging |
+| Published | `localcache 0.21.1` and `localcache-cli 0.21.1` on crates.io |
+
+Verified after publication: a fresh consumer declaring `localcache = "0.21.1"` and
+`rust-version = "1.85"` resolves `libsqlite3-sys 0.37.0` and builds on rustc 1.85.0, so the
+declared MSRV holds for the shipped release rather than only for this workspace.
+
+**This is the first release under the corrected cadence rule.** P0's non-breaking work shipped
+as a patch rather than waiting behind a breaking change — the inversion the v0.21.0 release
+decision identified as Phase 22's structural error. The release decision was **Accept** with no
+notes, the first without qualification since the cadence and contract findings were opened.
+
+Two process points recorded from the milestone, neither affecting the artifact:
+
+- The RC was first produced on an **unpushed** commit, because a ROADMAP record was committed
+  between "push and confirm CI" and "produce the RC". Resolved by pushing and re-confirming
+  before the decision. The working ordering is: make every commit, push, confirm CI, **then**
+  produce the RC — stated as a sequence rather than a list item, because a list item gets
+  overtaken.
+- The § "Bundle retention" rules were not applied on their first outing; the bundle was 686 MB
+  of which 664 MB was build output. Applied during review after verifying both `.crate` digests
+  against the manifest: 686 MB → 23 MB, and the superseded v0.21.0 bundle removed.
+
+**Phase 23 now moves to P1a** — re-measuring the scale profile on real storage, since the
+current `cleanup_missing_files` figure was taken on tmpfs and is a floor rather than an estimate.
 
 ### Why P0e is a `macro_rules!` helper, not `#[async_test]`
 
