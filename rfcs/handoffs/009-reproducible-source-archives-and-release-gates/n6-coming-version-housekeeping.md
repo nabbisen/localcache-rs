@@ -1,5 +1,13 @@
 # N6 Implementation Handoff — Coming-Version Housekeeping for v0.21.0
 
+> **Historical — specific to v0.21.0. Do not reuse directly.**
+> This document names the exact `0.20.1 → 0.21.0` pairs and its § "Must NOT update" list was
+> built against the historical set as it stood on 2026-07-31. That set has since changed. The
+> reviewer once described this document as "version-agnostic apart from the target number";
+> that was wrong. For v0.21.1 see
+> `rfcs/handoffs/phase-23-p0/p0d-coming-version-housekeeping.md`, and write a fresh document
+> for each subsequent release rather than substituting numbers into this one.
+
 ## 1. Summary
 
 Phase 22 **N6**, first sub-task. Set the authorized coming version **v0.21.0** across
