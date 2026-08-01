@@ -17,6 +17,69 @@ The separate async-std and smol rows are required because enabling all
 features selects Tokio by runtime priority. `--all-targets` also keeps
 benchmarks and development dependencies within the MSRV contract.
 
+## Why `rusqlite` is pinned below its newest line
+
+`localcache` requires `rusqlite ^0.39`, not the newer `0.40`. This is deliberate,
+it is the constraint most often asked about, and it is worth understanding before
+filing a request to change it.
+
+### The chain
+
+```text
+rusqlite 0.39  ->  libsqlite3-sys 0.37.x   (bundles SQLite 3.51.3)
+rusqlite 0.40  ->  libsqlite3-sys 0.38.x   (bundles SQLite 3.53.2)
+```
+
+`libsqlite3-sys 0.38.x` uses `cfg_select!` in its build script, which requires
+**Rust 1.95**. We bisected it against this workspace:
+
+| Toolchain | `rusqlite 0.40` |
+|---|---|
+| 1.85.0 | fails — `cannot find macro cfg_select` |
+| 1.94 | fails — same |
+| **1.95.0** | passes |
+
+So moving to `rusqlite 0.40` would raise this crate's MSRV from 1.85 to exactly
+1.95 — currently within three releases of stable. We hold `^0.39` to keep the
+declared 1.85 contract real.
+
+The cost of that choice is the older bundled SQLite (3.51.3 rather than 3.53.2).
+No advisory currently affects it, and the dependency-security gate below scans
+`libsqlite3-sys` along with everything else, so a future one would surface there.
+
+### Why this cannot be worked around downstream
+
+`libsqlite3-sys` declares `links = "sqlite3"`, and Cargo permits **exactly one**
+package with a given `links` value in a dependency graph. Two `rusqlite` lines are
+therefore not a tolerable duplicate — they are a hard resolution failure.
+
+The practical consequence: a crate depending directly on `rusqlite 0.40` cannot
+also depend on a `localcache` version requiring `^0.39`, and **no lockfile entry,
+`--precise` pin, or feature flag at the consumer's end can resolve it**. If that
+is your situation, the options are to move your own `rusqlite` to 0.39, or to tell
+us — see below.
+
+### The upstream cause
+
+Neither `rusqlite` nor `libsqlite3-sys` declares a `rust-version` in its manifest.
+Because of that, Cargo's MSRV-aware resolution cannot see the 1.95 requirement and
+cannot route around it.
+
+**If `libsqlite3-sys 0.38.x` declared `rust-version = "1.95"`, this whole conflict
+would disappear**: resolution would hand `0.37.x` to consumers with a lower floor
+and `0.38.x` to everyone else, automatically, and no choice would fall to this
+crate at all. We have reported that upstream.
+
+Until then the constraint stands, and this section exists because it is likely to
+stand for a while.
+
+### If this blocks you
+
+Tell us. Two separate projects hit this from opposite directions within one week —
+one needing the 1.85 floor to be genuine, the other needing `rusqlite 0.40` — and
+the resolution differed in each case. A short note describing which side you are on
+and what your own MSRV floor actually is, is more useful than a patch.
+
 ## Advisory policy
 
 `security/advisory-policy.json` is the sole checked-in disposition for RustSec
