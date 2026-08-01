@@ -463,7 +463,7 @@ Dependency order, not dates. Each is an independent review point.
 | **N3 — Release-tooling hygiene ✅** | `command_version` stderr separation; `target_triple` from `rustc -vV`; thread real gate results into `rc_eligibility`; RFC 014 H1–H4 | recorded findings | N0 |
 | **N4 — Performance baseline ✅** | Extend benchmarks to 10k/100k/1M; publish a measured profile; **no tuning** | measurement only | — |
 | **N5 — Module-size debt ✅** | Risk-reducing splits only, per the corrected register below; plus RFC 011 N-01/N-02 | — | N1 |
-| **N6 — Release and review** | v0.21.0 gates, evidence bundle, independent re-review | owner authorization | all |
+| **N6 — Release and review** *(coming-version housekeeping ✅)* | v0.21.0 gates, evidence bundle, independent re-review | owner authorization | all |
 
 ### N1 completion
 
@@ -557,6 +557,35 @@ zero test edits, the full feature matrix is green across 17 rows, and both defau
 all-features builds are clean — the last of which mattered: an unconditional
 `use crate::now_secs;` compiled under `--all-features` and failed without them,
 because `now_secs` is itself feature-gated. Caught before it shipped.
+
+### N6 progress — coming-version housekeeping complete
+
+The authorized coming version **v0.21.0** is set across every live carrier at commit
+`1243e27`: `[workspace.package].version`, the three gated install examples, the
+`CHANGELOG.md` heading (RC placeholder, date deliberately unset until owner
+authorization), and the advisory gate's crates.io User-Agent — which was **outside**
+`VERSION_REFERENCE_TARGETS` and had gone stale silently through all of Phase 22.
+Changing it re-pinned `check-advisories` in `scripts/release-tools.toml`.
+
+Everything historical was left alone: RFC `Implemented (0.20.1)` statuses, the v0.20.1
+changelog section, roadmap narratives, handoff records, and the deliberate `^0` CLI
+dependency requirement from the 2026-07-28 owner resolution. A blanket substitution
+would have rewritten all of those into falsehoods **and still passed the version gate**,
+so nothing would have caught it.
+
+Two policy `reason` fields dropped their version reference: the claims they make —
+preserve the async-std backend, preserve the bincode wire format — do not depend on
+which release is next, and the `approved` date already records when each decision was
+made without decaying.
+
+Verified after commit: the full `source` gate exits 0 with all ten steps passing,
+`version-contract: PASS (0.21.0)`, and the archive correctly named
+`localcache-v0.21.0.tar.gz` (uncompressed
+`1a11f88ccb45ec029352a4b01ddac143c6cb39a929602370547c14922459048f`). CI run
+**30680708079** is green on `1243e27`, 26/26 jobs.
+
+Remaining in N6: the RC production run, the release review, and the owner's
+tag/publish/tarball actions.
 
 ### Why performance *tuning* is not in this phase
 
