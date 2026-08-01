@@ -761,7 +761,7 @@ shortfall.
 | **P0b — `ConnectionPool` batch length ✅** | Fix `batch_get`/`batch_get_fresh`/`check_status_batch` returning one element on lock failure regardless of `paths.len()`; fold in the `namespace_copy`/`import_from` duplication | recorded findings | — |
 | **P0c — Tooling hygiene ✅** | `TransientFetchError`; self-describing `follow-up`; pin the exhaustiveness doctest to `E0004` | recorded findings | — |
 | **P0e — Async test deduplication ✅** | Collapse `pool_observe.rs`'s three runtime modules with a `macro_rules!` helper. **Not a proc-macro** — see below | — | — |
-| **P0d — Release v0.21.1** | gates, evidence, publish | owner | P0a–P0c, P0e |
+| **P0d — Release v0.21.1** *(housekeeping ✅)* | gates, evidence, publish | owner | P0a–P0c, P0e |
 | **P1a — Real-storage measurement** | Re-run the scale profile with `TMPDIR` on real storage; add `preload`, concurrent access, bincode-at-scale, cold-open | — | — |
 | **P1b — JSON query design** | **New RFC** | RFC required | P1a |
 | **P1c — Implementation** | per the accepted RFC | that RFC | P1b |
@@ -794,6 +794,28 @@ assertions. And the C1 boundary deliberately leaves 5xx status inspection outsid
 the new error type, because that branch reads a field from a *successful* return
 rather than catching an exception — moving it into `live_fetch` would let each
 implementation disagree about what a 5xx means.
+
+### P0d progress — coming-version housekeeping complete
+
+v0.21.1 is set across every live carrier at commit `f41ea4e`: `[workspace.package].version`,
+the three gated install examples, the `CHANGELOG.md` heading (RC placeholder, date unset until
+owner authorization), and the advisory gate's crates.io User-Agent — which required re-pinning
+`check-advisories` in `scripts/release-tools.toml`.
+
+Fourteen files still contain `0.21.0` and all fourteen are correct history: the shipped
+changelog section, RFC 018/019 `Implemented (0.21.0)` statuses, the RFC index, Phase 22
+narratives, two `docs/src` migration headings whose subject genuinely is the 0.20.x→0.21.0
+upgrade, and the handoff records — including the P0d handoff itself, which quotes the values it
+instructs changing. A blanket substitution would have rewritten all of them into falsehoods
+**and still passed the version gate**.
+
+Verified after commit: the full `source` gate exits 0 with all ten steps passing,
+`version-contract: PASS (0.21.1)`, archive `localcache-v0.21.1.tar.gz` (uncompressed
+`fc6c28a6a362fee09433dee3bedb590955e3e01f5cd93e65a9e2d88b14a13c4c`). CI run **30698532496** is
+green on `f41ea4e`, 26/26 jobs — the first CI run covering all of Phase 23 P0.
+
+Remaining for the release: the RC production run, the release decision, and the owner's
+tag/publish.
 
 ### Why P0e is a `macro_rules!` helper, not `#[async_test]`
 
