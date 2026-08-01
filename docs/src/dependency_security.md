@@ -68,17 +68,34 @@ cannot route around it.
 **If `libsqlite3-sys 0.38.x` declared `rust-version = "1.95"`, this whole conflict
 would disappear**: resolution would hand `0.37.x` to consumers with a lower floor
 and `0.38.x` to everyone else, automatically, and no choice would fall to this
-crate at all. We have reported that upstream.
+crate at all.
 
 Until then the constraint stands, and this section exists because it is likely to
 stand for a while.
 
+**Upstream report:** *(pending — link to be added when filed)*
+
+### Recorded cases
+
+Two dependent applications hit this within one week of each other, from opposite
+directions. Kept here as a short reference, because the pattern recurs and the
+right answer differed in each case.
+
+| Date | Reported | Resolution |
+|---|---|---|
+| 2026-08-01 | A declared `rust-version = "1.85"` that the graph could not meet, because `rusqlite ^0.40` pulled `libsqlite3-sys 0.38.x`. | Fixed here: `rusqlite` constrained to `^0.39` in v0.20.1, making the declared 1.85 genuine. |
+| 2026-08-01 | Blocked at `localcache 0.20.0`: the project pins `rusqlite 0.40` directly, so `^0.39` made every later version unresolvable. Requested `>=0.40`. | Declined — it would have raised this crate's MSRV to 1.95. The project moved its own `rusqlite` to 0.39 instead, having discovered its real floor was already 1.95 for the same reason. |
+
+The second case is the more instructive one: the reporter believed their floor was
+around 1.88, because Cargo only reports crates that *declare* `rust-version` — and
+`libsqlite3-sys` declares none. The constraint had been invisible to them the whole
+time.
+
 ### If this blocks you
 
-Tell us. Two separate projects hit this from opposite directions within one week —
-one needing the 1.85 floor to be genuine, the other needing `rusqlite 0.40` — and
-the resolution differed in each case. A short note describing which side you are on
-and what your own MSRV floor actually is, is more useful than a patch.
+Tell us. A short note describing which side you are on, and what your own MSRV floor
+actually is, is more useful than a patch — the two cases above needed opposite fixes,
+and neither was the one first proposed.
 
 ## Advisory policy
 
