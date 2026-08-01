@@ -73,7 +73,10 @@ crate at all.
 Until then the constraint stands, and this section exists because it is likely to
 stand for a while.
 
-**Upstream report:** *(pending — link to be added when filed)*
+We have not filed an upstream issue. Doing so would open a conversation this project
+would need to sustain, and the constraint is documented here regardless. If you have hit
+this and intend to report it upstream, that would help everyone — and we would link it
+here.
 
 ### Recorded cases
 
