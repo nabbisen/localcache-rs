@@ -252,6 +252,18 @@ the handoff § "M6e — RC production run".*
 - [ ] **CI is green on the new RC commit**, run ID and every job's result reported. No required job
       failed or skipped.
 
+### Bundle retention (added 2026-08-01)
+
+- [ ] Build output pruned from the bundle: `doc-package/target-package/`,
+      `doc-package/target-doc/`, and `doc-package/mdbook/` are absent.
+- [ ] The packaged `*.crate` files were **copied to `doc-package/packages/` first**, and each
+      digest was confirmed against `manifest.json` **before** the source directory was deleted.
+- [ ] Nothing else was pruned: the archive, every `evidence/` directory, `manifest.json`,
+      `summary.log`, `gate.log`, and `security/advisories/` all survive.
+- [ ] The pruned bundle is on the order of 23 MB, not 685 MB.
+- [ ] Any **superseded** RC bundle from an earlier re-cut has been deleted, its digests and
+      findings already being recorded in `.git-exclude/reviewed/`.
+
 ## Phase exit readiness (verify before requesting M7)
 
 - [ ] All eight blocking findings B-01…B-08 are closed with tests or reproducible gate evidence.

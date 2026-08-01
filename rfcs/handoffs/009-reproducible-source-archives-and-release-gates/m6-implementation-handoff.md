@@ -374,9 +374,12 @@ the run succeed would defeat the purpose.
 
    This must complete in **one** invocation and exit 0. It runs `source`, `msrv`, `doc-package`, and
    `security`; `source` builds the archive twice and enforces the RFC 017 R2 same-host
-   uncompressed-tar determinism internally. Keep the whole output tree — archive, `evidence/`,
-   `manifest.json`, `summary.log`. `.git-exclude/` is gitignored, so nothing here enters the
-   repository or the archive.
+   uncompressed-tar determinism internally. Keep the archive, every `evidence/` directory,
+   `manifest.json`, `summary.log`, and `gate.log`. `.git-exclude/` is gitignored, so nothing here
+   enters the repository or the archive.
+
+   **Then prune the build output — see § "Bundle retention" below.** A raw bundle is roughly
+   685 MB, of which about 22 MB is evidence. Do not leave the rest sitting on disk.
 
 3. **Record the archive's identity** from `manifest.json`: `archive`,
    `archive_uncompressed_sha256` (**primary**), the compressed digest and byte size
@@ -420,6 +423,38 @@ secret scan; and the durable path of the bundle. Disclose anything you did not r
 
 Above all: **do not report a pass for any step you did not execute**, and if the RC bundle differs in
 any way from what this section describes, say so rather than reconciling it silently.
+
+### Bundle retention
+
+*Added 2026-08-01, after four retained bundles reached 3.4 GB. The earlier instruction said "keep
+the whole output tree" with no expiry and no exclusion for build output; that was incomplete, and it
+was followed three times.*
+
+**Prune build output once the digests are recorded.** Delete from the bundle:
+
+```
+doc-package/target-package/     # cargo package verification builds (~387 MB)
+doc-package/target-doc/         # cargo doc output           (~275 MB)
+doc-package/mdbook/             # generated book             (~3 MB)
+```
+
+**First preserve the packaged artifacts**, which are small and are the only thing in there worth
+keeping — copy `doc-package/target-package/package/*.crate` to `doc-package/packages/` (about
+185 KB for both crates). Their SHA-256s are recorded in `manifest.json`, so keeping them lets the
+bundle verify what was published. **Confirm each digest matches the manifest before deleting the
+source directory**, not after.
+
+Never prune: the archive, any `evidence/` directory, `manifest.json`, `summary.log`, `gate.log`, or
+`security/advisories/`. A pruned bundle is about 23 MB.
+
+**Retention period.** A bundle is kept while its RC is live or its findings are open. Once a
+superseding RC is accepted — or the release ships — **the superseded bundle is deleted**, because
+its digests and findings already live in `.git-exclude/reviewed/`. Do not accumulate one bundle per
+re-cut; v0.20.1 produced three void bundles at 685 MB each, all of whose evidence was two lines of
+digest in a review record.
+
+If a retention instruction elsewhere says "keep this as evidence" without stating until when, treat
+that as an incomplete instruction and ask.
 
 > **Status 2026-07-30: the production run was performed correctly and the archive verified, but the
 > resulting RC at `7cdb674` is void — CI is red on that commit.** See § "RC-3" below. The bundle at
