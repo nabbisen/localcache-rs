@@ -684,6 +684,7 @@ Recorded findings not scheduled into a milestone. Each is tracked, none is lost.
 | `fetch_with_retry` catches a broad `AdvisoryGateError` rather than a dedicated transient type | N3 review §4.1 | Correct today, because `live_fetch`'s only failure mode is `OSError`/`URLError`. But `Fetch` is an injection point: a substitute raising `AdvisoryGateError` non-transiently would be retried three times, turning a fast failure into a slow one. Fix is a `TransientFetchError` so the fetcher declares transience rather than the wrapper inferring it. |
 | RFC 011 N-01/N-02 (quote the catalog's spelling; comment the ASCII-fold invariant) | Phase 21 | Verified safe; hardening only. **Moved from N3 to N5**, since both land in `indexes.rs`, which N5 also touches. |
 | `namespace_copy`'s body is byte-identical to `import_from`'s in `cache/engine/portable.rs` | N5 review §2 | Verified identical (184 chars each). Became visible once the concern was isolated in one file. Reported and deliberately **not** fixed during a move commit. |
+| The exhaustiveness `compile_fail,E0004` annotation is **documentation-only** | P0 review §3.1 | **Rustdoc does not verify a `compile_fail` block's error code against the actual diagnostic.** Confirmed by mutation from both sides: a block annotated `E0004` that fails with an unresolved-path error, a type mismatch, or `E0425` all still report `ok`. The guarantee that the match is genuinely non-exhaustive rests on mutation testing at review time, not on the annotation. `trybuild` or a custom `rustc --error-format=json` harness would enforce it; neither judged proportionate for one assertion. |
 | `preload`, concurrent access, bincode codec at scale, watcher on large trees, cold-open cost | N4 §6 | Unmeasured. Candidate additions to the scale profile; none blocks Phase 23 scoping. |
 
 ### Module-size register — after N5
@@ -756,16 +757,43 @@ shortfall.
 
 | Milestone | Scope | Authority | Depends on |
 |---|---|---|---|
-| **P0a — Query guidance** | Document the leading-literal glob rule where users meet it — `docs/src/querying.md`, `path_glob` rustdoc, `QueryBuilder` docs. Only `performance.md` says it today | — | — |
-| **P0b — `ConnectionPool` batch length** | Fix `batch_get`/`batch_get_fresh`/`check_status_batch` returning one element on lock failure regardless of `paths.len()`; fold in the `namespace_copy`/`import_from` duplication | recorded findings | — |
-| **P0c — Tooling hygiene** | `TransientFetchError`; self-describing `follow-up`; pin the exhaustiveness doctest to `E0004` | recorded findings | — |
-| **P0e — Async test deduplication** | Collapse `pool_observe.rs`'s three runtime modules with a `macro_rules!` helper. **Not a proc-macro** — see below | — | — |
+| **P0a — Query guidance ✅** | Document the leading-literal glob rule where users meet it — `docs/src/querying.md`, `path_glob` rustdoc, `QueryBuilder` docs. Only `performance.md` says it today | — | — |
+| **P0b — `ConnectionPool` batch length ✅** | Fix `batch_get`/`batch_get_fresh`/`check_status_batch` returning one element on lock failure regardless of `paths.len()`; fold in the `namespace_copy`/`import_from` duplication | recorded findings | — |
+| **P0c — Tooling hygiene ✅** | `TransientFetchError`; self-describing `follow-up`; pin the exhaustiveness doctest to `E0004` | recorded findings | — |
+| **P0e — Async test deduplication ✅** | Collapse `pool_observe.rs`'s three runtime modules with a `macro_rules!` helper. **Not a proc-macro** — see below | — | — |
 | **P0d — Release v0.21.1** | gates, evidence, publish | owner | P0a–P0c, P0e |
 | **P1a — Real-storage measurement** | Re-run the scale profile with `TMPDIR` on real storage; add `preload`, concurrent access, bincode-at-scale, cold-open | — | — |
 | **P1b — JSON query design** | **New RFC** | RFC required | P1a |
 | **P1c — Implementation** | per the accepted RFC | that RFC | P1b |
 | **P1d — Re-measure** | same harness, same scales; before/after table | — | P1c |
 | **P1e — Release** | only if P1c changed public API | owner | P1a–P1d |
+
+### P0a/b/c/e completion
+
+Implemented and independently accepted at commit `cd209e1`, ten files. The glob
+leading-literal rule now sits in `path_glob`'s rustdoc where a user writing the
+pattern will see it, not only in `performance.md`. `ConnectionPool`'s three batch
+methods return one result per requested path on lock failure instead of a single
+element — a latent correctness bug where `paths.iter().zip(results)` silently
+dropped every path but one. `namespace_copy` delegates to `import_from` rather
+than repeating a byte-identical body. A dedicated `TransientFetchError` means the
+fetcher declares transience instead of the retry wrapper inferring it from a broad
+exception type. Advisory `follow-up` values are complete sentences emitted
+verbatim. And `pool_observe.rs`'s triplicated panic test is generated from one
+macro body.
+
+375 tests pass, 162 script tests pass including under a toolchain-free `PATH`, the
+full feature matrix and the declared-MSRV matrix are green, and the live advisory
+gate is unchanged at `denied=0`.
+
+**Two judgement calls were reported rather than absorbed, and both were right.**
+`poisoned_mutex_recovers_on_subsequent_calls` was left un-deduplicated: Tokio's
+version asserts a third subsequent call that async-std's and smol's do not, so
+unifying it would have either dropped coverage or silently added untested
+assertions. And the C1 boundary deliberately leaves 5xx status inspection outside
+the new error type, because that branch reads a field from a *successful* return
+rather than catching an exception — moving it into `live_fetch` would let each
+implementation disagree about what a 5xx means.
 
 ### Why P0e is a `macro_rules!` helper, not `#[async_test]`
 

@@ -136,6 +136,18 @@ vacuously. Rustdoc accepts an expected error code: ```` ```compile_fail,E0004 ``
 The guarantee currently rests on a mutation test the N1 reviewer ran by hand (adding a `_` arm
 made it fail). Pinning the code makes that permanent.
 
+> **Correction, 2026-08-01 — the sentence above is wrong, and was wrong when written.**
+> Rustdoc does **not** verify a `compile_fail` block's error code against the actual
+> diagnostic. The implementer found this by mutating the doctest twice (an unresolved-path
+> error, and a clean E0308 with the match made exhaustive) — both still reported `ok` — and
+> the reviewer reproduced it in an isolated crate: a block annotated `compile_fail,E0004`
+> that actually fails with E0425 still passes.
+>
+> The annotation is worth keeping as documentation of intent, and `error.rs` now carries a
+> comment saying so. But **the real guarantee still rests on mutation testing at review
+> time**, exactly as before the edit. Recorded in `ROADMAP.md`'s deferred register rather
+> than pretended closed. Left here rather than deleted so the wrong claim does not reappear.
+
 **Note:** C1 and C2 change `scripts/check_advisories.py` and are the same-file hazard N3's §2
 warned about. They are in the same part deliberately — do them together, in one commit, and
 re-pin `scripts/release-tools.toml`'s `[implementations]` hash for that file.
