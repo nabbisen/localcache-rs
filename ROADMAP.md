@@ -713,6 +713,115 @@ N1's RFC would be authored and reviewed by the same high-capability model, with 
 separation — the same structural conflict recorded against RFC 017 at M7 §6. The
 owner is aware; how it is handled is an open decision.
 
+## Phase 23 — Measured Performance and Consolidation (target: v0.21.1, then v0.22.0) 🚧
+
+Approved by the owner on 2026-08-01. **The first phase scoped from measurement rather than
+intuition** — N4's profile in Phase 22 overturned two of the three hypotheses it was built to
+test, so Phase 23 starts from numbers.
+
+### Exit criteria — defined before the work
+
+Phase 23 is complete when all of the following hold:
+
+1. Every performance finding in N4's profile is either fixed and re-measured, or explicitly
+   deferred with a recorded reason. None is left unaddressed and unexplained.
+2. Re-measurement uses the **same harness at the same three scales** (10k / 100k / 1M), so
+   before/after numbers are comparable.
+3. `cleanup_missing_files` has been measured on **real storage**, not tmpfs — the current
+   figure is a floor and we know it.
+4. Every deferred-register item is closed, re-registered with a reason, or scheduled.
+5. Public documentation states the measured characteristics and the query pattern to avoid.
+6. **Each release ships at its own breaking point, with CI green before the next milestone
+   starts.**
+7. No release action occurs without owner authorization.
+
+Criterion 6 is Phase 22's cadence failure written as a gate rather than an intention: four
+breaking points passed there with no release proposed, and thirteen commits accumulated
+unverified.
+
+### Version plan — non-breaking work ships first
+
+Phase 22 sequenced its breaking milestone first and trapped three non-breaking milestones
+behind it. Phase 23 inverts that.
+
+| Release | Contents | Breaking? |
+|---|---|---|
+| **v0.21.1** | P0 — query documentation, the `ConnectionPool` batch fix, tooling hygiene | no |
+| **v0.22.0** | P1 — JSON field query performance, only if it needs new public API | additive at most |
+
+If P1 needs no new API there may be no v0.22.0, which is a good outcome rather than a
+shortfall.
+
+### Milestones
+
+| Milestone | Scope | Authority | Depends on |
+|---|---|---|---|
+| **P0a — Query guidance** | Document the leading-literal glob rule where users meet it — `docs/src/querying.md`, `path_glob` rustdoc, `QueryBuilder` docs. Only `performance.md` says it today | — | — |
+| **P0b — `ConnectionPool` batch length** | Fix `batch_get`/`batch_get_fresh`/`check_status_batch` returning one element on lock failure regardless of `paths.len()`; fold in the `namespace_copy`/`import_from` duplication | recorded findings | — |
+| **P0c — Tooling hygiene** | `TransientFetchError`; self-describing `follow-up`; pin the exhaustiveness doctest to `E0004` | recorded findings | — |
+| **P0e — Async test deduplication** | Collapse `pool_observe.rs`'s three runtime modules with a `macro_rules!` helper. **Not a proc-macro** — see below | — | — |
+| **P0d — Release v0.21.1** | gates, evidence, publish | owner | P0a–P0c, P0e |
+| **P1a — Real-storage measurement** | Re-run the scale profile with `TMPDIR` on real storage; add `preload`, concurrent access, bincode-at-scale, cold-open | — | — |
+| **P1b — JSON query design** | **New RFC** | RFC required | P1a |
+| **P1c — Implementation** | per the accepted RFC | that RFC | P1b |
+| **P1d — Re-measure** | same harness, same scales; before/after table | — | P1c |
+| **P1e — Release** | only if P1c changed public API | owner | P1a–P1d |
+
+### Why P0e is a `macro_rules!` helper, not `#[async_test]`
+
+The backlog item read "`#[async_test]` proc-macro wrapper for unified async test authoring
+across runtime backends". Measured, the duplication it would remove is **one file**:
+`pool_observe.rs`'s three runtime modules, 295 lines, of which only **two test functions**
+plus a `block_on` helper are genuinely triplicated. The suite's other 29 async test
+functions are single-runtime and would not benefit.
+
+A proc-macro costs a new workspace crate — proc-macros cannot live in an existing one —
+plus `syn`, `quote`, and `proc-macro2`: three more crates under advisory watch, each
+required to hold at MSRV 1.85, and `syn` moves quickly. That is a permanent maintenance
+commitment for a 295-line saving.
+
+A `macro_rules!` helper in a test-support module generates the same three modules with
+**no new crate and no new dependency**. It loses the attribute spelling — `async_test! { … }`
+rather than `#[async_test]` — which is cosmetic for two tests.
+
+**Owner decision, 2026-08-01: deduplication accepted, proc-macro not pursued.** If the
+attribute form is ever wanted, it should be an unpublished crate (`publish = false`, path
+dev-dependency) so it never becomes a third release artifact, and that must be verified
+against `cargo publish` rather than assumed — published manifests do carry
+dev-dependencies.
+
+### The dominant finding, and why it is not simply "add an index"
+
+`field_gt` + `order_by_field` + `limit 25` costs **4.4 s at 1M rows to return 25 rows**,
+linearly. `dry_run()` shows the plan narrowing on `namespace=?` only, so every row's JSON is
+decoded and sorted before `LIMIT` applies — a small limit saves nothing.
+
+A SQLite expression index over `json_extract(payload, '$.field')` is the obvious answer, and
+`create_path_index`/`drop_path_index`/`list_path_indexes` already establish the user-declared
+index pattern with RFC 011's ownership validation and `QuotedIdentifier` boundary.
+
+**But `json_extract` requires the payload to be literally JSON on disk**, and payloads may be
+bincode-encoded, compressed, or AES-256-GCM encrypted. An expression index over an encrypted
+BLOB is meaningless. The design questions are therefore which payload configurations can
+support a field index, what happens when a user enables compression afterwards, whether the
+index is user-declared or inferred, and what the API says when it cannot help.
+
+**Documenting the ceiling is a legitimate outcome** if the design cost exceeds the benefit.
+N4 exists so that call rests on evidence.
+
+### RFC authorship and review
+
+P1b's RFC is **authored by the high-capability model and reviewed by the owner** — owner
+decision, 2026-08-01, the same arrangement that worked for RFC 018, where the owner's ruling
+on R4 overruled the author and produced the strongest change in v0.21.0. Recorded here so it
+is in the RFC when written, rather than appended at review time.
+
+### Out of scope
+
+- **Cross-process read-write shared cache** — still blocked on a use case from the owner;
+  multi-reader/one-writer and symmetric multi-writer are different designs.
+- **Performance work beyond N4's profile** — anything unmeasured waits for P1a.
+
 ## Future / Unscheduled
 
 *(all items from the previous Future section shipped in v0.17.0)*
