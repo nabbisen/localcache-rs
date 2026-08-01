@@ -7,10 +7,16 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [0.21.0] — Unreleased
+## [0.21.0] — 2026-08-01
 
-RC placeholder date: this section targets the coming v0.21.0 release closing Phase 22.
-The exact release date is set at owner authorization, not before.
+Consolidation and measurement release closing Phase 22. Release candidate `4b85b88`, accepted by
+the N6 release decision on 2026-08-01 with a **Go** recommendation, and authorized by the project
+owner the same day.
+
+**Breaking:** `LocalFileCacheError` is now `#[non_exhaustive]`, so exhaustive `match` expressions
+must add a `_` arm. Lock poisoning and JSON codec failures also return different variants than
+before — see the N1 entry below. No schema, payload wire format, SQL, or method signature changed;
+existing databases open unchanged.
 
 Phase 22 N1: [RFC 018](rfcs/accepted/018-truthful-error-taxonomy.md) — truthful error taxonomy.
 **Breaking; targets v0.21.0.**
