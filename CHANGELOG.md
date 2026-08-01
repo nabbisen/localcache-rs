@@ -7,10 +7,15 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [0.21.1] — Unreleased
+## [0.21.1] — 2026-08-01
 
-RC placeholder date: this section targets the coming v0.21.1 patch release closing Phase 23 P0.
-The exact release date is set at owner authorization, not before.
+Patch release closing Phase 23 P0. Release candidate `110db4b`, accepted by the P0d release
+decision on 2026-08-01 with a **Go** recommendation, and authorized by the project owner the
+same day.
+
+**Not breaking.** One behaviour correction on an exceptional path — `ConnectionPool`'s batch
+methods under a poisoned lock, described below. No schema, payload wire format, SQL, or public
+API signature changed; existing databases open unchanged.
 
 Phase 23 P0: four small, independent fixes. **Not breaking**, except one documented
 behaviour correction on an exceptional path — see Part B below.
