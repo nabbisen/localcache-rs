@@ -10,7 +10,13 @@ use std::path::PathBuf;
 /// compile from outside this crate, even when every variant currently known
 /// is listed, so a new variant can never again become a breaking change.
 ///
-/// ```compile_fail
+/// The `E0004` on the block below documents *intent* for a human reader --
+/// rustdoc does not verify a `compile_fail` block's error code against the
+/// actual diagnostic, so this is not an enforced check. The real guarantee
+/// is established by mutation testing at review time (confirmed a `_` arm
+/// makes this pass, and that an unrelated compile error still passes too).
+///
+/// ```compile_fail,E0004
 /// # use localcache::LocalFileCacheError;
 /// fn handle(err: LocalFileCacheError) {
 ///     match err {

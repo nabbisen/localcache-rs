@@ -135,8 +135,11 @@ where
     where
         U: Serialize + DeserializeOwned,
     {
-        self.guard_write()?;
-        let rows = repository::load_all_full(&source.conn, &source.namespace)?;
-        repository::import_rows(&self.conn, &self.namespace, &rows)
+        // Phase 23 P0 Part B: identical to `import_from` -- same three
+        // steps, same guard, same repository calls. The two names exist
+        // for different call-site framing (namespace-to-namespace copy vs.
+        // copy-from-another-engine), not different behavior, so this
+        // delegates rather than duplicating the body.
+        self.import_from(source)
     }
 }

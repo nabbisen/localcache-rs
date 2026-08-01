@@ -178,6 +178,58 @@ fn connection_pool_poisoned_mutex_yields_poisoned_error() {
     );
 }
 
+// Phase 23 P0 Part B — a poisoned pool's batch methods must return one
+// result per requested path, not a single collapsed element: a caller
+// zipping `paths.iter().zip(results)` must not silently drop the rest.
+#[test]
+fn connection_pool_poisoned_mutex_batch_methods_return_one_result_per_path() {
+    use localcache::LocalFileCacheError;
+
+    let pool = localcache::ConnectionPool::<Vec<f32>>::open(CacheOptions {
+        database_path: ":memory:".into(),
+        ..CacheOptions::default()
+    })
+    .unwrap();
+
+    let poison_pool = pool.clone();
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = poison_pool.with::<(), _>(|_engine| panic!("intentional test panic"));
+    }));
+
+    let paths = [
+        std::path::PathBuf::from("a.txt"),
+        std::path::PathBuf::from("b.txt"),
+        std::path::PathBuf::from("c.txt"),
+    ];
+
+    let batch_get_results = pool.batch_get(&paths);
+    assert_eq!(batch_get_results.len(), paths.len());
+    assert!(batch_get_results.iter().all(|r| matches!(
+        r,
+        Err(LocalFileCacheError::Poisoned {
+            resource: "ConnectionPool"
+        })
+    )));
+
+    let batch_get_fresh_results = pool.batch_get_fresh(&paths);
+    assert_eq!(batch_get_fresh_results.len(), paths.len());
+    assert!(batch_get_fresh_results.iter().all(|r| matches!(
+        r,
+        Err(LocalFileCacheError::Poisoned {
+            resource: "ConnectionPool"
+        })
+    )));
+
+    let check_status_batch_results = pool.check_status_batch(&paths);
+    assert_eq!(check_status_batch_results.len(), paths.len());
+    assert!(check_status_batch_results.iter().all(|r| matches!(
+        r,
+        Err(LocalFileCacheError::Poisoned {
+            resource: "ConnectionPool"
+        })
+    )));
+}
+
 // ====================================================================
 // Phase 12 — CacheOptionsExt
 // ====================================================================
@@ -844,6 +896,74 @@ mod rfc004_shared_cache {
 // RFC 005 — async-std / smol Feature Variants
 // ============================================================
 
+// `panic_inside_blocking_closure_yields_async_task_panicked` is identical,
+// module for module, across the async-std, smol, and Tokio runtime test
+// modules below (RFC 005 / RFC 015) -- only each runtime's own test-harness
+// shape differs (a `#[test]` wrapping `block_on(async { .. })` for
+// async-std/smol, `#[tokio::test] async fn` directly for Tokio). Generated
+// here (Phase 23 P0 Part E) so the three modules don't hand-maintain three
+// copies of the same assertion.
+//
+// `poisoned_mutex_recovers_on_subsequent_calls` is deliberately NOT
+// generated: Tokio's version asserts a *third* subsequent `contains` call
+// that the async-std and smol versions do not (compare each module's own
+// copy) -- a genuine behavioral difference between runtimes, not
+// incidental drift, so unifying it would either weaken Tokio's coverage or
+// silently add an untested assertion to the other two. Left alone and
+// reported rather than forced into the macro.
+#[cfg(any(feature = "async", feature = "async-std", feature = "smol"))]
+macro_rules! panic_inside_blocking_closure_yields_async_task_panicked_test {
+    (block_on = $block_on_fn:path) => {
+        // async-std/smol provide their own #[async_std::test]/#[smol::test]
+        // but a simple block_on works too, since these tests don't need the
+        // full runtime loop.
+        fn block_on<F: std::future::Future>(f: F) -> F::Output {
+            $block_on_fn(f)
+        }
+
+        // RFC 015 R3 — panic parity with Tokio (unwind-only; see runtime.rs).
+        #[test]
+        fn panic_inside_blocking_closure_yields_async_task_panicked() {
+            block_on(async {
+                let engine = AsyncCacheEngine::<Vec<f32>>::open(CacheOptions {
+                    database_path: ":memory:".into(),
+                    ..CacheOptions::default()
+                })
+                .await
+                .unwrap();
+
+                let result = engine
+                    .query_run::<_, Vec<f32>>(|_q| panic!("intentional test panic"))
+                    .await;
+                assert!(
+                    matches!(result, Err(LocalFileCacheError::AsyncTaskPanicked)),
+                    "expected AsyncTaskPanicked, got {result:?}"
+                );
+            });
+        }
+    };
+    (tokio) => {
+        // RFC 015 R3 — panic parity with Tokio (unwind-only; see runtime.rs).
+        #[tokio::test]
+        async fn panic_inside_blocking_closure_yields_async_task_panicked() {
+            let engine = AsyncCacheEngine::<Vec<f32>>::open(CacheOptions {
+                database_path: ":memory:".into(),
+                ..CacheOptions::default()
+            })
+            .await
+            .unwrap();
+
+            let result = engine
+                .query_run::<_, Vec<f32>>(|_q| panic!("intentional test panic"))
+                .await;
+            assert!(
+                matches!(result, Err(LocalFileCacheError::AsyncTaskPanicked)),
+                "expected AsyncTaskPanicked, got {result:?}"
+            );
+        }
+    };
+}
+
 // async-std backend tests (only when async-std is the active runtime,
 // i.e. async-std is enabled but Tokio is not).
 #[cfg(all(not(feature = "async"), feature = "async-std"))]
@@ -853,11 +973,9 @@ mod rfc005_async_std {
     use super::write_file;
     use tempfile::TempDir;
 
-    // async-std provides its own #[async_std::test] but we can also use a
-    // simple block_on since tests don't need the full async-std runtime loop.
-    fn block_on<F: std::future::Future>(f: F) -> F::Output {
-        async_std::task::block_on(f)
-    }
+    panic_inside_blocking_closure_yields_async_task_panicked_test!(
+        block_on = async_std::task::block_on
+    );
 
     #[test]
     fn async_std_engine_set_get() {
@@ -880,27 +998,6 @@ mod rfc005_async_std {
             assert!(
                 entry.is_some(),
                 "async-std get must return the stored entry"
-            );
-        });
-    }
-
-    // RFC 015 R3 — panic parity with Tokio (unwind-only; see runtime.rs).
-    #[test]
-    fn panic_inside_blocking_closure_yields_async_task_panicked() {
-        block_on(async {
-            let engine = AsyncCacheEngine::<Vec<f32>>::open(CacheOptions {
-                database_path: ":memory:".into(),
-                ..CacheOptions::default()
-            })
-            .await
-            .unwrap();
-
-            let result = engine
-                .query_run::<_, Vec<f32>>(|_q| panic!("intentional test panic"))
-                .await;
-            assert!(
-                matches!(result, Err(LocalFileCacheError::AsyncTaskPanicked)),
-                "expected AsyncTaskPanicked, got {result:?}"
             );
         });
     }
@@ -947,9 +1044,7 @@ mod rfc005_smol {
     use super::write_file;
     use tempfile::TempDir;
 
-    fn block_on<F: std::future::Future>(f: F) -> F::Output {
-        smol::block_on(f)
-    }
+    panic_inside_blocking_closure_yields_async_task_panicked_test!(block_on = smol::block_on);
 
     #[test]
     fn smol_engine_set_get() {
@@ -970,27 +1065,6 @@ mod rfc005_smol {
 
             let entry = engine.get(path).await.unwrap();
             assert!(entry.is_some(), "smol get must return the stored entry");
-        });
-    }
-
-    // RFC 015 R3 — panic parity with Tokio (unwind-only; see runtime.rs).
-    #[test]
-    fn panic_inside_blocking_closure_yields_async_task_panicked() {
-        block_on(async {
-            let engine = AsyncCacheEngine::<Vec<f32>>::open(CacheOptions {
-                database_path: ":memory:".into(),
-                ..CacheOptions::default()
-            })
-            .await
-            .unwrap();
-
-            let result = engine
-                .query_run::<_, Vec<f32>>(|_q| panic!("intentional test panic"))
-                .await;
-            assert!(
-                matches!(result, Err(LocalFileCacheError::AsyncTaskPanicked)),
-                "expected AsyncTaskPanicked, got {result:?}"
-            );
         });
     }
 
@@ -1041,23 +1115,7 @@ mod rfc005_smol {
 mod rfc015_tokio_async_engine {
     use localcache::{AsyncCacheEngine, CacheOptions, LocalFileCacheError};
 
-    #[tokio::test]
-    async fn panic_inside_blocking_closure_yields_async_task_panicked() {
-        let engine = AsyncCacheEngine::<Vec<f32>>::open(CacheOptions {
-            database_path: ":memory:".into(),
-            ..CacheOptions::default()
-        })
-        .await
-        .unwrap();
-
-        let result = engine
-            .query_run::<_, Vec<f32>>(|_q| panic!("intentional test panic"))
-            .await;
-        assert!(
-            matches!(result, Err(LocalFileCacheError::AsyncTaskPanicked)),
-            "expected AsyncTaskPanicked, got {result:?}"
-        );
-    }
+    panic_inside_blocking_closure_yields_async_task_panicked_test!(tokio);
 
     #[tokio::test]
     async fn poisoned_mutex_recovers_on_subsequent_calls() {

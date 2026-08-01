@@ -221,6 +221,12 @@ where
     /// > need a literal `*` or `?` in a path segment, use `path_like` with
     /// > SQL `LIKE` escaping instead.
     ///
+    /// **Performance:** start the pattern with a literal, not `*`. A leading
+    /// literal produces an indexable range and stays flat as the namespace
+    /// grows; a leading `*` cannot, and scan cost grows with it. Prefer
+    /// `path_glob("/data/*.json")` over `path_glob("*/*.json")` when the
+    /// prefix is known. See `docs/src/performance.md` for measured numbers.
+    ///
     /// # Example
     ///
     /// ```no_run

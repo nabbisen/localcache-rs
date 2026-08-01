@@ -121,24 +121,44 @@ where
     }
 
     /// Pooled version of [`CacheEngine::batch_get`].
+    ///
+    /// If the pool's connection is poisoned, every element is
+    /// `Err(LocalFileCacheError::Poisoned { resource: "ConnectionPool" })`.
     pub fn batch_get<P: AsRef<Path>>(
         &self,
         paths: &[P],
     ) -> Vec<Result<Option<CacheEntry<T>>, LocalFileCacheError>> {
         match self.lock() {
             Ok(g) => g.batch_get(paths),
-            Err(e) => vec![Err(e)],
+            Err(_) => paths
+                .iter()
+                .map(|_| {
+                    Err(LocalFileCacheError::Poisoned {
+                        resource: "ConnectionPool",
+                    })
+                })
+                .collect(),
         }
     }
 
     /// Pooled version of [`CacheEngine::batch_get_fresh`].
+    ///
+    /// If the pool's connection is poisoned, every element is
+    /// `Err(LocalFileCacheError::Poisoned { resource: "ConnectionPool" })`.
     pub fn batch_get_fresh<P: AsRef<Path>>(
         &self,
         paths: &[P],
     ) -> Vec<Result<Option<CacheEntry<T>>, LocalFileCacheError>> {
         match self.lock() {
             Ok(g) => g.batch_get_fresh(paths),
-            Err(e) => vec![Err(e)],
+            Err(_) => paths
+                .iter()
+                .map(|_| {
+                    Err(LocalFileCacheError::Poisoned {
+                        resource: "ConnectionPool",
+                    })
+                })
+                .collect(),
         }
     }
 
@@ -181,13 +201,23 @@ where
     }
 
     /// Pooled version of [`CacheEngine::check_status_batch`].
+    ///
+    /// If the pool's connection is poisoned, every element is
+    /// `Err(LocalFileCacheError::Poisoned { resource: "ConnectionPool" })`.
     pub fn check_status_batch<P: AsRef<Path>>(
         &self,
         paths: &[P],
     ) -> Vec<Result<CacheStatus, LocalFileCacheError>> {
         match self.lock() {
             Ok(g) => g.check_status_batch(paths),
-            Err(e) => vec![Err(e)],
+            Err(_) => paths
+                .iter()
+                .map(|_| {
+                    Err(LocalFileCacheError::Poisoned {
+                        resource: "ConnectionPool",
+                    })
+                })
+                .collect(),
         }
     }
 

@@ -45,6 +45,22 @@ class AdvisoryGateError(Exception):
     """An input, tool, provenance, or policy invariant failed closed."""
 
 
+class TransientFetchError(AdvisoryGateError):
+    """A sparse-index fetch failure believed to be transient -- a network
+    condition (connection refused, timeout, DNS failure, ...), raised only
+    by `live_fetch`'s own network-error handler.
+
+    Phase 23 P0 Part C1 (N3 review §4.1 deferred register): `fetch_with_retry`
+    used to catch the broad `AdvisoryGateError`, correct only because
+    `live_fetch` happened to have no other failure mode. A substitute `Fetch`
+    raising `AdvisoryGateError` for a non-transient reason would have been
+    retried three times regardless. The layer that knows whether a failure
+    is transient -- the fetcher -- now says so through the exception type,
+    and the retry wrapper catches only this type instead of inferring
+    transience from a broad exception class.
+    """
+
+
 @dataclass(frozen=True, order=True)
 class Finding:
     advisory_id: str
@@ -389,10 +405,14 @@ def classify_findings(
         else:
             # RFC 019 R4: no expiry to report; name the re-raise condition
             # instead, so a reader can tell the two forms apart without
-            # opening the policy file.
+            # opening the policy file. Phase 23 P0 Part C2: `follow_up` is
+            # emitted verbatim -- it is a self-describing sentence in its
+            # own right, not a fragment this format string completes. A
+            # consumer other than this report format (an evidence viewer,
+            # a different reporter) must be able to read it standalone.
             lines.append(
                 f"{classification} {identity}: {entry.action}, standing "
-                f"disposition ({entry.owner}) — reassess if {entry.follow_up}"
+                f"disposition ({entry.owner}) — {entry.follow_up}"
             )
     for entry in sorted(entries, key=lambda item: item.finding.key):
         if entry.finding.key not in observed:
@@ -544,7 +564,7 @@ def live_fetch(url: str, timeout: int) -> tuple[int, Mapping[str, str], bytes]:
             headers = {key.lower(): value for key, value in response.headers.items()}
             body = response.read(MAX_RESPONSE_BYTES + 1)
     except (OSError, urllib.error.URLError) as error:
-        raise AdvisoryGateError(f"sparse-index request failed for {url}: {error}") from error
+        raise TransientFetchError(f"sparse-index request failed for {url}: {error}") from error
     return status, headers, body
 
 
@@ -558,10 +578,16 @@ def fetch_with_retry(
     deadline: float,
     sleep: Sleep = time.sleep,
 ) -> tuple[int, Mapping[str, str], bytes, int]:
-    """N3 Part E (RFC 014 M4 review H2): retry a transient sparse-index
-    failure -- a network error (`live_fetch`'s only failure mode; it never
-    raises for a validation problem, only `OSError`/`URLError`) or an HTTP
-    5xx -- up to `MAX_FETCH_ATTEMPTS` times with exponential backoff.
+    """N3 Part E (RFC 014 M4 review H2); narrowed in Phase 23 P0 Part C1.
+    Retry a transient sparse-index failure -- a network error, raised by
+    `live_fetch` as `TransientFetchError` -- or an HTTP 5xx, up to
+    `MAX_FETCH_ATTEMPTS` times with exponential backoff.
+
+    Catches only `TransientFetchError`, not the broad `AdvisoryGateError`:
+    the fetcher declares transience through the exception type instead of
+    the wrapper inferring it, so a substitute `Fetch` raising a plain
+    `AdvisoryGateError` for a non-transient reason propagates immediately
+    rather than being retried.
 
     Never retries a non-200/non-5xx status, a validation failure, or a
     size-limit breach -- those are genuine gate failures, not flakiness, and
@@ -575,7 +601,7 @@ def fetch_with_retry(
             raise AdvisoryGateError("registry snapshot exceeded overall deadline")
         try:
             status, headers, body = fetch(url, timeout)
-        except AdvisoryGateError as error:
+        except TransientFetchError as error:
             last_error = error
         else:
             if status == 200:

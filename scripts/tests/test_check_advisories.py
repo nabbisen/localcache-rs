@@ -421,6 +421,28 @@ class ClassificationTests(unittest.TestCase):
         self.assertIn("standing disposition", lines[0])
         self.assertIn("reassess if a maintained fork gains adoption", lines[0])
 
+    def test_standing_entry_emits_follow_up_verbatim(self) -> None:
+        # Phase 23 P0 Part C2: `follow_up` is a self-describing sentence in
+        # its own right; the reporter must not prepend "reassess if" or any
+        # other prose. Deliberately does not start with "reassess" so a
+        # prepended fragment would be visibly wrong rather than
+        # coincidentally still readable.
+        standing_entry = CHECKER.PolicyEntry(
+            finding=self.finding,
+            action="warn",
+            owner="maintainers",
+            approved=date(2026, 7, 23),
+            expires=None,
+            reason="compatibility",
+            follow_up="A maintained fork must gain adoption first.",
+        )
+        lines, denied = CHECKER.classify_findings(
+            [self.finding], [standing_entry], date(2026, 7, 24)
+        )
+        self.assertFalse(denied)
+        self.assertIn("A maintained fork must gain adoption first.", lines[0])
+        self.assertNotIn("reassess if A maintained fork", lines[0])
+
     def test_standing_entry_version_change_denies_both_new_and_stale(self) -> None:
         standing_entry = CHECKER.PolicyEntry(
             finding=self.finding,  # version="1.13.2"
@@ -656,21 +678,61 @@ class RegistryTests(unittest.TestCase):
         self,
     ) -> None:
         # live_fetch's only failure mode is OSError/URLError, surfaced as
-        # AdvisoryGateError -- confirm that is retried up to the limit and
+        # TransientFetchError (Phase 23 P0 Part C1: previously the broader
+        # AdvisoryGateError) -- confirm that is retried up to the limit and
         # no further, distinct from a validation failure raised elsewhere
         # (this function never sees those; they happen after it returns).
         calls = []
 
         def network_error(url: str, _timeout: int):
             calls.append(1)
-            raise CHECKER.AdvisoryGateError(f"sparse-index request failed for {url}: boom")
+            raise CHECKER.TransientFetchError(
+                f"sparse-index request failed for {url}: boom"
+            )
 
-        with self.assertRaisesRegex(CHECKER.AdvisoryGateError, "boom"):
+        with self.assertRaisesRegex(CHECKER.TransientFetchError, "boom"):
             CHECKER.fetch_with_retry(
                 network_error, "https://example.invalid/x", 5,
                 CHECKER.time.monotonic() + 60, lambda _: None,
             )
         self.assertEqual(len(calls), CHECKER.MAX_FETCH_ATTEMPTS)
+
+    def test_fetch_with_retry_does_not_retry_a_non_transient_advisory_gate_error(
+        self,
+    ) -> None:
+        # Phase 23 P0 Part C1: this is the exact fragility the dedicated
+        # error type closes. A substitute `Fetch` raising a plain
+        # `AdvisoryGateError` for a reason that has nothing to do with the
+        # network (a bug, a bad assertion, a non-transient policy failure)
+        # must propagate on the first attempt, not be retried three times.
+        calls = []
+
+        def non_transient_error(url: str, _timeout: int):
+            calls.append(1)
+            raise CHECKER.AdvisoryGateError("not a network condition")
+
+        with self.assertRaisesRegex(CHECKER.AdvisoryGateError, "not a network condition"):
+            CHECKER.fetch_with_retry(
+                non_transient_error, "https://example.invalid/x", 5,
+                CHECKER.time.monotonic() + 60, lambda _: None,
+            )
+        self.assertEqual(len(calls), 1)
+
+    def test_live_fetch_wraps_a_network_error_as_transient(self) -> None:
+        # live_fetch is the layer that knows a failure is transient; confirm
+        # it raises the dedicated type, not the broad AdvisoryGateError,
+        # without making a real network call.
+        original_urlopen = CHECKER.urllib.request.urlopen
+
+        def broken_urlopen(*_args: object, **_kwargs: object):
+            raise OSError("connection refused")
+
+        CHECKER.urllib.request.urlopen = broken_urlopen
+        try:
+            with self.assertRaisesRegex(CHECKER.TransientFetchError, "connection refused"):
+                CHECKER.live_fetch("https://example.invalid/x", 5)
+        finally:
+            CHECKER.urllib.request.urlopen = original_urlopen
 
     def test_size_limit_breach_is_not_retried(self) -> None:
         # A size-limit breach is detected by the caller (build_registry_snapshot)

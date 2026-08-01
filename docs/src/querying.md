@@ -257,6 +257,17 @@ Unmatched braces, NUL, and bounded pattern-expansion violations return a
 stable `UnsupportedFeature` error from `run()` or `dry_run()` before database
 work. The fluent `path_glob` setter remains infallible.
 
+**Performance:** start the pattern with a literal, not `*`. A leading literal
+narrows to an indexable range and stays flat as the namespace grows; a
+leading `*` cannot, and cost grows with it:
+
+```rust
+engine.query().path_glob("/data/*.json").run()?; // flat
+engine.query().path_glob("*/*.json").run()?;      // grows with namespace size
+```
+
+See [Performance](./performance.md) for measured numbers.
+
 ### Combining predicates
 
 ```rust
