@@ -5,7 +5,10 @@ This is what the review will check.
 
 ## A. Scope discipline
 
-- [ ] Exactly two files changed: `cache/engine/maintenance.rs`, `db/repository.rs`
+- [ ] Three files changed: `cache/engine/maintenance.rs`, `db/repository.rs`, and the test module
+      `cache/engine/maintenance/tests.rs` — declared `#[cfg(test)] #[path = "maintenance/tests.rs"] mod tests;`
+      per the crate convention, **not** embedded in `maintenance.rs` *(amended 2026-08-03; the
+      original said "exactly two files" and left the tests nowhere to live)*
 - [ ] **No public API change** — new paged helper is private, `MAINTENANCE_CHUNK` is `pub(crate)`
 - [ ] No schema change, no migration, no new index, no new dependency
 - [ ] `delete_lru_n` and `delete_by_other_version` untouched

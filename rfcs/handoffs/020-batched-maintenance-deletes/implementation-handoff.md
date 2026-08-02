@@ -202,7 +202,14 @@ three files rather than ten thousand.
 - Full suite green; report the count against the current baseline
 - **No public API change** — the new helper is private, the constant `pub(crate)`
 - **No schema change** — no migration, no new index
-- `git diff --stat` should touch exactly the two files named above
+- `git diff --stat` should touch the two files named above, **plus their test module** at
+  `crates/localcache/src/cache/engine/maintenance/tests.rs`
+
+  *(Amended 2026-08-03 during P1c review. The original wording said "exactly the two files",
+  which left the tests nowhere to live and pushed them into an embedded `#[cfg(test)] mod tests`.
+  The crate's convention is a sibling file declared `#[cfg(test)] #[path = "maintenance/tests.rs"]
+  mod tests;` — still a child module, so it reaches private items with no visibility widening.
+  N5 moved 573 ELOC out of `db/indexes.rs` for exactly this reason; see the module-size register.)*
 
 ## 9. Not yours
 
