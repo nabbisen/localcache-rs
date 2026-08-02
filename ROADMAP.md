@@ -672,6 +672,10 @@ limitations matter: tmpfs **understates** the I/O-bound `cleanup_missing_files`
 figure, and a single namespace holds every entry, which maximises what a
 `namespace=?` plan scans.
 
+**The first of those was resolved by P1a, and it changed the ranking** — see "P1a completion"
+under Phase 23. Read N4's figures as a tmpfs baseline, not as current guidance. The
+single-namespace limitation still stands.
+
 ### Deferred register
 
 Recorded findings not scheduled into a milestone. Each is tracked, none is lost.
@@ -686,7 +690,7 @@ Recorded findings not scheduled into a milestone. Each is tracked, none is lost.
 | `namespace_copy`'s body is byte-identical to `import_from`'s in `cache/engine/portable.rs` | N5 review §2 | Verified identical (184 chars each). Became visible once the concern was isolated in one file. Reported and deliberately **not** fixed during a move commit. |
 | The exhaustiveness `compile_fail,E0004` annotation is **documentation-only** | P0 review §3.1 | **Rustdoc does not verify a `compile_fail` block's error code against the actual diagnostic.** Confirmed by mutation from both sides: a block annotated `E0004` that fails with an unresolved-path error, a type mismatch, or `E0425` all still report `ok`. The guarantee that the match is genuinely non-exhaustive rests on mutation testing at review time, not on the annotation. `trybuild` or a custom `rustc --error-format=json` harness would enforce it; neither judged proportionate for one assertion. |
 | **`rusqlite` held at `^0.39`, and the conditions that would change it** | orbok/arama requests, 2026-08-01 | Not a defect to fix — a standing external constraint to **re-evaluate at each replanning**. `rusqlite 0.40` needs `libsqlite3-sys 0.38.x`, which needs **Rust 1.95** (measured: 1.94 fails, 1.95.0 passes), so adopting it would move this crate's floor from 1.85 to 1.95. Cost of holding: bundled SQLite stays at 3.51.3 rather than 3.53.2, and a consumer pinning `rusqlite 0.40` directly cannot use this crate at all — `links = "sqlite3"` makes that a hard resolution failure with no downstream remedy. **Revisit if any of:** `libsqlite3-sys` declares `rust-version` (then MSRV-aware resolution serves both audiences and no choice falls to us); the `cfg_select!` dependency goes away; 1.95 stops being a recent floor; or a consumer confirms a parallel line would unblock them. User-facing detail in `docs/src/dependency_security.md`. |
-| `preload`, concurrent access, bincode codec at scale, watcher on large trees, cold-open cost | N4 §6 | Unmeasured. Candidate additions to the scale profile; none blocks Phase 23 scoping. |
+| ~~`preload`, concurrent access, bincode codec at scale, watcher on large trees, cold-open cost~~ → **watcher on large trees, async-runtime concurrency** | N4 §6, narrowed by P1a | **Mostly closed.** P1a measured `preload` (71.5 µs/row at 1M), cold-open (622–799 ms), the bincode codec at scale, and `ReadPool` under 8 threads. Still unmeasured: **watcher behaviour on large trees** (needs sustained observation with induced filesystem events, not one-shot timing; RFC 015 already governs its failure behaviour) and **async-runtime backends** (tokio/async-std/smol — wiring three runtimes into a `harness = false` bench was judged disproportionate, and `ReadPool` already isolates the contended resource). Neither blocks P1b. |
 
 ### Module-size register — after N5
 
@@ -729,8 +733,9 @@ Phase 23 is complete when all of the following hold:
    deferred with a recorded reason. None is left unaddressed and unexplained.
 2. Re-measurement uses the **same harness at the same three scales** (10k / 100k / 1M), so
    before/after numbers are comparable.
-3. `cleanup_missing_files` has been measured on **real storage**, not tmpfs — the current
-   figure is a floor and we know it.
+3. ~~`cleanup_missing_files` has been measured on **real storage**, not tmpfs — the current
+   figure is a floor and we know it.~~ **Satisfied by P1a**: 5.7375 s warm / 8.665 s cold at 1M,
+   against a path-length-controlled tmpfs baseline of 1.455 s.
 4. Every deferred-register item is closed, re-registered with a reason, or scheduled.
 5. Public documentation states the measured characteristics and the query pattern to avoid.
 6. **Each release ships at its own breaking point, with CI green before the next milestone
@@ -763,7 +768,7 @@ shortfall.
 | **P0c — Tooling hygiene ✅** | `TransientFetchError`; self-describing `follow-up`; pin the exhaustiveness doctest to `E0004` | recorded findings | — |
 | **P0e — Async test deduplication ✅** | Collapse `pool_observe.rs`'s three runtime modules with a `macro_rules!` helper. **Not a proc-macro** — see below | — | — |
 | **P0d — Release v0.21.1 ✅** | gates, evidence, publish | owner | P0a–P0c, P0e |
-| **P1a — Real-storage measurement** | Re-run the scale profile with `TMPDIR` on real storage; add `preload`, concurrent access, bincode-at-scale, cold-open | — | — |
+| **P1a — Real-storage measurement ✅** | Re-run the scale profile with `TMPDIR` on real storage; add `preload`, concurrent access, bincode-at-scale, cold-open | — | — |
 | **P1b — JSON query design** | **New RFC** | RFC required | P1a |
 | **P1c — Implementation** | per the accepted RFC | that RFC | P1b |
 | **P1d — Re-measure** | same harness, same scales; before/after table | — | P1c |
@@ -848,8 +853,55 @@ Two process points recorded from the milestone, neither affecting the artifact:
   of which 664 MB was build output. Applied during review after verifying both `.crate` digests
   against the manifest: 686 MB → 23 MB, and the superseded v0.21.0 bundle removed.
 
-**Phase 23 now moves to P1a** — re-measuring the scale profile on real storage, since the
-current `cleanup_missing_files` figure was taken on tmpfs and is a floor rather than an estimate.
+**Phase 23 then moved to P1a** — re-measuring the scale profile on real storage, since the
+`cleanup_missing_files` figure was taken on tmpfs and was a floor rather than an estimate.
+
+### P1a completion — and the ranking it overturned
+
+Implemented and independently accepted at commit `707051c`, one file
+(`crates/localcache/benches/scale_profile.rs`). No library change in any revision.
+
+**The measurement was worth taking: N4's ranking does not survive it.**
+
+| Operation @1M | tmpfs | real storage (btrfs/LUKS) | move |
+|---|---|---|---|
+| `field_gt` + `order_by` + `limit 25` | 3.972 s | 3.897 s | **0.98× — flat** |
+| `cleanup_missing_files`, warm | 1.455 s | 5.7375 s | **3.94×** |
+| `cleanup_missing_files`, cold | — | 8.665 s | **5.96×** |
+
+`cleanup_missing_files` now costs **1.47× `field_gt` warm and 2.22× cold**, where on tmpfs
+`field_gt` was the more expensive by ~3.1×. **N4 ranked `cleanup_missing_files` third; on real
+storage it is first.** Every SQL-bound query — `field_gt`, both globs, `path_in_dir` — is flat
+within 0.94×–1.05× at all three scales. The single operation performing a `stat` per surviving
+row is the only one that moved.
+
+Newly measured (no tmpfs baseline, single-run): cold-open **622–799 ms** against a 1M-row
+database, `preload` **71.5 µs/row**, bincode populate/`get`/cleanup/eviction, and `ReadPool`
+under 8 threads. Async-runtime concurrency and watcher-on-large-trees remain unmeasured.
+
+**Three review rounds, none of them rework of bad engineering.** Round 1 found that the reported
+`get` figure was one first-access amortised over 200 samples, and that the run every table drew
+from was a ~2× outlier. Round 2 found that a `TMPDIR` relocation into the repository — which the
+reviewer had signed off as harmless — lengthened every stored path from 78 to 138 characters,
+growing the database 18.6% and inflating every index scan. Round 3 controlled it: matched
+73-character paths on both sides, databases **byte-identical** at all three scales, which is what
+makes the comparison filesystem-only.
+
+The harness gained first-call exclusion, replication with median/spread reporting
+(`LOCALCACHE_SCALE_QUERY_REPEATS`), substrate and path-length recording, an operator-coordinated
+cache-drop protocol, and a still-measuring-cache trap detector. None existed before.
+
+**Limitation carried forward:** `cleanup_missing_files` and LRU eviction are destructive, so they
+cannot be replicated without re-populating. Their figures are single-sample and carry
+session-level variance — five otherwise-comparable btrfs 1M runs spread 1.24×. A **paired**
+comparison taken in one session is sound; an absolute figure quoted across sessions is not.
+Recorded in the harness as limitation 5.
+
+Full review chain: `.git-exclude/reviewed/architect-p1a-real-storage-measurement-review-2026-08-02.md`,
+`architect-p1a-revision-review-2026-08-02.md`, `architect-p1a-revision-2-review-2026-08-03.md`.
+
+**Phase 23 now moves to P1b** — the JSON field query design RFC, authored by the high-capability
+model and reviewed by the owner.
 
 ### Why P0e is a `macro_rules!` helper, not `#[async_test]`
 
@@ -874,11 +926,18 @@ dev-dependency) so it never becomes a third release artifact, and that must be v
 against `cargo publish` rather than assumed — published manifests do carry
 dev-dependencies.
 
-### The dominant finding, and why it is not simply "add an index"
+### The JSON field query, and why it is not simply "add an index"
 
-`field_gt` + `order_by_field` + `limit 25` costs **4.4 s at 1M rows to return 25 rows**,
-linearly. `dry_run()` shows the plan narrowing on `namespace=?` only, so every row's JSON is
-decoded and sorted before `LIMIT` applies — a small limit saves nothing.
+`field_gt` + `order_by_field` + `limit 25` costs **~3.9 s at 1M rows to return 25 rows**,
+linearly, and — per P1a — **the same on real storage as on tmpfs**. `dry_run()` shows the plan
+narrowing on `namespace=?` only, so every row's JSON is decoded and sorted before `LIMIT`
+applies — a small limit saves nothing. It is CPU-bound on payload parsing, which is why the
+storage substrate does not change it.
+
+**P1a demoted this from "the dominant cost" to "the second cost."** `cleanup_missing_files` is
+now 1.47× more expensive warm and 2.22× cold. It remains a real user-facing ceiling and P1b
+still has a design question to answer — but the phase's largest measured cost is elsewhere, and
+that should be weighed when deciding how much design the answer deserves.
 
 A SQLite expression index over `json_extract(payload, '$.field')` is the obvious answer, and
 `create_path_index`/`drop_path_index`/`list_path_indexes` already establish the user-declared
@@ -904,7 +963,9 @@ is in the RFC when written, rather than appended at review time.
 
 - **Cross-process read-write shared cache** — still blocked on a use case from the owner;
   multi-reader/one-writer and symmetric multi-writer are different designs.
-- **Performance work beyond N4's profile** — anything unmeasured waits for P1a.
+- **Performance work beyond the measured profile** — P1a closed the real-storage gap and most of
+  N4 §6. What remains unmeasured (watcher on large trees, async-runtime concurrency) stays out of
+  scope until something measured argues for it.
 
 ## Future / Unscheduled
 
