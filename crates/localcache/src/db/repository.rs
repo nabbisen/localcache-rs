@@ -190,16 +190,35 @@ pub(crate) fn delete_by_path(
     Ok(n > 0)
 }
 
-pub(crate) fn delete_path(
+/// RFC 020: delete every path in `paths` from `namespace`, inside `tx`,
+/// preparing the statement once via `prepare_cached` and executing it per
+/// path. Returns the number of rows actually affected (not the number
+/// attempted). Caller commits `tx`.
+pub(crate) fn delete_paths_in_tx(
+    tx: &Transaction,
+    namespace: &str,
+    paths: &[String],
+) -> Result<usize, LocalFileCacheError> {
+    let mut stmt = tx.prepare_cached("DELETE FROM files WHERE namespace = ?1 AND path = ?2")?;
+    let mut removed = 0usize;
+    for path in paths {
+        removed += stmt.execute(params![namespace, path])?;
+    }
+    Ok(removed)
+}
+
+/// RFC 020: `delete_paths_in_tx` wrapped in one committed transaction, so a
+/// page of deletes costs one commit instead of one per row. Follows the
+/// `upsert`/`upsert_in_tx` split already established in this file.
+pub(crate) fn delete_paths(
     conn: &Connection,
     namespace: &str,
-    path: &str,
-) -> Result<(), LocalFileCacheError> {
-    conn.execute(
-        "DELETE FROM files WHERE namespace = ?1 AND path = ?2",
-        params![namespace, path],
-    )?;
-    Ok(())
+    paths: &[String],
+) -> Result<usize, LocalFileCacheError> {
+    let tx = conn.unchecked_transaction()?;
+    let removed = delete_paths_in_tx(&tx, namespace, paths)?;
+    tx.commit()?;
+    Ok(removed)
 }
 
 pub(crate) fn delete_by_other_version(
@@ -242,31 +261,48 @@ pub(crate) fn delete_lru_n(
 // Scans / aggregates
 // ---------------------------------------------------------------------------
 
-pub(crate) fn all_file_rows_in_namespace(
+/// RFC 020: one page of paths in `namespace`, ordered by `path`, strictly
+/// after `after`. Pass `""` for the first page — every stored path is a
+/// non-empty absolute path, so `path > ''` selects all of them. Served by
+/// the existing `idx_files_namespace_path`; no new index.
+pub(crate) fn paths_page_in_namespace(
     conn: &Connection,
     namespace: &str,
-) -> Result<Vec<(i64, String, i64)>, LocalFileCacheError> {
-    let mut stmt =
-        conn.prepare_cached("SELECT id, path, updated_at FROM files WHERE namespace = ?1")?;
+    after: &str,
+    limit: usize,
+) -> Result<Vec<String>, LocalFileCacheError> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT path FROM files
+         WHERE namespace = ?1 AND path > ?2
+         ORDER BY path
+         LIMIT ?3",
+    )?;
+    let paths: Result<Vec<String>, _> = stmt
+        .query_map(params![namespace, after, limit as i64], |r| r.get(0))?
+        .collect();
+    Ok(paths?)
+}
+
+/// RFC 020: same page shape as [`paths_page_in_namespace`], carrying
+/// `updated_at` for `cleanup_expired`.
+pub(crate) fn path_rows_page_in_namespace(
+    conn: &Connection,
+    namespace: &str,
+    after: &str,
+    limit: usize,
+) -> Result<Vec<(String, i64)>, LocalFileCacheError> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT path, updated_at FROM files
+         WHERE namespace = ?1 AND path > ?2
+         ORDER BY path
+         LIMIT ?3",
+    )?;
     let rows: Result<Vec<_>, _> = stmt
-        .query_map(params![namespace], |r| {
-            Ok((
-                r.get::<_, i64>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, i64>(2)?,
-            ))
+        .query_map(params![namespace, after, limit as i64], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
         })?
         .collect();
     Ok(rows?)
-}
-
-pub(crate) fn all_paths_in_namespace(
-    conn: &Connection,
-    namespace: &str,
-) -> Result<Vec<String>, LocalFileCacheError> {
-    let mut stmt = conn.prepare_cached("SELECT path FROM files WHERE namespace = ?1")?;
-    let paths: Result<Vec<String>, _> = stmt.query_map(params![namespace], |r| r.get(0))?.collect();
-    Ok(paths?)
 }
 
 pub(crate) fn count_in_namespace(

@@ -15,6 +15,11 @@ use crate::error::LocalFileCacheError;
 
 use super::{CacheEngine, is_expired};
 
+/// RFC 020: rows per scan page and per delete transaction. Measured: 10 000
+/// gives 4.1 µs/delete against 50.7 µs for the per-row commits it replaces.
+/// Internal — retunable without a version bump.
+pub(crate) const MAINTENANCE_CHUNK: usize = 10_000;
+
 impl<T> CacheEngine<T>
 where
     T: Serialize + DeserializeOwned,
@@ -66,29 +71,94 @@ where
     /// [`check_status`][CacheEngine::check_status] per entry to compare
     /// stored vs current metadata.
     pub fn cleanup_missing_files(&self) -> Result<usize, LocalFileCacheError> {
+        self.cleanup_missing_files_paged(MAINTENANCE_CHUNK)
+    }
+
+    /// RFC 020: paged implementation of [`Self::cleanup_missing_files`],
+    /// parameterised on page size so tests can exercise chunk boundaries
+    /// cheaply. The public method always supplies [`MAINTENANCE_CHUNK`].
+    ///
+    /// The cursor advances from the last path **scanned** in a page, not the
+    /// last path **surviving** the absence filter — if it were taken from
+    /// survivors, a page that is entirely present (nothing removed) would
+    /// never advance the cursor and the loop would spin forever.
+    fn cleanup_missing_files_paged(&self, page_size: usize) -> Result<usize, LocalFileCacheError> {
+        debug_assert!(
+            page_size > 0,
+            "page_size must be positive or LIMIT 0 silently scans nothing"
+        );
         self.guard_write()?;
-        let paths = repository::all_paths_in_namespace(&self.conn, &self.namespace)?;
-        let mut removed = 0;
-        for p in &paths {
-            if !Path::new(p).exists() {
-                repository::delete_path(&self.conn, &self.namespace, p)?;
-                removed += 1;
+        let mut removed = 0usize;
+        let mut cursor = String::new();
+        loop {
+            let page = repository::paths_page_in_namespace(
+                &self.conn,
+                &self.namespace,
+                &cursor,
+                page_size,
+            )?;
+            if page.is_empty() {
+                break;
+            }
+            let last_page = page.len() < page_size;
+            cursor = page[page.len() - 1].clone();
+
+            let absent: Vec<String> = page
+                .into_iter()
+                .filter(|p| !Path::new(p).exists())
+                .collect();
+            if !absent.is_empty() {
+                removed += repository::delete_paths(&self.conn, &self.namespace, &absent)?;
+            }
+            if last_page {
+                break;
             }
         }
         Ok(removed)
     }
 
     pub fn cleanup_expired(&self) -> Result<usize, LocalFileCacheError> {
+        self.cleanup_expired_paged(MAINTENANCE_CHUNK)
+    }
+
+    /// RFC 020: paged implementation of [`Self::cleanup_expired`], the
+    /// `cleanup_expired` counterpart to
+    /// [`Self::cleanup_missing_files_paged`] — see its doc comment for the
+    /// cursor-advancement invariant, which applies identically here.
+    fn cleanup_expired_paged(&self, page_size: usize) -> Result<usize, LocalFileCacheError> {
+        debug_assert!(
+            page_size > 0,
+            "page_size must be positive or LIMIT 0 silently scans nothing"
+        );
         self.guard_write()?;
         let Some(ttl) = self.ttl else {
             return Ok(0);
         };
-        let rows = repository::all_file_rows_in_namespace(&self.conn, &self.namespace)?;
-        let mut removed = 0;
-        for (_, path, updated_at) in &rows {
-            if is_expired(*updated_at, Some(ttl)) {
-                repository::delete_path(&self.conn, &self.namespace, path)?;
-                removed += 1;
+        let mut removed = 0usize;
+        let mut cursor = String::new();
+        loop {
+            let page = repository::path_rows_page_in_namespace(
+                &self.conn,
+                &self.namespace,
+                &cursor,
+                page_size,
+            )?;
+            if page.is_empty() {
+                break;
+            }
+            let last_page = page.len() < page_size;
+            cursor = page[page.len() - 1].0.clone();
+
+            let expired: Vec<String> = page
+                .into_iter()
+                .filter(|(_, updated_at)| is_expired(*updated_at, Some(ttl)))
+                .map(|(path, _)| path)
+                .collect();
+            if !expired.is_empty() {
+                removed += repository::delete_paths(&self.conn, &self.namespace, &expired)?;
+            }
+            if last_page {
+                break;
             }
         }
         Ok(removed)
@@ -136,3 +206,7 @@ where
         indexes::list_path_indexes(&self.conn)
     }
 }
+
+#[cfg(test)]
+#[path = "maintenance/tests.rs"]
+mod tests;
