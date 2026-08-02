@@ -753,10 +753,11 @@ behind it. Phase 23 inverts that.
 
 | Release | Contents | Breaking? |
 |---|---|---|
-| **v0.21.1** | P0 — query documentation, the `ConnectionPool` batch fix, tooling hygiene | no |
-| **v0.22.0** | P1 — JSON field query performance, only if it needs new public API | additive at most |
+| **v0.21.1 ✅** | P0 — query documentation, the `ConnectionPool` batch fix, tooling hygiene | no |
+| **v0.21.2** | P1 — maintenance delete batching (RFC 020) | no |
+| **v0.22.0** | P2 — JSON field query performance, only if it needs new public API | additive at most |
 
-If P1 needs no new API there may be no v0.22.0, which is a good outcome rather than a
+If P2 needs no new API there may be no v0.22.0, which is a good outcome rather than a
 shortfall.
 
 ### Milestones
@@ -769,10 +770,19 @@ shortfall.
 | **P0e — Async test deduplication ✅** | Collapse `pool_observe.rs`'s three runtime modules with a `macro_rules!` helper. **Not a proc-macro** — see below | — | — |
 | **P0d — Release v0.21.1 ✅** | gates, evidence, publish | owner | P0a–P0c, P0e |
 | **P1a — Real-storage measurement ✅** | Re-run the scale profile with `TMPDIR` on real storage; add `preload`, concurrent access, bincode-at-scale, cold-open | — | — |
-| **P1b — JSON query design** | **New RFC** | RFC required | P1a |
-| **P1c — Implementation** | per the accepted RFC | that RFC | P1b |
-| **P1d — Re-measure** | same harness, same scales; before/after table | — | P1c |
-| **P1e — Release** | only if P1c changed public API | owner | P1a–P1d |
+| **P1b — Maintenance delete batching** | **RFC 020** — `cleanup_missing_files`/`cleanup_expired` commit one transaction per deleted row; that is 88% of their cost | RFC required | P1a |
+| **P1c — Implementation** | per RFC 020 | RFC 020 | P1b |
+| **P1d — Re-measure** | same harness, matched path length, **one session** (P1a limitation 5); before/after table | — | P1c |
+| **P1e — Release v0.21.2** | patch — RFC 020 is non-breaking | owner | P1c–P1d |
+| **P2a — JSON query design** | **New RFC** — the field-query ceiling, now the *second* cost | RFC required | P1a |
+| **P2b — Implementation** | per that RFC | that RFC | P2a |
+| **P2c — Re-measure** | same harness, same scales | — | P2b |
+| **P2d — Release** | only if P2b changed public API | owner | P2a–P2c |
+
+**P1/P2 were reordered after P1a, on the measurement.** P1b was scoped when `field_gt` was the
+dominant cost; it no longer is. Owner decision, 2026-08-03: follow the measurement. The
+maintenance fix is also non-breaking, so it ships as a patch **before** the query work, which is
+the cadence rule Phase 23 adopted after v0.21.0 rather than a separate judgement.
 
 ### P0a/b/c/e completion
 
@@ -900,8 +910,15 @@ Recorded in the harness as limitation 5.
 Full review chain: `.git-exclude/reviewed/architect-p1a-real-storage-measurement-review-2026-08-02.md`,
 `architect-p1a-revision-review-2026-08-02.md`, `architect-p1a-revision-2-review-2026-08-03.md`.
 
-**Phase 23 now moves to P1b** — the JSON field query design RFC, authored by the high-capability
-model and reviewed by the owner.
+**Phase 23 now moves to P1b** — `rfcs/proposed/020-batched-maintenance-deletes.md`, authored by
+the high-capability model and reviewed by the owner.
+
+**P1a also redirected the fix.** N4's recorded candidate was *"batch the `stat` calls or make the
+sweep incremental/resumable"* — which targets the scan. Decomposing the cost for RFC 020 showed
+the scan is **11.7%** and the per-row delete commits are **88.3%** (50.7 µs per deleted row,
+against a 579 ns raw `stat` floor). A control measurement matters here: `prepare_cached` alone,
+the intuitive fix, buys **nothing**; only batching the commits does, at 12.2×. The obvious remedy
+would have optimised the wrong ninth of the operation.
 
 ### Why P0e is a `macro_rules!` helper, not `#[async_test]`
 
@@ -954,10 +971,10 @@ N4 exists so that call rests on evidence.
 
 ### RFC authorship and review
 
-P1b's RFC is **authored by the high-capability model and reviewed by the owner** — owner
-decision, 2026-08-01, the same arrangement that worked for RFC 018, where the owner's ruling
-on R4 overruled the author and produced the strongest change in v0.21.0. Recorded here so it
-is in the RFC when written, rather than appended at review time.
+Phase 23's RFCs — **RFC 020** (P1b) and P2a's — are **authored by the high-capability model and
+reviewed by the owner** — owner decision, 2026-08-01, the same arrangement that worked for
+RFC 018, where the owner's ruling on R4 overruled the author and produced the strongest change in
+v0.21.0. Recorded here so it is in the RFC when written, rather than appended at review time.
 
 ### Out of scope
 
