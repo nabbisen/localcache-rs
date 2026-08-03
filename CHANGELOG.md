@@ -7,11 +7,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [0.21.2] — Unreleased
+## [0.21.2] — 2026-08-03
 
-RC placeholder date: this section targets the coming v0.21.2 patch release closing Phase 23 P1
-(RFC 020, batched maintenance deletes). The exact release date is set at owner authorization, not
-before.
+Patch release closing Phase 23 P1 (RFC 020, batched maintenance deletes). Release candidate
+`262c343`, accepted by the v0.21.2 release decision on 2026-08-03 with a **Go** recommendation,
+and authorized by the project owner the same day.
 
 **A performance release, not a behaviour release.** `cleanup_missing_files` is ~5.9× faster and
 `cleanup_expired` roughly 8–12× faster at 1M entries, measured on a paired, same-session, real-storage
