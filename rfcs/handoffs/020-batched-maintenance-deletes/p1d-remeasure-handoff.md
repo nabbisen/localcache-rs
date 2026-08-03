@@ -39,10 +39,29 @@ changed no public API, so the current harness compiles unchanged against the old
 matters because §4 adds a new measurement — both sides must run identical harness code, or the
 comparison has two variables again.
 
-**2.3 — Matched `TMPDIR`, not under the repository.** Same rule as P1a's R7: two directories of
-equal path length, neither nested in the repo. Confirm with the harness's own
-`example stored path length:` line that both sides print **the same number** before reading any
-timing. A repo-nested path is what caused P1a revision 1's confound.
+**2.3 — Use `.git-exclude/tmp/` for both arms.** *(Corrected 2026-08-03 — the original text here
+said "not under the repository", carried over from P1a's R7. That was wrong for this milestone;
+see below.)*
+
+The requirement is that the two arms have the **same** path length, not that the path be short or
+outside the repo. Both arms here run on the same filesystem, so putting both under
+`.git-exclude/tmp/` matches them by construction and keeps scratch in the project's own
+gitignored scratch area, which is the convention.
+
+**P1a was different and genuinely forced.** It compared tmpfs against btrfs, and a tmpfs path is
+inherently short — `/tmp` is four characters. Matching it required a similarly short btrfs path
+(P1a used 40 characters). The repo root alone is 77 characters, and scratch inside it reaches 105,
+so a matched pair was arithmetically impossible inside the repo. That constraint does not exist
+when both arms are on the same filesystem.
+
+Still confirm with the harness's own `example stored path length:` line that both arms print
+**the same number** before reading any timing — that check is what makes the comparison valid, and
+it costs nothing.
+
+One consequence to state in the report, not to avoid: at 105 characters the absolute figures for
+scan-bound operations run roughly 1.2× higher than they would at 40. **That does not affect the
+before/after ratio P1d exists to establish**, since it applies equally to both arms — and a deep
+path is closer to a real deployment than an artificially short one.
 
 **2.4 — Interleave the runs.** Not all the "before" runs and then all the "after" runs — alternate
 them, so any drift during the session shows up in both arms rather than loading onto one:
@@ -130,7 +149,9 @@ but that was a single warm run on a repo-nested `TMPDIR`, so treat it as a hint,
   in §3 depends on them being identical to what the old arm runs.
 - `LOCALCACHE_SCALE` still defaults to 10 000; the harness stays out of CI.
 - Remove the worktree when done: `git worktree remove /home/<you>/lc-before`.
-- Scratch directories outside the repo, removed after use.
+- Scratch under `.git-exclude/tmp/` (gitignored), removed after use. The worktree at
+  `/home/<you>/lc-before` is necessarily outside the repo — that one is a git requirement, not a
+  measurement one — and `git worktree remove` cleans it up.
 
 ## 8. Gates
 
