@@ -770,9 +770,9 @@ shortfall.
 | **P0e — Async test deduplication ✅** | Collapse `pool_observe.rs`'s three runtime modules with a `macro_rules!` helper. **Not a proc-macro** — see below | — | — |
 | **P0d — Release v0.21.1 ✅** | gates, evidence, publish | owner | P0a–P0c, P0e |
 | **P1a — Real-storage measurement ✅** | Re-run the scale profile with `TMPDIR` on real storage; add `preload`, concurrent access, bincode-at-scale, cold-open | — | — |
-| **P1b — Maintenance delete batching** | **RFC 020** — `cleanup_missing_files`/`cleanup_expired` commit one transaction per deleted row; that is 88% of their cost | RFC required | P1a |
-| **P1c — Implementation** | per RFC 020 | RFC 020 | P1b |
-| **P1d — Re-measure** | same harness, matched path length, **one session** (P1a limitation 5); before/after table | — | P1c |
+| **P1b — Maintenance delete batching ✅** | **RFC 020** — `cleanup_missing_files`/`cleanup_expired` commit one transaction per deleted row; that is 88% of their cost | RFC required | P1a |
+| **P1c — Implementation ✅** | per RFC 020 | RFC 020 | P1b |
+| **P1d — Re-measure ✅** | same harness, matched path length, **one session** (P1a limitation 5); before/after table | — | P1c |
 | **P1e — Release v0.21.2** | patch — RFC 020 is non-breaking | owner | P1c–P1d |
 | **P2a — JSON query design** | **New RFC** — the field-query ceiling, now the *second* cost | RFC required | P1a |
 | **P2b — Implementation** | per that RFC | that RFC | P2a |
@@ -910,8 +910,54 @@ Recorded in the harness as limitation 5.
 Full review chain: `.git-exclude/reviewed/architect-p1a-real-storage-measurement-review-2026-08-02.md`,
 `architect-p1a-revision-review-2026-08-02.md`, `architect-p1a-revision-2-review-2026-08-03.md`.
 
-**Phase 23 now moves to P1b** — `rfcs/proposed/020-batched-maintenance-deletes.md`, authored by
+**Phase 23 then moved to P1b** — `rfcs/accepted/020-batched-maintenance-deletes.md`, authored by
 the high-capability model and reviewed by the owner.
+
+### P1b–P1d completion — RFC 020 delivered, and the cost model was right
+
+Implemented at `27a6551` (P1c), re-measured at `f56fa66` (P1d). No public API, schema, or
+wire-format change.
+
+| Operation @1M | before | after | improvement |
+|---|---|---|---|
+| `cleanup_missing_files`, warm | 6.324 s | **1.076 s** | **5.88×** (5.72–6.04) |
+| `cleanup_expired`, whole namespace | 61.008 s | **6.313 s** | **~8–12×** |
+
+**RFC 020 projected ~1.09 s and measured 1.076 s — a 1.3% miss**, on a projection derived before
+any of the code existed, from a cost decomposition plus four measured delete strategies. The
+improvement holds across three orders of magnitude (5.75× at 10k, 5.50× at 100k, 5.88× at 1M), so
+it is a property of the mechanism rather than a large-N effect.
+
+**`cleanup_expired` had never been measured.** RFC 020 R3 included it on the argument that it
+carried the identical defect and was *potentially worse*, since it deletes the whole namespace
+rather than a fraction. It took **61 seconds** to expire a million entries. Its multiplier is
+recorded as a range, not a point: the two after-samples were 5.330 s and 7.296 s, a 1.37× spread,
+which is P1a's limitation 5 behaving exactly as documented — both cleanup methods are destructive,
+so they cannot be replicated within a run and their figures carry session variance the
+query-repeat mechanism cannot reach.
+
+**The measurement method is the reusable part.** P1d compared two *builds* — a worktree at
+`27a6551~1` and the current tree — running the identical harness, interleaved in one session at a
+matched path length, with the operations RFC 020 does not touch serving as a built-in control for
+session drift. That control read 0.94×–1.00× throughout, against effects of 5.9× and 9.7×. This
+is the discipline P1a took three review rounds to establish, applied correctly on the first
+attempt.
+
+### Parallel `stat` — closed, not deferred again
+
+RFC 020 deferred parallelising the scan, with the measured facts recorded: 8 threads take the scan
+phase from 0.579 s to 0.081 s, a **7.1×** speedup, and after RFC 020 the scan is the dominant
+remaining term.
+
+**The answer is no, and the numbers are why.** It would take `cleanup_missing_files` at 1M from
+~1.08 s to roughly ~0.5 s. That is a real 2×, but it buys about half a second on a maintenance
+operation, in exchange for introducing concurrency to a previously single-threaded write path —
+new failure modes on a path whose correctness matters more than its speed — and either a thread
+pool of our own or a new dependency under RFC 014's advisory watch.
+
+The 5.7 s figure was worth restructuring code for. The remaining 0.5 s is not. **Recorded as
+decided rather than deferred**, so it is not re-litigated each planning round; reopen only if a
+consumer reports maintenance latency as a real problem at their scale.
 
 **P1a also redirected the fix.** N4's recorded candidate was *"batch the `stat` calls or make the
 sweep incremental/resumable"* — which targets the scan. Decomposing the cost for RFC 020 showed
