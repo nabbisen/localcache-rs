@@ -169,6 +169,49 @@ over from the old table, and correct it. Report what you found rather than only 
 
 ---
 
+# Part C — Publish the affected-version set
+
+*(Added 2026-08-03, after a downstream report. Verification:
+`.git-exclude/reviewed/architect-arama-0.19.1-defect-verification-2026-08-03.md`.)*
+
+`docs/src/dependency_security.md` records the *cause* of the MSRV/`rusqlite` conflict and the two
+cases that reported it, but **nowhere states which published versions are broken**. A consumer
+resolving a broken version today gets `cannot find macro cfg_select` from a transitive build
+script — no mention of localcache, MSRV, or `rusqlite` — and no published page names the version.
+
+## C.1 — Add the affected-version table
+
+In the § "Recorded cases" area, add a short subsection stating the set plainly:
+
+**Affected published versions: `0.19.1` and `0.20.0`.** Both declare `rust-version = "1.85"` and
+require `rusqlite ^0.40`, which resolves `libsqlite3-sys 0.38.x`, which uses the Rust 1.95
+`cfg_select!` macro. Both fail to build on the baseline they declare.
+
+Verified two ways on 2026-08-03: every published version enumerated from the sparse index, and
+`localcache =0.19.1` compiled against `rust-version = "1.85"` with `cargo +1.85.0` — it fails in
+`libsqlite3-sys 0.38.1`'s build script.
+
+**Unaffected:** `0.19.0` and earlier (`rusqlite ^0.39`), and `0.20.1` onward (constrained back to
+`^0.39`).
+
+State that both are **yanked**, and that a yank prevents new resolution without affecting existing
+lockfiles. Each caret range keeps a working version — `^0.19` resolves `0.19.0`, `^0.20` resolves
+`0.20.1`, both verified to build on 1.85.0.
+
+## C.2 — Correct the first recorded case
+
+The 2026-08-01 row says the defect was *"Fixed here: `rusqlite` constrained to `^0.39` in v0.20.1"*.
+True, but it implies a single broken version. Note that **`0.19.1` carried the same defect and was
+identified later, by the same reporter**, and that the fix in 0.20.1 did not retroactively repair
+the two published versions — which is why they are yanked.
+
+## C.3 — Keep it short
+
+This is a reference note, not a narrative. A reader arriving from a failed build wants the version
+set, the reason, and where to go instead, in that order.
+
+---
+
 # Required evidence
 
 - Version bump verified in `Cargo.toml`, `Cargo.lock`, and all three install examples
