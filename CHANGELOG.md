@@ -7,6 +7,29 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.21.2] — Unreleased
+
+RC placeholder date: this section targets the coming v0.21.2 patch release closing Phase 23 P1
+(RFC 020, batched maintenance deletes). The exact release date is set at owner authorization, not
+before.
+
+**A performance release, not a behaviour release.** `cleanup_missing_files` is ~5.9× faster and
+`cleanup_expired` roughly 8–12× faster at 1M entries, measured on a paired, same-session, real-storage
+comparison (P1d) — both now scan in pages and delete each page in one transaction instead of
+committing once per deleted row.
+
+### Changed
+
+- `cleanup_missing_files` and `cleanup_expired` (`crates/localcache/src/cache/engine/maintenance.rs`,
+  `crates/localcache/src/db/repository.rs`) page the scan and batch each page's deletes inside one
+  transaction. No public API, schema, or wire-format change; existing databases open unchanged.
+- **Behaviour refinement on the error path:** partial progress on failure is now bounded to whole
+  completed pages, where it was previously an arbitrary number of individually-committed deletes.
+  Neither is all-or-nothing; the new behaviour is better defined.
+- **Behaviour refinement observable only under concurrency:** the returned count is now rows
+  actually deleted, not rows attempted. If another writer removed a row between the scan and the
+  delete, the old code counted a deletion that did not happen; the new code does not.
+
 ## [0.21.1] — 2026-08-01
 
 Patch release closing Phase 23 P0. Release candidate `110db4b`, accepted by the P0d release

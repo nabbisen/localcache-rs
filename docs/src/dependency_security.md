@@ -94,6 +94,28 @@ around 1.88, because Cargo only reports crates that *declare* `rust-version` —
 `libsqlite3-sys` declares none. The constraint had been invisible to them the whole
 time.
 
+The first case's fix was not retroactive: `0.19.1`, published before v0.20.1,
+carried the same defect and was identified later by the same reporter. Neither
+already-published version was repaired by the v0.20.1 fix — which is why both are
+named below rather than treated as resolved.
+
+### Affected published versions
+
+**`0.19.1` and `0.20.0`** are broken under the constraint above: both declare
+`rust-version = "1.85"` and require `rusqlite ^0.40`, which resolves
+`libsqlite3-sys 0.38.x` and its Rust 1.95 `cfg_select!` macro — neither builds on
+the baseline it declares. `0.19.0` and earlier (`rusqlite ^0.39`) and `0.20.1`
+onward (constrained back to `^0.39`) are unaffected.
+
+**Use `0.20.1` or greater.** If you are pinned to `localcache = "0.19"`, note that
+it resolves to `0.19.1` — move to `0.20.1`+ rather than expecting a working
+`0.19.x`.
+
+Neither `0.19.1` nor `0.20.0` is yanked. A fresh `localcache = "0.20"` resolves to
+`0.20.1`, never `0.20.0`, so the broken version is reachable only by an exact pin or
+an existing lockfile; `0.19.1` is what `^0.19` selects, but its download volume is
+indistinguishable from crawler traffic. Neither case justified a yank.
+
 ### If this blocks you
 
 Tell us. A short note describing which side you are on, and what your own MSRV floor
