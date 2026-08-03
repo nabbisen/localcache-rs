@@ -194,16 +194,25 @@ Verified two ways on 2026-08-03: every published version enumerated from the spa
 **Unaffected:** `0.19.0` and earlier (`rusqlite ^0.39`), and `0.20.1` onward (constrained back to
 `^0.39`).
 
-State that both are **yanked**, and that a yank prevents new resolution without affecting existing
-lockfiles. Each caret range keeps a working version — `^0.19` resolves `0.19.0`, `^0.20` resolves
-`0.20.1`, both verified to build on 1.85.0.
+**Neither version is yanked, and the note should say so plainly** — a reader who finds a broken
+version still on crates.io should not be left wondering whether the page is stale. Owner decision,
+2026-08-03: a fresh `localcache = "0.20"` resolves to **0.20.1**, never to 0.20.0, so the broken
+version is reachable only by an exact pin or an existing lockfile — neither of which a yank helps.
+`0.19.1` *is* what `^0.19` selects, but its usage is indistinguishable from crawler traffic.
+
+**The guidance to give is: use `0.20.1` or greater.** State it as the remedy, in those words.
+
+One caveat worth one sentence, because it is the only case where a plausible manifest lands on a
+broken version: **`localcache = "0.19"` resolves to `0.19.1`**, so a consumer pinned to that minor
+must move to `0.20.1`+ rather than expecting a working `0.19.x`.
 
 ## C.2 — Correct the first recorded case
 
 The 2026-08-01 row says the defect was *"Fixed here: `rusqlite` constrained to `^0.39` in v0.20.1"*.
 True, but it implies a single broken version. Note that **`0.19.1` carried the same defect and was
 identified later, by the same reporter**, and that the fix in 0.20.1 did not retroactively repair
-the two published versions — which is why they are yanked.
+the two already-published versions — which is why they are named here rather than silently
+superseded.
 
 ## C.3 — Keep it short
 
