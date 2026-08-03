@@ -779,6 +779,67 @@ fn main() {
         preload_report.stored, preload_report.already_fresh, preload_report.skipped
     );
 
+    // P1d §4 — cleanup_expired, never measured before RFC 020 changed it
+    // identically to cleanup_missing_files. Its own database and fileset, a
+    // short ttl, and a real sleep past it (reported as setup, not measured
+    // time) -- the primary engine deliberately has no ttl, since giving it
+    // one would change `get_if_fresh` and every other measurement taken
+    // against it above.
+    let expired_dir = tempdir.path().join("expired-source");
+    create_shard_dirs(&expired_dir, scale);
+    let (expired_paths, _) = timed("  [cleanup_expired] create source files", || {
+        (0..scale)
+            .map(|index| {
+                let path = shard_path_under(&expired_dir, index);
+                std::fs::write(&path, format!("expired document {index}\n"))
+                    .expect("write expired source file");
+                path
+            })
+            .collect::<Vec<_>>()
+    });
+    let expired_db = tempdir.path().join("expired.sqlite3");
+    let expired_ttl = Duration::from_secs(2);
+    let expired_engine = CacheEngine::<ScalePayload>::open(CacheOptions {
+        database_path: expired_db,
+        change_detection_mode: ChangeDetectionMode::MetadataOnly,
+        codec: Codec::Json,
+        ttl: Some(expired_ttl),
+        ..CacheOptions::default()
+    })
+    .expect("open cleanup_expired cache");
+    timed("  [cleanup_expired] populate (chunked batch_set)", || {
+        for chunk in expired_paths.chunks(POPULATE_CHUNK) {
+            let items: Vec<_> = chunk
+                .iter()
+                .map(|path| (path, ScalePayload::new(recover_index(path))))
+                .collect();
+            let outcome = expired_engine
+                .batch_set(&items)
+                .expect("populate cleanup_expired cache");
+            assert!(
+                outcome.failed.is_empty(),
+                "cleanup_expired population must not fail"
+            );
+        }
+    });
+    timed(
+        "  [cleanup_expired] sleep past ttl (setup, not measured)",
+        || std::thread::sleep(expired_ttl + Duration::from_secs(1)),
+    );
+    let (removed_expired, cleanup_expired_elapsed) =
+        timed("cleanup_expired (whole namespace, RFC 020 R3)", || {
+            expired_engine
+                .cleanup_expired()
+                .expect("scale cleanup_expired")
+        });
+    println!("      → {removed_expired} entries removed");
+    assert_eq!(
+        removed_expired, scale,
+        "every entry shares the same short ttl and was populated before the sleep, so all \
+         must be expired"
+    );
+    report("  ↳ per row", cleanup_expired_elapsed, scale);
+
     // §4.3 — bincode codec at scale. `field_gt` cannot run against bincode
     // payloads (no JSON extraction), so this covers get/set/cleanup/eviction
     // only, per the handoff. Reuses the preload fileset (untouched by preload,
