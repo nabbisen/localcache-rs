@@ -992,19 +992,30 @@ Decision: `.git-exclude/reviewed/architect-release-decision-v0.21.2-2026-08-03.m
 the phase's largest remaining measured cost, and P1a established it is flat between tmpfs and real
 storage, so it is CPU-bound on payload parsing rather than I/O.
 
-### Deferred — `docs/src/changelog_summary.md` is stale
+### `docs/src/changelog_summary.md` — collapsed to a pointer ✅
 
-Published in the book as "Changelog" (`docs/src/SUMMARY.md:32`), it stops at **v0.19.0** — missing
-0.19.1, 0.20.0, 0.20.1, 0.21.0, 0.21.1, and 0.21.2. Found during the P1e review.
+Published in the book as "Changelog" (`docs/src/SUMMARY.md:32`), it stopped at **v0.19.0** and
+stayed there through six releases — 0.19.1, 0.20.0, 0.20.1, 0.21.0, 0.21.1, 0.21.2. Found during
+the P1e review.
 
 **A reviewer miss, not an implementation one:** it was equally stale at v0.20.1, v0.21.0, and
-v0.21.1, across three release decisions that did not open it. Recorded here rather than fixed in a
-release already verified.
+v0.21.1, across three release decisions that did not open it.
 
-Two options, owner's call: backfill the six entries, or **collapse the page to a pointer** at
-`CHANGELOG.md`, which it already cites as authoritative. The recommendation is the second — a
-hand-maintained parallel summary has now drifted across six releases, which is evidence the
-duplication is not sustainable rather than that it was neglected once.
+**Resolved 2026-08-03 by replacing the hand-written summary with a pointer** to `CHANGELOG.md`,
+plus a short index of where to find migration, roadmap, performance, and MSRV material. The file
+and its navigation entry are retained, so no inbound link breaks.
+
+The reasoning is the one this project already applies to release tooling: **a record nothing
+enforces will drift.** `CHANGELOG.md` is checked by `verify_changelog_has_coming_version_section`
+at every release; the summary page was checked by nothing, which is the same shape as the
+advisory-gate User-Agent string that went stale across all of Phase 22. Backfilling the six entries
+would have restored accuracy for one release and added a seventh manually-maintained per-release
+item. Nothing was lost — every release the page described, and every release it had missed
+(including v0.20.0's schema v5 mtime-precision fix), is in `CHANGELOG.md` in more detail.
+
+Considered and rejected: adding a release gate for the summary page. That would have made a prose
+document a build-blocking artifact to preserve a lower-fidelity duplicate of a record that is
+already gated.
 
 ### Why P0e is a `macro_rules!` helper, not `#[async_test]`
 
