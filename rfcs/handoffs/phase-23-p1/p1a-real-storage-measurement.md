@@ -28,9 +28,16 @@ free — so space is not a constraint even at 1M. Create the scratch directory u
 point `TMPDIR` at it:
 
 ```sh
-LOCALCACHE_SCALE=1000000 TMPDIR=/home/<you>/localcache-scale-tmp \
+LOCALCACHE_SCALE=1000000 TMPDIR=.git-exclude/tmp \
   cargo bench -p localcache --features json --bench scale_profile
 ```
+
+> **Correction, 2026-08-03.** This example originally pointed `TMPDIR` at
+> `/home/<you>/localcache-scale-tmp`, outside the project. **Scratch belongs in
+> `.git-exclude/tmp/`.** The one place a repo-external path was genuinely required was P1a's
+> revision-2 tmpfs-vs-btrfs pair — see the note in `p1a-revision-2-handoff.md` § R7 — and that
+> reason does not generalize. Absolute figures taken under the longer repo path run ~1.2× higher
+> on scan-bound operations; that cancels in any comparison where both sides share the location.
 
 `scale_profile.rs`'s module docs **already instruct exactly this** — limitation #1 says "Set
 `TMPDIR` to a directory on the target filesystem before drawing conclusions about I/O-bound

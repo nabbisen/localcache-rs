@@ -50,6 +50,15 @@ Method:
 1. Pick two directories whose **absolute path lengths match as closely as you can**, one on tmpfs
    and one on btrfs — e.g. `/tmp/lc-scale` and `/home/nabbisen/lc-scale`. Do **not** use a path
    under the repository; that is what caused this.
+
+   > **Scope note added 2026-08-03 — this instruction does not generalize.** It is correct *here*
+   > and only here: matching a tmpfs path means matching something very short (`/tmp` is four
+   > characters; the matched pair came to 40), and the repo root alone is 77, so a length-matched
+   > pair was arithmetically impossible inside the project. **Whenever both sides of a comparison
+   > sit on the same filesystem — as in P1d — put both under `.git-exclude/tmp/`**, where they
+   > match by construction. The requirement was always *matched* path length, never a particular
+   > location. Generalizing this line into a standing rule is what later sent scratch into the
+   > owner's home directory; see `020-batched-maintenance-deletes/p1d-remeasure-handoff.md` § 2.3.
 2. Run the current harness at all three scales on both.
 3. Report both halves of every ratio from these runs. N4's numbers become historical context, not
    the denominator.
