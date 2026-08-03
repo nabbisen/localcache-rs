@@ -775,9 +775,9 @@ shortfall.
 | **P1d — Re-measure ✅** | same harness, matched path length, **one session** (P1a limitation 5); before/after table | — | P1c |
 | **P1e — Release v0.21.2 ✅** | patch — RFC 020 is non-breaking | owner | P1c–P1d |
 | **P2a — Query execution design ✅** | **RFC 021** — the field query’s cost is 80% fetch-and-decode, not JSON evaluation | RFC required | P1a |
-| **P2b — Implementation** | per that RFC | that RFC | P2a |
-| **P2c — Re-measure** | same harness, same scales | — | P2b |
-| **P2d — Release** | only if P2b changed public API | owner | P2a–P2c |
+| **P2b — Implementation ✅** | per RFC 021 | RFC 021 | P2a |
+| **P2c — Re-measure** | same harness, matched path length, **one session**; tier 1 and tier 2 reported **separately** | — | P2b |
+| **P2d — Release v0.21.3** | patch — RFC 021 is non-breaking | owner | P2a–P2c |
 
 **P1/P2 were reordered after P1a, on the measurement.** P1b was scoped when `field_gt` was the
 dominant cost; it no longer is. Owner decision, 2026-08-03: follow the measurement. The
@@ -1046,6 +1046,42 @@ component-wise where SQL uses `BINARY` bytes (`/a/b` and `/a-b` order **opposite
 `json_sort_key` is `as_f64()`, so a string field is `None` and sorts first where SQLite sorts text
 after numbers. The amended design keeps every comparison in Rust and uses SQL only to avoid
 fetching payloads — same saving, no parity risk.
+
+### P2b — RFC 021's core delivered; its speculative half did not
+
+Implemented at `cdc2a01`. No public API, schema, or wire-format change. Measured on the same probe
+the RFC was derived from, same host, same day:
+
+| Query @1M, heavy payload | before | after | |
+|---|---|---|---|
+| `limit(25)`, no field predicate (**tier 1**) | 3.386 s | **0.230 s** | **14.7×** |
+| `field_gt` + `order_by_field` + `limit 25` (**tier 2**) | 4.243 s | **2.128 s** | **2.0×** |
+
+**Late materialisation — the RFC's actual insight — works.** Not fetching payloads until the
+winners are known gives 14.7× wherever payload fetching dominates.
+
+**The pushdown half did not, and the error was the reviewer's.** RFC 021 projected the predicate
+and sort layers as "pushed into SQL", implying ~0. Measured, the predicate layer went
+**0.646 s → 1.865 s — nearly 3× worse**: SQLite's `json1` is not streaming, so `json_extract`
+parses the entire stored document on every call, costing O(payload bytes) per candidate — the same
+order as the decode it was meant to replace. The RFC *named* this unknown ("the residual depends on
+`json_extract` over 1M payloads, which nothing has measured") and then projected a total assuming
+it resolved favourably. **Naming an unknown is not pricing it**, and the RFC's own 4× falsification
+bar was not met for the headline query.
+
+**Tier 2 was A/B'd against tier 3 before being kept**, by forcing the fallback with one bincode row
+in an otherwise identical namespace: pushdown wins by **12% on heavy payloads and 27% on light**.
+It earns its place — but the margin shrinks as payloads grow, exactly as the non-streaming
+mechanism predicts, and will invert at some payload size. Recorded before anyone builds further on
+that path.
+
+**Three ordering hazards were prevented rather than discovered**, because the RFC was amended
+before implementation (see P2a). All three are now locked by tests, including the sharpest — a
+namespace containing `/a/b` and `/a-b`, where component-wise and byte-wise ordering are opposite.
+
+**Recorded, not blocking:** the non-`json` (`--no-default-features`) `QueryBuilder::run()` path has
+no integration coverage. Pre-existing, found and disclosed during P2b, verified out-of-band. Worth
+closing when that area is next touched.
 
 ### Why P0e is a `macro_rules!` helper, not `#[async_test]`
 
