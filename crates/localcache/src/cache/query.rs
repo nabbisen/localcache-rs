@@ -30,8 +30,34 @@ use std::path::PathBuf;
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::cache::entry::CacheEntry;
+use crate::db::repository::{self, CandidateRow};
 use crate::detection::metadata::FileMetadata;
 use crate::error::LocalFileCacheError;
+
+#[cfg(all(test, feature = "json"))]
+#[path = "query/tests.rs"]
+mod tests;
+
+/// Local wrapper around [`crate::cache::engine::decode_with`], the one
+/// choke point every RFC 021 tier routes payload decoding through. Adds a
+/// test-only call counter so `cache/query/tests.rs` can assert "decode
+/// count is bounded by `limit`, not namespace size" observably rather than
+/// by inferring it from timing — reset with `DECODE_CALLS.with(|c|
+/// c.set(0))` before a query under test.
+fn decode_with<U: DeserializeOwned>(
+    core: &crate::cache::engine::EngineCore<'_>,
+    bytes: &[u8],
+    encoding: &str,
+) -> Result<U, LocalFileCacheError> {
+    #[cfg(test)]
+    DECODE_CALLS.with(|c| c.set(c.get() + 1));
+    crate::cache::engine::decode_with(core, bytes, encoding)
+}
+
+#[cfg(test)]
+thread_local! {
+    pub(crate) static DECODE_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 // ---------------------------------------------------------------------------
 // SortOrder (always available)
@@ -292,16 +318,17 @@ where
     /// # Ok::<(), localcache::LocalFileCacheError>(())
     /// ```
     pub fn dry_run(self) -> Result<String, LocalFileCacheError> {
-        use crate::db::repository;
         let prepared = self.prepare_path_filters()?;
-        repository::explain_query(
+        let sql_plan = repository::explain_query(
             self.core.conn,
             self.core.namespace,
             self.path_like.as_deref(),
             self.index_hint.as_deref(),
             prepared.path_in_dir(),
             prepared.path_glob(),
-        )
+        )?;
+        let execution = describe_query_plan(&self)?;
+        Ok(format!("{sql_plan}\n{execution}"))
     }
 
     // ------------------------------------------------------------------
@@ -540,17 +567,135 @@ impl PreparedPathFilters {
     }
 }
 
+#[cfg(feature = "json")]
 pub(crate) fn execute_query<T>(
     q: QueryBuilder<'_, T>,
 ) -> Result<Vec<CacheEntry<T>>, LocalFileCacheError>
 where
     T: Serialize + DeserializeOwned,
 {
-    use crate::db::repository;
-
     let prepared = q.prepare_path_filters()?;
+    let plan = classify_query(&q);
+    let plan = match plan {
+        QueryPlan::Tier2 { .. }
+            if !repository::namespace_all_json(q.core.conn, q.core.namespace)? =>
+        {
+            QueryPlan::Tier3
+        }
+        other => other,
+    };
 
-    let paths = repository::keys(
+    match plan {
+        QueryPlan::Tier3 => execute_tier3(q, &prepared),
+        QueryPlan::Tier1 => {
+            let candidates = repository::query_candidates(
+                q.core.conn,
+                q.core.namespace,
+                q.path_like.as_deref(),
+                q.index_hint.as_deref(),
+                prepared.path_in_dir(),
+                prepared.path_glob(),
+            )?;
+            let mut order: Vec<usize> = (0..candidates.len()).collect();
+            if !q.order_by.is_empty() {
+                order.sort_by(|&ia, &ib| {
+                    for key in &q.order_by {
+                        let c = cmp_candidate_basic(&candidates[ia], &candidates[ib], key);
+                        if c != std::cmp::Ordering::Equal {
+                            return c;
+                        }
+                    }
+                    std::cmp::Ordering::Equal
+                });
+            }
+            materialize(&q, &candidates, &order)
+        }
+        QueryPlan::Tier2 {
+            select_fields,
+            field_index,
+            where_fields,
+        } => {
+            let rows = repository::query_candidates_json_pushdown(
+                q.core.conn,
+                q.core.namespace,
+                q.path_like.as_deref(),
+                q.index_hint.as_deref(),
+                prepared.path_in_dir(),
+                prepared.path_glob(),
+                &select_fields,
+                &where_fields,
+            )?;
+            let (candidates, field_values): (Vec<CandidateRow>, Vec<Vec<Option<f64>>>) =
+                rows.into_iter().unzip();
+            let mut order: Vec<usize> = (0..candidates.len()).collect();
+            if !q.order_by.is_empty() {
+                order.sort_by(|&ia, &ib| {
+                    for key in &q.order_by {
+                        let c = cmp_candidate_json(
+                            &candidates[ia],
+                            &field_values[ia],
+                            &candidates[ib],
+                            &field_values[ib],
+                            &field_index,
+                            key,
+                        );
+                        if c != std::cmp::Ordering::Equal {
+                            return c;
+                        }
+                    }
+                    std::cmp::Ordering::Equal
+                });
+            }
+            materialize(&q, &candidates, &order)
+        }
+    }
+}
+
+#[cfg(not(feature = "json"))]
+pub(crate) fn execute_query<T>(
+    q: QueryBuilder<'_, T>,
+) -> Result<Vec<CacheEntry<T>>, LocalFileCacheError>
+where
+    T: Serialize + DeserializeOwned,
+{
+    let prepared = q.prepare_path_filters()?;
+    let candidates = repository::query_candidates(
+        q.core.conn,
+        q.core.namespace,
+        q.path_like.as_deref(),
+        q.index_hint.as_deref(),
+        prepared.path_in_dir(),
+        prepared.path_glob(),
+    )?;
+    let mut order: Vec<usize> = (0..candidates.len()).collect();
+    if !q.order_by.is_empty() {
+        order.sort_by(|&ia, &ib| {
+            for key in &q.order_by {
+                let c = cmp_candidate_basic(&candidates[ia], &candidates[ib], key);
+                if c != std::cmp::Ordering::Equal {
+                    return c;
+                }
+            }
+            std::cmp::Ordering::Equal
+        });
+    }
+    materialize(&q, &candidates, &order)
+}
+
+/// Tier 3: every candidate's payload is decoded, exactly as before RFC 021 —
+/// used when a field predicate/sort cannot be pushed into SQL (a non-numeric
+/// predicate, an unsafe field path, or a namespace whose payloads are not
+/// uniformly `encoding = 'json'`). Still benefits from R1: one streaming
+/// query replaces the old `1 + 2N` per-path fetch loop.
+#[cfg(feature = "json")]
+fn execute_tier3<T>(
+    q: QueryBuilder<'_, T>,
+    prepared: &PreparedPathFilters,
+) -> Result<Vec<CacheEntry<T>>, LocalFileCacheError>
+where
+    T: Serialize + DeserializeOwned,
+{
+    let rows = repository::query_candidates_with_payloads(
         q.core.conn,
         q.core.namespace,
         q.path_like.as_deref(),
@@ -559,74 +704,43 @@ where
         prepared.path_glob(),
     )?;
 
-    // Tuple: (entry, json_value_or_null, last_accessed_at)
-    #[cfg(feature = "json")]
     let mut matched: Vec<(CacheEntry<T>, serde_json::Value, i64)> = Vec::new();
-    #[cfg(not(feature = "json"))]
-    let mut matched: Vec<(CacheEntry<T>, i64)> = Vec::new();
-
-    for path in &paths {
-        let path_str = match path.to_str() {
-            Some(s) => s,
-            None => continue,
+    for row in rows {
+        let (Some(content), Some(encoding)) = (row.content, row.encoding) else {
+            continue;
         };
-
-        let row = match repository::find_file(q.core.conn, q.core.namespace, path_str)? {
-            Some(r) => r,
-            None => continue,
-        };
-
-        let payload_row = match repository::load_payload(q.core.conn, row.id)? {
-            Some(p) => p,
-            None => continue,
-        };
-
-        let payload: T = match crate::cache::engine::decode_with(
-            &q.core,
-            &payload_row.content,
-            &payload_row.encoding,
-        ) {
+        let payload: T = match decode_with(&q.core, &content, &encoding) {
             Ok(p) => p,
             Err(_) => continue,
         };
-
         let laa = row.last_accessed_at;
-
         let entry = CacheEntry {
             path: PathBuf::from(&row.path),
             metadata: FileMetadata {
-                mtime: row.metadata.mtime,
-                file_size: row.metadata.file_size,
-                hash: row.metadata.hash.clone(),
+                mtime: row.mtime,
+                file_size: row.file_size,
+                hash: row.hash,
             },
             payload,
         };
 
-        #[cfg(feature = "json")]
-        {
-            let needs_json = !q.predicates.is_empty()
-                || q.order_by
-                    .iter()
-                    .any(|o| matches!(o, OrderBy::Field { .. }));
-            let json_val = if needs_json {
-                match serde_json::to_value(&entry.payload) {
-                    Ok(v) => v,
-                    Err(_) => continue,
-                }
-            } else {
-                serde_json::Value::Null
-            };
-            if q.predicates.iter().all(|p| p.matches(&json_val)) {
-                matched.push((entry, json_val, laa));
+        let needs_json = !q.predicates.is_empty()
+            || q.order_by
+                .iter()
+                .any(|o| matches!(o, OrderBy::Field { .. }));
+        let json_val = if needs_json {
+            match serde_json::to_value(&entry.payload) {
+                Ok(v) => v,
+                Err(_) => continue,
             }
+        } else {
+            serde_json::Value::Null
+        };
+        if q.predicates.iter().all(|p| p.matches(&json_val)) {
+            matched.push((entry, json_val, laa));
         }
-
-        #[cfg(not(feature = "json"))]
-        matched.push((entry, laa));
     }
 
-    // Multi-column ordering.
-    #[cfg(feature = "json")]
     if !q.order_by.is_empty() {
         matched.sort_by(|(ea, va, la_a), (eb, vb, la_b)| {
             for key in &q.order_by {
@@ -639,47 +753,263 @@ where
         });
     }
 
-    #[cfg(not(feature = "json"))]
-    if !q.order_by.is_empty() {
-        matched.sort_by(|(ea, la_a), (eb, la_b)| {
-            for key in &q.order_by {
-                let c = cmp_key_simple(ea, *la_a, eb, *la_b, key);
-                if c != std::cmp::Ordering::Equal {
-                    return c;
-                }
-            }
-            std::cmp::Ordering::Equal
-        });
-    }
-
-    // Offset + limit.
     let start = q.offset.min(matched.len());
     let end = q
         .limit
         .map(|l| (start + l).min(matched.len()))
         .unwrap_or(matched.len());
-
-    #[cfg(feature = "json")]
-    return Ok(matched
+    Ok(matched
         .into_iter()
         .skip(start)
         .take(end - start)
         .map(|(e, _, _)| e)
-        .collect());
+        .collect())
+}
 
-    #[cfg(not(feature = "json"))]
-    return Ok(matched
-        .into_iter()
-        .skip(start)
-        .take(end - start)
-        .map(|(e, _)| e)
-        .collect());
+/// RFC 021 pass 2: materialize `candidates[order[..]]`, decoding payloads
+/// only for the rows that survive `offset`/`limit`. A row whose payload is
+/// missing or fails to decode is skipped and backfilled from the next
+/// candidate in `order`, matching today's behaviour of returning up to
+/// `limit` successfully-decoded rows rather than a short page — the skip
+/// just moves after the (cheap, payload-free) sort instead of before it.
+/// `candidates`/`order` were already fully materialized in memory by pass 1
+/// to make that sort possible, so backfilling costs no extra SQL beyond the
+/// occasional additional `payloads_for_ids` chunk.
+fn materialize<T>(
+    q: &QueryBuilder<'_, T>,
+    candidates: &[CandidateRow],
+    order: &[usize],
+) -> Result<Vec<CacheEntry<T>>, LocalFileCacheError>
+where
+    T: Serialize + DeserializeOwned,
+{
+    use std::collections::HashMap;
+
+    let start = q.offset.min(order.len());
+    let target = q.limit.unwrap_or(order.len().saturating_sub(start));
+    let mut out = Vec::new();
+    let mut idx = start;
+    while out.len() < target && idx < order.len() {
+        let need = target - out.len();
+        let window_end = (idx + need).min(order.len());
+        let window = &order[idx..window_end];
+        let ids: Vec<i64> = window.iter().map(|&i| candidates[i].id).collect();
+        let payload_rows = repository::payloads_for_ids(q.core.conn, &ids)?;
+        let mut payload_map: HashMap<i64, (Vec<u8>, String)> = payload_rows
+            .into_iter()
+            .map(|(id, content, encoding)| (id, (content, encoding)))
+            .collect();
+        for &i in window {
+            let c = &candidates[i];
+            let Some((content, encoding)) = payload_map.remove(&c.id) else {
+                continue;
+            };
+            let payload: T = match decode_with(&q.core, &content, &encoding) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            out.push(CacheEntry {
+                path: PathBuf::from(&c.path),
+                metadata: FileMetadata {
+                    mtime: c.mtime,
+                    file_size: c.file_size,
+                    hash: c.hash.clone(),
+                },
+                payload,
+            });
+        }
+        idx = window_end;
+    }
+    Ok(out)
+}
+
+// ---------------------------------------------------------------------------
+// RFC 021 — query plan classification (json feature)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "json")]
+enum QueryPlan {
+    /// No field predicate, no field-based sort: payload content is never
+    /// needed until the winning ids are known.
+    Tier1,
+    /// Field predicate(s) are `field_gt`/`field_lt` only (or absent), every
+    /// referenced field path is safe to translate to a SQLite JSON path,
+    /// and (checked separately, after classification) the namespace's
+    /// payloads are uniformly `encoding = 'json'`.
+    Tier2 {
+        /// Distinct field paths that must come back as a column (the field
+        /// keys used by `order_by`/`then_by_field`), in stable order.
+        select_fields: Vec<String>,
+        /// `select_fields[path]` — position of each path's column.
+        field_index: std::collections::HashMap<String, usize>,
+        /// Pushed-down `(field_path, ">"|"<", threshold)` predicates.
+        where_fields: Vec<(String, &'static str, f64)>,
+    },
+    /// A field predicate/sort exists that cannot be pushed down. Every
+    /// candidate's payload is decoded, as before this RFC.
+    Tier3,
+}
+
+/// Reject a field path SQLite's JSON path syntax would parse differently
+/// than [`get_field`]'s plain dot-split lookup: quotes, brackets, and `$`
+/// are meaningful to SQLite's path grammar, not to `get_field`. A rejected
+/// path routes the query to tier 3 rather than to an incorrect tier 2
+/// extraction — never a hard error, since path shape has never before been
+/// a thing a caller had to think about.
+#[cfg(feature = "json")]
+fn is_safe_json_field_path(path: &str) -> bool {
+    !path.is_empty()
+        && path
+            .split('.')
+            .all(|segment| !segment.is_empty() && !segment.contains(['\'', '"', '[', ']', '$']))
+}
+
+#[cfg(feature = "json")]
+fn classify_query<T>(q: &QueryBuilder<'_, T>) -> QueryPlan {
+    let has_field_order = q
+        .order_by
+        .iter()
+        .any(|o| matches!(o, OrderBy::Field { .. }));
+
+    if q.predicates.is_empty() && !has_field_order {
+        return QueryPlan::Tier1;
+    }
+
+    let all_numeric_predicates = q
+        .predicates
+        .iter()
+        .all(|p| matches!(p, Predicate::FieldGt { .. } | Predicate::FieldLt { .. }));
+    if !all_numeric_predicates {
+        return QueryPlan::Tier3;
+    }
+
+    let mut select_fields: Vec<String> = Vec::new();
+    let mut field_index: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    for o in &q.order_by {
+        if let OrderBy::Field { path, .. } = o {
+            if !is_safe_json_field_path(path) {
+                return QueryPlan::Tier3;
+            }
+            field_index.entry(path.clone()).or_insert_with(|| {
+                select_fields.push(path.clone());
+                select_fields.len() - 1
+            });
+        }
+    }
+
+    let mut where_fields: Vec<(String, &'static str, f64)> = Vec::new();
+    for p in &q.predicates {
+        let (path, cmp, threshold) = match p {
+            Predicate::FieldGt { path, threshold } => (path, ">", *threshold),
+            Predicate::FieldLt { path, threshold } => (path, "<", *threshold),
+            _ => unreachable!("all_numeric_predicates checked above"),
+        };
+        if !is_safe_json_field_path(path) {
+            return QueryPlan::Tier3;
+        }
+        where_fields.push((path.clone(), cmp, threshold));
+    }
+
+    QueryPlan::Tier2 {
+        select_fields,
+        field_index,
+        where_fields,
+    }
+}
+
+/// R4: what [`QueryBuilder::dry_run`] reports about execution, in addition
+/// to the SQLite plan — which tier `run()` would take and why, so "this
+/// query decodes every payload in the namespace" is visible before someone
+/// measures it.
+#[cfg(feature = "json")]
+fn describe_query_plan<T>(q: &QueryBuilder<'_, T>) -> Result<String, LocalFileCacheError> {
+    let plan = classify_query(q);
+    let plan = match plan {
+        QueryPlan::Tier2 { .. }
+            if !repository::namespace_all_json(q.core.conn, q.core.namespace)? =>
+        {
+            QueryPlan::Tier3
+        }
+        other => other,
+    };
+    Ok(match plan {
+        QueryPlan::Tier1 => "execution: tier 1 — no field predicate or field sort; payload \
+             content is decoded only for rows surviving offset/limit"
+            .to_owned(),
+        QueryPlan::Tier2 { select_fields, .. } => format!(
+            "execution: tier 2 — JSON field(s) {select_fields:?} evaluated in SQL via \
+             json_extract; payload content is still decoded only for rows surviving \
+             offset/limit"
+        ),
+        QueryPlan::Tier3 => "execution: tier 3 — every candidate payload is decoded before \
+             ordering/limiting (a non-`field_gt`/`field_lt` predicate, a field path unsafe to \
+             push into SQL, or a payload encoding other than 'json' is present in this \
+             namespace)"
+            .to_owned(),
+    })
+}
+
+#[cfg(not(feature = "json"))]
+fn describe_query_plan<T>(_q: &QueryBuilder<'_, T>) -> Result<String, LocalFileCacheError> {
+    Ok(
+        "execution: tier 1 — no field predicate or field sort; payload content is decoded \
+        only for rows surviving offset/limit"
+            .to_owned(),
+    )
 }
 
 // ---------------------------------------------------------------------------
 // Per-key comparison helpers
 // ---------------------------------------------------------------------------
 
+/// Compares two candidate rows (no payload) on every `OrderBy` key except
+/// `Field`, which tier 1 never carries by construction (`classify_query`
+/// routes any field-sorted query to tier 2 or tier 3).
+fn cmp_candidate_basic(a: &CandidateRow, b: &CandidateRow, key: &OrderBy) -> std::cmp::Ordering {
+    match key {
+        #[cfg(feature = "json")]
+        OrderBy::Field { .. } => unreachable!("tier 1 never carries a field order_by key"),
+        OrderBy::UpdatedAt(ord) => ord_dir(a.mtime.cmp(&b.mtime), *ord),
+        OrderBy::LastAccessed(ord) => ord_dir(a.last_accessed_at.cmp(&b.last_accessed_at), *ord),
+        OrderBy::Path(ord) => ord_dir(
+            std::path::Path::new(&a.path).cmp(std::path::Path::new(&b.path)),
+            *ord,
+        ),
+    }
+}
+
+/// Tier 2's comparator: like [`cmp_candidate_basic`], plus `Field`, read
+/// from the `json_extract`-derived column rather than a decoded payload.
+#[cfg(feature = "json")]
+#[allow(clippy::too_many_arguments)]
+fn cmp_candidate_json(
+    a: &CandidateRow,
+    a_fields: &[Option<f64>],
+    b: &CandidateRow,
+    b_fields: &[Option<f64>],
+    field_index: &std::collections::HashMap<String, usize>,
+    key: &OrderBy,
+) -> std::cmp::Ordering {
+    match key {
+        OrderBy::Field { path, order } => {
+            let idx = field_index[path];
+            let c = a_fields[idx]
+                .partial_cmp(&b_fields[idx])
+                .unwrap_or(std::cmp::Ordering::Equal);
+            ord_dir(c, *order)
+        }
+        OrderBy::UpdatedAt(ord) => ord_dir(a.mtime.cmp(&b.mtime), *ord),
+        OrderBy::LastAccessed(ord) => ord_dir(a.last_accessed_at.cmp(&b.last_accessed_at), *ord),
+        OrderBy::Path(ord) => ord_dir(
+            std::path::Path::new(&a.path).cmp(std::path::Path::new(&b.path)),
+            *ord,
+        ),
+    }
+}
+
+/// Tier 3's comparator: unchanged from before RFC 021, operating on the
+/// fully decoded entry.
 #[cfg(feature = "json")]
 fn cmp_key_json<T>(
     ea: &CacheEntry<T>,
@@ -701,23 +1031,6 @@ fn cmp_key_json<T>(
                 c
             }
         }
-        OrderBy::UpdatedAt(ord) => ord_dir(ea.metadata.mtime.cmp(&eb.metadata.mtime), *ord),
-        OrderBy::LastAccessed(ord) => ord_dir(la_a.cmp(&la_b), *ord),
-        OrderBy::Path(ord) => ord_dir(ea.path.cmp(&eb.path), *ord),
-    }
-}
-
-#[allow(dead_code)]
-fn cmp_key_simple<T>(
-    ea: &CacheEntry<T>,
-    la_a: i64,
-    eb: &CacheEntry<T>,
-    la_b: i64,
-    key: &OrderBy,
-) -> std::cmp::Ordering {
-    match key {
-        #[cfg(feature = "json")]
-        OrderBy::Field { .. } => std::cmp::Ordering::Equal,
         OrderBy::UpdatedAt(ord) => ord_dir(ea.metadata.mtime.cmp(&eb.metadata.mtime), *ord),
         OrderBy::LastAccessed(ord) => ord_dir(la_a.cmp(&la_b), *ord),
         OrderBy::Path(ord) => ord_dir(ea.path.cmp(&eb.path), *ord),
