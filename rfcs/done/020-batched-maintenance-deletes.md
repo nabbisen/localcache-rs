@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted (owner, 2026-08-03) |
+| Status | Implemented (0.21.2) |
 | Feature | *(no Cargo feature; core engine)* |
 | Touches | `crates/localcache/src/cache/engine/maintenance.rs`, `crates/localcache/src/db/repository.rs` |
 | Finding | Phase 23 P1a real-storage profile, plus a cost decomposition taken for this RFC |

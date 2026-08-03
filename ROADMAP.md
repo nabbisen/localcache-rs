@@ -754,7 +754,7 @@ behind it. Phase 23 inverts that.
 | Release | Contents | Breaking? |
 |---|---|---|
 | **v0.21.1 ✅** | P0 — query documentation, the `ConnectionPool` batch fix, tooling hygiene | no |
-| **v0.21.2** | P1 — maintenance delete batching (RFC 020) | no |
+| **v0.21.2 ✅** | P1 — maintenance delete batching (RFC 020) | no |
 | **v0.22.0** | P2 — JSON field query performance, only if it needs new public API | additive at most |
 
 If P2 needs no new API there may be no v0.22.0, which is a good outcome rather than a
@@ -773,7 +773,7 @@ shortfall.
 | **P1b — Maintenance delete batching ✅** | **RFC 020** — `cleanup_missing_files`/`cleanup_expired` commit one transaction per deleted row; that is 88% of their cost | RFC required | P1a |
 | **P1c — Implementation ✅** | per RFC 020 | RFC 020 | P1b |
 | **P1d — Re-measure ✅** | same harness, matched path length, **one session** (P1a limitation 5); before/after table | — | P1c |
-| **P1e — Release v0.21.2** | patch — RFC 020 is non-breaking | owner | P1c–P1d |
+| **P1e — Release v0.21.2 ✅** | patch — RFC 020 is non-breaking | owner | P1c–P1d |
 | **P2a — JSON query design** | **New RFC** — the field-query ceiling, now the *second* cost | RFC required | P1a |
 | **P2b — Implementation** | per that RFC | that RFC | P2a |
 | **P2c — Re-measure** | same harness, same scales | — | P2b |
@@ -965,6 +965,46 @@ the scan is **11.7%** and the per-row delete commits are **88.3%** (50.7 µs per
 against a 579 ns raw `stat` floor). A control measurement matters here: `prepare_cached` alone,
 the intuitive fix, buys **nothing**; only batching the commits does, at 12.2×. The obvious remedy
 would have optimised the wrong ninth of the operation.
+
+### P1e — v0.21.2 released
+
+Released 2026-08-03. Release commit **`e5bb2de76a465ff185da4dab1c4b145ecfd26b84`**, tag `0.21.2`
+(GPG-signed, verified), CI run **30784461667** — 26/26 green on that exact head SHA, confirmed
+**before** tagging. Both crates published; `localcache` and `localcache-cli` at 0.21.2.
+
+Archive `localcache-v0.21.2.tar.gz`, uncompressed SHA-256 (primary)
+`700d548b9a8e3e7558934eec874ab9a894bb187384a069d8c43d91e7d2ff639c`.
+
+**Verified after publication:** a fresh consumer declaring `rust-version = "1.85"` against the
+published `localcache = "0.21.2"` resolves `libsqlite3-sys 0.37.0` and builds on 1.85.0. That check
+matters more than usual this week — the same guarantee was restated to a downstream project after
+we published an incomplete affected-version set.
+
+Shipped alongside RFC 020: `docs/src/performance.md` rebuilt from real-storage, post-RFC-020
+figures (the previous table was tmpfs *and* pre-RFC-020, and told readers to treat 1.40 s per
+million as a floor for the operation this release makes 5.9× faster), and
+`docs/src/dependency_security.md` gained the affected-version set for the MSRV/`rusqlite` conflict.
+
+**Accepted with no notes** — the first release of Phase 23 with nothing outstanding against it.
+Decision: `.git-exclude/reviewed/architect-release-decision-v0.21.2-2026-08-03.md`.
+
+**Phase 23 now moves to P2a** — the JSON field query design RFC. At ~4.0 s per million rows it is
+the phase's largest remaining measured cost, and P1a established it is flat between tmpfs and real
+storage, so it is CPU-bound on payload parsing rather than I/O.
+
+### Deferred — `docs/src/changelog_summary.md` is stale
+
+Published in the book as "Changelog" (`docs/src/SUMMARY.md:32`), it stops at **v0.19.0** — missing
+0.19.1, 0.20.0, 0.20.1, 0.21.0, 0.21.1, and 0.21.2. Found during the P1e review.
+
+**A reviewer miss, not an implementation one:** it was equally stale at v0.20.1, v0.21.0, and
+v0.21.1, across three release decisions that did not open it. Recorded here rather than fixed in a
+release already verified.
+
+Two options, owner's call: backfill the six entries, or **collapse the page to a pointer** at
+`CHANGELOG.md`, which it already cites as authoritative. The recommendation is the second — a
+hand-maintained parallel summary has now drifted across six releases, which is evidence the
+duplication is not sustainable rather than that it was neglected once.
 
 ### Why P0e is a `macro_rules!` helper, not `#[async_test]`
 
