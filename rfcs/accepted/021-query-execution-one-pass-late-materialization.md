@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed |
+| Status | Accepted (owner, 2026-08-03) |
 | Feature | *(no Cargo feature; core query engine)* |
 | Touches | `crates/localcache/src/cache/query.rs`, `crates/localcache/src/db/repository.rs` |
 | Finding | Phase 23 P2a cost decomposition, 2026-08-03 |
@@ -112,28 +112,62 @@ This is the 55% item and it is encoding-independent.
 
 ### R2 — Apply `LIMIT` before materialising payloads
 
-The engine currently decodes every candidate to return `limit` rows. Split "select the rows" from
-"materialise the results" into three tiers by what the query actually needs:
+> **Amended 2026-08-03, before implementation.** The first draft of this section pushed *ordering*
+> into SQL. That is unsafe: three comparator divergences were found while writing the P2b handoff
+> (see "Ordering hazards" below). The corrected design keeps **every comparison in Rust** and uses
+> SQL only to avoid *fetching and decoding payloads*. It achieves the same saving without any
+> comparator-parity risk.
 
-**Tier 1 — no field predicate and no field sort.** Nothing about the payload affects which rows
-win. Ordering by `updated_at`, `last_accessed_at`, or path, plus `LIMIT`/`OFFSET`, all belong in
-SQL. **Decode only the rows that survive.** `query().limit(25)` becomes 25 decodes instead of a
-million, for every encoding.
+The engine currently decodes every candidate to return `limit` rows. The fix is not to move sorting
+into SQL — it is to **stop fetching payloads until the winners are known**. Two passes:
 
-**Tier 2 — field predicate or field sort, and every payload in the namespace is `encoding = 'json'`.**
-The bytes are literal JSON, so SQLite can evaluate the field directly:
+**Pass 1 — select and order, without payload content.** One query over `files`, with the existing
+path predicates and index hint, selecting only what ordering needs: `id`, `path`, `mtime`,
+`file_size`, `hash`, `last_accessed_at`. **No `content` blob, no decode.** Sort in Rust with the
+*existing* comparator, then apply `offset`/`limit`.
+
+**Pass 2 — materialise the survivors.** One query fetching `content` and `encoding` for the
+surviving ids, then decode those. `query().limit(25)` becomes **25 decodes instead of a million**,
+for every encoding, with ordering semantics bit-identical to today's because the comparator did not
+move.
+
+**Field predicates and field sorts need the payload for every candidate** — unless the field can be
+extracted without shipping the blob. Where every payload in the namespace is `encoding = 'json'`,
+pass 1 may add the extracted value as a column:
 
 ```sql
-... AND json_extract(p.content, '$.score') > ?
-ORDER BY json_extract(p.content, '$.score') DESC
-LIMIT 25
+SELECT f.id, f.path, …, json_extract(p.content, '$.score') AS sort_key
+FROM files f JOIN payloads p ON p.file_id = f.id
+WHERE <existing path predicates>
 ```
 
-Again only the survivors are decoded. **Check the precondition, do not assume it:** a namespace can
-hold mixed encodings if a user changes codec or enables compression mid-life. Gate this tier on a
-cheap `SELECT COUNT(*) FROM payloads … WHERE encoding <> 'json'` (or a `GROUP BY encoding`) being
-zero. If it is not zero, fall through to tier 3 — **never** push down for some rows and silently
-drop the rest.
+`sort_key` comes back as a scalar; **the comparison still happens in Rust**, mapping it to
+`Option<f64>` exactly as `json_sort_key` does today (non-numeric and missing both become `None`).
+The predicate may be pushed into the `WHERE` clause, since a predicate is a filter rather than an
+ordering and `field_gt`'s `as_f64().map(|n| n > t).unwrap_or(false)` semantics translate exactly
+when non-numeric rows are excluded.
+
+**Check the encoding precondition, do not assume it:** a namespace can hold mixed encodings if a
+user changes codec or enables compression mid-life. Gate this on a cheap
+`SELECT COUNT(*) FROM payloads … WHERE encoding <> 'json'` being zero. If it is not zero, fall
+through — **never** push down for some rows and silently drop the rest.
+
+**Any other encoding with a field predicate or field sort** keeps today's decode-everything
+behaviour; `zstd`, `raw`, and every `-aes256gcm` variant are opaque to SQL by construction. Pass 1's
+single query still applies, so R1's saving is kept.
+
+#### Ordering hazards — why the comparator does not move
+
+All three were found in the current code and all three would silently change results:
+
+| # | Hazard | Why SQL differs |
+|---|---|---|
+| 1 | `OrderBy::UpdatedAt` compares **`metadata.mtime`**, not `updated_at` (`query.rs:704`) | The obvious SQL translation `ORDER BY updated_at` sorts by a different column than the method name implies |
+| 2 | `OrderBy::Path` compares `PathBuf`, which orders **component-wise**, not byte-wise | `/a/b` vs `/a-b`: Rust gives `/a/b` first, SQL `BINARY` collation gives `/a-b` first — **opposite** |
+| 3 | `json_sort_key` is `as_f64()`, so a string or missing field becomes `None` and sorts **first** ascending | SQLite orders `NULL < REAL < TEXT`, so a string field sorts **after** numbers |
+
+Hazard 2 is the sharpest: it needs only a namespace containing both `/a/b` and `/a-b` to produce a
+different result set under `limit`, with no error anywhere.
 
 **Tier 3 — field predicate or field sort over any other encoding.** `zstd`, `raw`, and every
 `-aes256gcm` variant are opaque to SQL by construction; an expression index over an encrypted BLOB
@@ -178,9 +212,9 @@ first, re-measure, then decide whether concurrency is worth its failure modes.
 
 ## Semantics that must not change
 
-- **Result ordering must be identical**, including tie-breaking. Moving a sort from Rust to SQL
-  changes the comparator; `ORDER BY` collation and `NULL` placement must reproduce today's Rust
-  ordering exactly, or the sort stays in Rust for that case.
+- **Result ordering must be identical**, including tie-breaking. Guaranteed structurally by the
+  amended R2: the comparator never moves to SQL. See "Ordering hazards" for the three concrete
+  divergences this avoids.
 - **`offset` + `limit` interaction** is unchanged (`query.rs:655-658`).
 - **Rows whose payload fails to decode are skipped**, not surfaced as errors — today's `Err(_) =>
   continue`. Late materialisation must not turn a previously-skipped row into a failed query.
@@ -211,7 +245,7 @@ Existing query tests must pass unmodified — 57 in `tests/query.rs` alone. Add:
 
 | Risk | Assessment |
 |---|---|
-| SQL ordering differs from Rust ordering | The main correctness risk. Mitigation: test 3, and keep the sort in Rust wherever parity is not demonstrable. |
+| ~~SQL ordering differs from Rust ordering~~ | **Removed by the R2 amendment** — the comparator stays in Rust, so there is no parity to establish. Three concrete divergences that would otherwise have shipped are tabulated under "Ordering hazards". |
 | Mixed-encoding namespace loses rows under tier 2 | Prevented by the precondition check; test 2 exists for it. |
 | `LEFT JOIN` changes no-payload behaviour | Explicit above; test 6. |
 | Streaming holds a read statement open longer | Queries take no write locks and WAL readers do not block writers. |

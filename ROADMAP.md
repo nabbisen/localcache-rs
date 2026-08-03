@@ -774,7 +774,7 @@ shortfall.
 | **P1c — Implementation ✅** | per RFC 020 | RFC 020 | P1b |
 | **P1d — Re-measure ✅** | same harness, matched path length, **one session** (P1a limitation 5); before/after table | — | P1c |
 | **P1e — Release v0.21.2 ✅** | patch — RFC 020 is non-breaking | owner | P1c–P1d |
-| **P2a — JSON query design** | **New RFC** — the field-query ceiling, now the *second* cost | RFC required | P1a |
+| **P2a — Query execution design ✅** | **RFC 021** — the field query’s cost is 80% fetch-and-decode, not JSON evaluation | RFC required | P1a |
 | **P2b — Implementation** | per that RFC | that RFC | P2a |
 | **P2c — Re-measure** | same harness, same scales | — | P2b |
 | **P2d — Release** | only if P2b changed public API | owner | P2a–P2c |
@@ -1016,6 +1016,36 @@ item. Nothing was lost — every release the page described, and every release i
 Considered and rejected: adding a release gate for the summary page. That would have made a prose
 document a build-blocking artifact to preserve a lower-fidelity duplicate of a record that is
 already gated.
+
+### P2a — the JSON-index premise did not survive measurement
+
+**RFC 021 replaces the "add a JSON expression index" direction with a different fix, because the
+recorded diagnosis was wrong.** The ROADMAP had it that `dry_run()` shows SQLite decoding and
+sorting every row's JSON. `dry_run()` shows the *candidate-path* query — the cheap part. Reading
+`execute_query` and then measuring it gives, at 1M:
+
+| Component | cost | share |
+|---|---|---|
+| **Per-row SQL round-trips** (`1 + 2N` statements) | **~2.35 s** | **55%** |
+| Payload decode | ~1.04 s | 25% |
+| `to_value` + predicate | 0.65 s | 15% |
+| Sort | 0.21 s | 5% |
+
+`.limit(25)` against a million entries performs **1 + 2,000,000 statement executions and 1,000,000
+decodes to return 25 rows**, because `limit` is applied after the loop. A `json_extract` index
+addresses the bottom 20%; even made free it would give 4.24 s → ~3.4 s.
+
+**This is the second time in Phase 23 the inherited remedy targeted a minority of the cost** —
+RFC 020's was "batch the `stat` calls," which was 11.7% against 88.3% for the per-row commits. Both
+times the recorded candidate came from reading code rather than measuring it.
+
+**Three ordering hazards were found while writing the P2b handoff, and the RFC was amended before
+implementation.** The first draft pushed sorting into SQL; that is unsafe. `OrderBy::UpdatedAt`
+compares `metadata.mtime` rather than `updated_at`; `OrderBy::Path` compares `PathBuf`
+component-wise where SQL uses `BINARY` bytes (`/a/b` and `/a-b` order **oppositely**); and
+`json_sort_key` is `as_f64()`, so a string field is `None` and sorts first where SQLite sorts text
+after numbers. The amended design keeps every comparison in Rust and uses SQL only to avoid
+fetching payloads — same saving, no parity risk.
 
 ### Why P0e is a `macro_rules!` helper, not `#[async_test]`
 
