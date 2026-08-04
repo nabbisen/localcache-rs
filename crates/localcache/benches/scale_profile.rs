@@ -116,6 +116,19 @@
 //! leading-wildcard glob was faster than a leading-literal one; it was measuring
 //! result-set size and payload decoding. Row counts are asserted equal where a
 //! ratio is reported.
+//!
+//! 6. **Host memory pressure and load from unrelated processes are an unrecorded
+//!    input, same as `TMPDIR` path length was before limitation 5 named it.**
+//!    (P2d, R5.) A tier-1 `limit(25)` query — normally a covering-index scan
+//!    served from page cache, ~230 ms at 1M — measured **2.1 s, a 9x anomaly**,
+//!    on a host with 34 GB of swap in active use from several unrelated
+//!    processes at the time. The same run's tier-2 query was unaffected (it is
+//!    already I/O- and CPU-bound decoding payload content, so cache pressure's
+//!    *proportional* effect is much smaller) — that asymmetry, not a gut feeling,
+//!    is what distinguished contention from a real regression. Available RAM,
+//!    swap in use, and load average are now printed alongside the filesystem
+//!    substrate line at the top of every run for exactly this reason: a profile
+//!    that cannot say what else the host was doing is the defect.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -296,6 +309,56 @@ fn filesystem_info(path: &Path) -> String {
     format!("{fstype} ({mount})")
 }
 
+/// P2d R5: record host memory and load state at run start, next to
+/// `filesystem_info` -- same principle, a different unrecorded input. Reads
+/// `/proc/meminfo` and `/proc/loadavg` directly rather than shelling out to
+/// `free`/`uptime`, whose human-readable output is locale- and
+/// version-dependent; the `/proc` fields used here are stable across
+/// kernels. Returns "unavailable" rather than failing the run on non-Linux
+/// hosts or restricted environments where `/proc` is absent.
+fn memory_and_load_info() -> String {
+    fn kb_field(text: &str, key: &str) -> Option<u64> {
+        text.lines()
+            .find(|line| line.starts_with(key))
+            .and_then(|line| line.split_whitespace().nth(1))
+            .and_then(|value| value.parse::<u64>().ok())
+    }
+
+    let mem = std::fs::read_to_string("/proc/meminfo").ok().map(|text| {
+        let gib = |kb: u64| kb as f64 / 1024.0 / 1024.0;
+        let total = kb_field(&text, "MemTotal:").unwrap_or(0);
+        let available = kb_field(&text, "MemAvailable:").unwrap_or(0);
+        let swap_total = kb_field(&text, "SwapTotal:").unwrap_or(0);
+        let swap_free = kb_field(&text, "SwapFree:").unwrap_or(0);
+        let swap_used = swap_total.saturating_sub(swap_free);
+        format!(
+            "available {:.1} GiB / {:.1} GiB total, swap {:.1} GiB used / {:.1} GiB total",
+            gib(available),
+            gib(total),
+            gib(swap_used),
+            gib(swap_total),
+        )
+    });
+
+    let load = std::fs::read_to_string("/proc/loadavg")
+        .ok()
+        .and_then(|text| {
+            let mut fields = text.split_whitespace();
+            Some(format!(
+                "{} {} {} (1/5/15 min)",
+                fields.next()?,
+                fields.next()?,
+                fields.next()?
+            ))
+        });
+
+    format!(
+        "memory: {}; load average: {}",
+        mem.unwrap_or_else(|| "unavailable".to_string()),
+        load.unwrap_or_else(|| "unavailable".to_string()),
+    )
+}
+
 /// P1a §2.5: pause and poll for `marker` rather than attempting to drop the page
 /// cache ourselves. Dropping the cache needs root; this harness never attempts to
 /// acquire privilege. Returns `true` if the marker appeared before the timeout.
@@ -355,6 +418,10 @@ fn main() {
         tmpdir_path_str,
         filesystem_info(tempdir.path())
     );
+    // P2d R5: host memory pressure and load from unrelated processes are an
+    // unrecorded input too -- see limitation 6. Captured at run start,
+    // before population begins consuming memory itself.
+    println!("  host substrate: {}", memory_and_load_info());
     // R8 (P1a revision 2): path length is a measurement input, not incidental --
     // see limitation 5. A longer TMPDIR lengthens every stored path, which is
     // stored twice per entry (the `files` table and the covering index), which

@@ -7,6 +7,33 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.21.3] — Unreleased
+
+*Date set at owner authorization.*
+
+Patch release closing Phase 23 P2 (RFC 021, query execution: one pass, late materialization).
+
+**A performance release, not a behaviour release.** No public API, schema, or wire-format change.
+Query execution no longer fetches and decodes every candidate's payload before applying `limit`.
+One streaming query replaces the old per-row `SELECT` pair, and payloads are decoded only for the
+rows that survive ordering and limiting.
+
+### Changed
+
+- `QueryBuilder::run` (`crates/localcache/src/cache/query.rs`,
+  `crates/localcache/src/db/repository.rs`) fetches candidates in one streaming query and decodes
+  payloads only for rows surviving `offset`/`limit`, instead of a per-row `SELECT` pair followed by
+  decoding every candidate before limiting.
+- **Two figures, not one — they differ by 7× and a single number would misrepresent both**,
+  measured on a paired, same-session, real-storage comparison (P2c): a `limit`-only query with no
+  field predicate is **~15× faster** at 1M entries; a JSON field query with `order_by_field` is
+  **~1.9× faster**, because SQLite's `json1` functions are not streaming and still parse the whole
+  stored document once per candidate row.
+- `QueryBuilder::dry_run` now also reports which execution path a query will take, not only the
+  SQLite plan.
+- Result ordering is unchanged, including tie-breaking — the comparator was deliberately kept in
+  Rust rather than moved into SQL, to avoid three found ordering divergences.
+
 ## [0.21.2] — 2026-08-03
 
 Patch release closing Phase 23 P1 (RFC 020, batched maintenance deletes). Release candidate

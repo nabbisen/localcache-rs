@@ -76,7 +76,7 @@ let results = engine.query()
 | `.path_in_dir(dir, recursive)` | Exact directory scoping — no over-fetch, metacharacter-safe |
 | `.path_glob(pattern)` | Case-sensitive Unicode-scalar glob on stored path: `*`, `?`, nested/multiple `{a,b}` alternatives |
 | `.index_hint(name)` | Nominate a SQLite index for the path-listing scan |
-| `.dry_run()` | Return `EXPLAIN QUERY PLAN` output without loading payloads |
+| `.dry_run()` | Return `EXPLAIN QUERY PLAN` output, plus which execution path `run()` would take, without loading payloads |
 
 ### Payload predicates *(require `json` feature)*
 
@@ -203,8 +203,8 @@ let plan = engine.query()
 println!("{plan}");
 ```
 
-`dry_run()` runs `EXPLAIN QUERY PLAN` on the path-listing SQL only — no
-payloads are loaded, and the cache is not modified.
+`dry_run()` runs `EXPLAIN QUERY PLAN` on the path-listing SQL, then appends which execution path
+`run()` would actually take — no payloads are loaded, and the cache is not modified.
 
 With `AsyncCacheEngine`:
 
