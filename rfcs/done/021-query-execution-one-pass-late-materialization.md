@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted (owner, 2026-08-03) |
+| Status | Implemented (0.21.3) |
 | Feature | *(no Cargo feature; core query engine)* |
 | Touches | `crates/localcache/src/cache/query.rs`, `crates/localcache/src/db/repository.rs` |
 | Finding | Phase 23 P2a cost decomposition, 2026-08-03 |

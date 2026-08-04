@@ -682,14 +682,15 @@ Recorded findings not scheduled into a milestone. Each is tracked, none is lost.
 
 | Item | Origin | Note |
 |---|---|---|
-| `ConnectionPool`'s batch methods return **one** element on lock failure, regardless of `paths.len()` | N1 review §4.1 | Latent correctness bug, pre-existing. A caller doing `paths.iter().zip(results)` silently drops every path but one. `ReadPool` now guarantees and documents one result per path; `ConnectionPool` does neither, so the two pool types disagree on a contract callers would assume is shared. Only manifests on a poisoned lock. Fix alongside future `ConnectionPool` work rather than standalone. |
-| Pin the exhaustiveness `compile_fail` doctest to `E0004` | N1 review §3.1 | Optional hardening. Makes permanent the guarantee currently established only by mutation testing. |
-| `follow-up` in `advisory-policy.json` is a sentence fragment that only reads correctly once the reporter prepends "reassess if" | N2 review §4.1 | Data that parses only inside one template is fragile once a second consumer appears. Prefer self-describing data and a reporter that emits it verbatim. Fold into any future touch of the reporting code. |
-| `fetch_with_retry` catches a broad `AdvisoryGateError` rather than a dedicated transient type | N3 review §4.1 | Correct today, because `live_fetch`'s only failure mode is `OSError`/`URLError`. But `Fetch` is an injection point: a substitute raising `AdvisoryGateError` non-transiently would be retried three times, turning a fast failure into a slow one. Fix is a `TransientFetchError` so the fetcher declares transience rather than the wrapper inferring it. |
-| RFC 011 N-01/N-02 (quote the catalog's spelling; comment the ASCII-fold invariant) | Phase 21 | Verified safe; hardening only. **Moved from N3 to N5**, since both land in `indexes.rs`, which N5 also touches. |
-| `namespace_copy`'s body is byte-identical to `import_from`'s in `cache/engine/portable.rs` | N5 review §2 | Verified identical (184 chars each). Became visible once the concern was isolated in one file. Reported and deliberately **not** fixed during a move commit. |
+| `ConnectionPool`'s batch methods return **one** element on lock failure, regardless of `paths.len()` | N1 review §4.1 | Latent correctness bug, pre-existing. A caller doing `paths.iter().zip(results)` silently drops every path but one. `ReadPool` now guarantees and documents one result per path; `ConnectionPool` does neither, so the two pool types disagree on a contract callers would assume is shared. Only manifests on a poisoned lock. Fix alongside future `ConnectionPool` work rather than standalone. **✅ Closed — fixed in P0b, shipped in v0.21.1.** Each method now returns one `Poisoned` per requested path, matching `ReadPool`. |
+| Pin the exhaustiveness `compile_fail` doctest to `E0004` | N1 review §3.1 | Optional hardening. Makes permanent the guarantee currently established only by mutation testing. **✅ Closed — done in P0c, shipped in v0.21.1**, with the caveat that the annotation is documentation-only (see the entry below). |
+| `follow-up` in `advisory-policy.json` is a sentence fragment that only reads correctly once the reporter prepends "reassess if" | N2 review §4.1 | Data that parses only inside one template is fragile once a second consumer appears. Prefer self-describing data and a reporter that emits it verbatim. Fold into any future touch of the reporting code. **✅ Closed — done in P0c, shipped in v0.21.1.** Values are now self-describing sentences emitted verbatim. |
+| `fetch_with_retry` catches a broad `AdvisoryGateError` rather than a dedicated transient type | N3 review §4.1 | Correct today, because `live_fetch`'s only failure mode is `OSError`/`URLError`. But `Fetch` is an injection point: a substitute raising `AdvisoryGateError` non-transiently would be retried three times, turning a fast failure into a slow one. Fix is a `TransientFetchError` so the fetcher declares transience rather than the wrapper inferring it. **✅ Closed — done in P0c, shipped in v0.21.1** as `TransientFetchError`. |
+| RFC 011 N-01/N-02 (quote the catalog's spelling; comment the ASCII-fold invariant) | Phase 21 | Verified safe; hardening only. **Moved from N3 to N5**, since both land in `indexes.rs`, which N5 also touches. **✅ Closed in Phase 22 N5.** |
+| `namespace_copy`'s body is byte-identical to `import_from`'s in `cache/engine/portable.rs` | N5 review §2 | Verified identical (184 chars each). Became visible once the concern was isolated in one file. Reported and deliberately **not** fixed during a move commit. **✅ Closed — fixed in P0b, shipped in v0.21.1**; `namespace_copy` delegates to `import_from`. |
 | The exhaustiveness `compile_fail,E0004` annotation is **documentation-only** | P0 review §3.1 | **Rustdoc does not verify a `compile_fail` block's error code against the actual diagnostic.** Confirmed by mutation from both sides: a block annotated `E0004` that fails with an unresolved-path error, a type mismatch, or `E0425` all still report `ok`. The guarantee that the match is genuinely non-exhaustive rests on mutation testing at review time, not on the annotation. `trybuild` or a custom `rustc --error-format=json` harness would enforce it; neither judged proportionate for one assertion. |
 | **`rusqlite` held at `^0.39`, and the conditions that would change it** | orbok/arama requests, 2026-08-01 | Not a defect to fix — a standing external constraint to **re-evaluate at each replanning**. `rusqlite 0.40` needs `libsqlite3-sys 0.38.x`, which needs **Rust 1.95** (measured: 1.94 fails, 1.95.0 passes), so adopting it would move this crate's floor from 1.85 to 1.95. Cost of holding: bundled SQLite stays at 3.51.3 rather than 3.53.2, and a consumer pinning `rusqlite 0.40` directly cannot use this crate at all — `links = "sqlite3"` makes that a hard resolution failure with no downstream remedy. **Revisit if any of:** `libsqlite3-sys` declares `rust-version` (then MSRV-aware resolution serves both audiences and no choice falls to us); the `cfg_select!` dependency goes away; 1.95 stops being a recent floor; or a consumer confirms a parallel line would unblock them. User-facing detail in `docs/src/dependency_security.md`. |
+| **`path_in_dir` non-recursive cannot construct an indexable prefix** | N4 §7 ranking, item 4 | **Deferred with a reason, recorded at the Phase 23 exit review — it had been neither done nor explicitly deferred, which criterion 1 forbids.** N4 observed that `path_in_dir` grows with the namespace where a leading-literal glob stays flat, and suggested checking whether it can build a `path > ? AND path < ?` range the way the literal glob does. **Nobody checked.** RFC 021 improved it incidentally (1.11×) by removing the per-row fetch, but did not touch the plan shape: it still narrows on `namespace = ?` alone. The question is live and cheap to answer — a non-recursive directory scope *is* a prefix range, so the construction looks feasible — but it is a query-planner change landing immediately after one, and this phase has twice shown that the recorded remedy targeted a minority of the measured cost. **Measure `path_in_dir`'s share of a realistic workload before designing it.** Revisit when query work next opens. |
 | ~~`preload`, concurrent access, bincode codec at scale, watcher on large trees, cold-open cost~~ → **watcher on large trees, async-runtime concurrency** | N4 §6, narrowed by P1a | **Mostly closed.** P1a measured `preload` (71.5 µs/row at 1M), cold-open (622–799 ms), the bincode codec at scale, and `ReadPool` under 8 threads. Still unmeasured: **watcher behaviour on large trees** (needs sustained observation with induced filesystem events, not one-shot timing; RFC 015 already governs its failure behaviour) and **async-runtime backends** (tokio/async-std/smol — wiring three runtimes into a `harness = false` bench was judged disproportionate, and `ReadPool` already isolates the contended resource). Neither blocks P1b. |
 
 ### Module-size register — after N5
@@ -719,7 +720,7 @@ N1's RFC would be authored and reviewed by the same high-capability model, with 
 separation — the same structural conflict recorded against RFC 017 at M7 §6. The
 owner is aware; how it is handled is an open decision.
 
-## Phase 23 — Measured Performance and Consolidation (target: v0.21.1, then v0.22.0) 🚧
+## Phase 23 — Measured Performance and Consolidation (v0.21.1, v0.21.2, v0.21.3) ✅
 
 Approved by the owner on 2026-08-01. **The first phase scoped from measurement rather than
 intuition** — N4's profile in Phase 22 overturned two of the three hypotheses it was built to
@@ -755,7 +756,7 @@ behind it. Phase 23 inverts that.
 |---|---|---|
 | **v0.21.1 ✅** | P0 — query documentation, the `ConnectionPool` batch fix, tooling hygiene | no |
 | **v0.21.2 ✅** | P1 — maintenance delete batching (RFC 020) | no |
-| **v0.22.0** | P2 — JSON field query performance, only if it needs new public API | additive at most |
+| **v0.21.3 ✅** | P2 — query execution (RFC 021) | no |
 
 If P2 needs no new API there may be no v0.22.0, which is a good outcome rather than a
 shortfall.
@@ -777,7 +778,7 @@ shortfall.
 | **P2a — Query execution design ✅** | **RFC 021** — the field query’s cost is 80% fetch-and-decode, not JSON evaluation | RFC required | P1a |
 | **P2b — Implementation ✅** | per RFC 021 | RFC 021 | P2a |
 | **P2c — Re-measure ✅** | same harness, matched path length, **one session**; tier 1 and tier 2 reported **separately** | — | P2b |
-| **P2d — Release v0.21.3** | patch — RFC 021 is non-breaking | owner | P2a–P2c |
+| **P2d — Release v0.21.3 ✅** | patch — RFC 021 is non-breaking | owner | P2a–P2c |
 
 **P1/P2 were reordered after P1a, on the measurement.** P1b was scoped when `field_gt` was the
 dominant cost; it no longer is. Owner decision, 2026-08-03: follow the measurement. The
@@ -1109,6 +1110,71 @@ Controls held within ~3% except `cleanup_expired` at 1.17×, dismissed on the st
 evidence: **the before-arm's own two samples disagree by 1.29× — 6.785 s against 5.260 s, with zero
 code difference between them.** A control that establishes its own noise floor settles the
 question better than one that merely lands near 1.0×.
+
+### P2d — v0.21.3 released
+
+Released 2026-08-04. Release commit **`4b49b911fff99220ce94f13ad3f9f8ab5ff31f43`**, tag `0.21.3`
+(GPG-signed, verified), CI run 26/26 green on that exact head SHA, confirmed **before** tagging.
+Both crates published. Archive uncompressed SHA-256
+`aa796fcff7b8680a18ea0b8904a74cae063e624f4ee7e5d76587d0268ddec361`.
+
+**Verified after publication:** a fresh consumer declaring `rust-version = "1.85"` against the
+published `localcache = "0.21.3"` resolves `libsqlite3-sys 0.37.0` and builds on 1.85.0.
+
+Shipped alongside RFC 021: `docs/src/performance.md` rebuilt from one self-consistent profile run
+at a stated path length — including a **corrected explanation**, since the old page attributed the
+field query's cost to JSON extraction and sorting, which RFC 021 disproved — plus `querying.md`'s
+`dry_run()` update and the scale profile's new host memory/load line.
+
+**Accepted with no notes.**
+
+---
+
+## Phase 23 — exit-criteria review
+
+Assessed 2026-08-04 against the seven criteria as written before the work began.
+
+| # | Criterion | Verdict |
+|---|---|---|
+| 1 | Every N4 finding fixed and re-measured, or explicitly deferred with a reason | **Met only at this review** — see below |
+| 2 | Re-measurement uses the same harness at the same three scales | **Met** |
+| 3 | `cleanup_missing_files` measured on real storage | **Met** (P1a) |
+| 4 | Every deferred-register item closed, re-registered, or scheduled | **Met only at this review** — see below |
+| 5 | Public documentation states measured characteristics and the query pattern to avoid | **Met** |
+| 6 | Each release ships at its own breaking point, CI green before the next milestone | **Met** |
+| 7 | No release action without owner authorization | **Met** |
+
+**Criteria 1 and 4 were not met until this review, and both failures were the same kind:
+bookkeeping that only looks complete because the code shipped.**
+
+- **Criterion 1.** N4's ranked item 4 — whether `path_in_dir` can construct an indexable prefix —
+  was never done *and* never explicitly deferred. RFC 021 improved the operation incidentally
+  without touching the plan shape the finding was about. Now registered as a deferral with a
+  reason and a revisit condition.
+- **Criterion 4.** Six of eleven register entries described work that had already shipped in
+  v0.21.1, still reading as open. The register was appended to all phase and reconciled never.
+  Now annotated with the milestone and version that closed each.
+
+Both are the reviewer's failure, not the dev team's, and both are the reason a written exit review
+is worth more than a felt sense that a phase is done. **Criterion 6 held throughout** — three
+patches (v0.21.1, v0.21.2, v0.21.3), each at its own breaking point, each with CI green on the
+exact release commit before tagging. That was Phase 22's cadence failure written as a gate, and
+the gate worked.
+
+### What Phase 23 established beyond its milestones
+
+**Twice, the recorded remedy targeted a minority of the measured cost.** RFC 020's inherited
+candidate was "batch the `stat` calls" — 11.7%, against 88.3% for the per-row commits. RFC 021's
+was "add a JSON expression index" — at most 20%, against 80% for fetch-and-decode. Both candidates
+came from reading code; both were wrong; both were corrected by measuring first.
+
+**And once, the reviewer's own projection was the thing that failed.** RFC 021 set a ≥4×
+falsification bar and delivered 1.89×, because it priced the JSON pushdown as free after naming it
+as unmeasured. Caught by P2b's measurement, confirmed independently by P2c.
+
+The durable output is not the three releases. It is that the profile now records its filesystem,
+path length, database size, and host memory state — four inputs that each silently changed a
+result during this phase before anything recorded them.
 
 ### Why P0e is a `macro_rules!` helper, not `#[async_test]`
 
