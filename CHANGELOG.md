@@ -7,11 +7,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [0.21.3] — Unreleased
-
-*Date set at owner authorization.*
+## [0.21.3] — 2026-08-04
 
 Patch release closing Phase 23 P2 (RFC 021, query execution: one pass, late materialization).
+Release candidate `518d3f1`, accepted by the v0.21.3 release decision on 2026-08-04 with a **Go**
+recommendation, and authorized by the project owner the same day.
 
 **A performance release, not a behaviour release.** No public API, schema, or wire-format change.
 Query execution no longer fetches and decodes every candidate's payload before applying `limit`.
