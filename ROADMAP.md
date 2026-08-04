@@ -776,7 +776,7 @@ shortfall.
 | **P1e — Release v0.21.2 ✅** | patch — RFC 020 is non-breaking | owner | P1c–P1d |
 | **P2a — Query execution design ✅** | **RFC 021** — the field query’s cost is 80% fetch-and-decode, not JSON evaluation | RFC required | P1a |
 | **P2b — Implementation ✅** | per RFC 021 | RFC 021 | P2a |
-| **P2c — Re-measure** | same harness, matched path length, **one session**; tier 1 and tier 2 reported **separately** | — | P2b |
+| **P2c — Re-measure ✅** | same harness, matched path length, **one session**; tier 1 and tier 2 reported **separately** | — | P2b |
 | **P2d — Release v0.21.3** | patch — RFC 021 is non-breaking | owner | P2a–P2c |
 
 **P1/P2 were reordered after P1a, on the measurement.** P1b was scoped when `field_gt` was the
@@ -1082,6 +1082,33 @@ namespace containing `/a/b` and `/a-b`, where component-wise and byte-wise order
 **Recorded, not blocking:** the non-`json` (`--no-default-features`) `QueryBuilder::run()` path has
 no integration coverage. Pre-existing, found and disclosed during P2b, verified out-of-band. Worth
 closing when that area is next touched.
+
+### P2c — the correction confirmed by a second instrument
+
+Measured at `ed9b1d6` on the scale-profile harness, paired and interleaved at 1M, matched path
+length across all eight runs, database byte-identical within each scale:
+
+| Query @1M | before | after | ratio |
+|---|---|---|---|
+| `limit(25)`, no field predicate (**tier 1**) | 3.348 s | **0.229 s** | **14.6×** |
+| `field_gt` + `order_by_field` + `limit 25` (**tier 2**) | 4.057 s | **2.148 s** | **1.89×** |
+
+**The point of P2c was not the numbers but their independence.** The P2b review corrected RFC 021's
+projection using the reviewer's own ad-hoc probe; P2c re-derives it through the real harness — real
+`CacheEngine`, real files, real population — and agrees to within 1% on both rows (probe: 14.7× and
+2.0×). A correction measured only by the instrument that produced it is worth less than one two
+instruments agree on.
+
+Other query operations, which also route through the rewritten path: leading-literal glob **2.07×**,
+`path_in_dir` **1.11×**, leading-wildcard glob **0.96×** (flat). The last two are expected — both
+return 1000 rows with no `limit`, so late materialisation has no winners to bound decoding to, and
+the wildcard's dominant cost was always its unindexed scan rather than the round-trip pattern. The
+wildcard/literal ratio consequently widened from 34× to 72×.
+
+Controls held within ~3% except `cleanup_expired` at 1.17×, dismissed on the strongest available
+evidence: **the before-arm's own two samples disagree by 1.29× — 6.785 s against 5.260 s, with zero
+code difference between them.** A control that establishes its own noise floor settles the
+question better than one that merely lands near 1.0×.
 
 ### Why P0e is a `macro_rules!` helper, not `#[async_test]`
 
