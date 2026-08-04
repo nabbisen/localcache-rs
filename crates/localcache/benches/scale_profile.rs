@@ -448,10 +448,12 @@ fn main() {
     // run. `query_repeats` is 1 by default, matching the pre-revision shape and
     // keeping a bare invocation cheap.
     println!("\nwhole-namespace queries ({query_repeats} repeat(s); see R2 for large scale):");
+    let mut tier1_times = Vec::with_capacity(query_repeats);
     let mut field_gt_times = Vec::with_capacity(query_repeats);
     let mut path_in_dir_times = Vec::with_capacity(query_repeats);
     let mut literal_times = Vec::with_capacity(query_repeats);
     let mut wildcard_times = Vec::with_capacity(query_repeats);
+    let mut tier1_row_count = None;
     let mut field_gt_row_count = None;
     let mut path_in_dir_row_count = None;
     let mut literal_row_count = None;
@@ -462,7 +464,25 @@ fn main() {
             println!("  -- repeat {repeat}/{query_repeats} --");
         }
 
-        let (rows, elapsed) = timed("  query: field_gt + order_by + limit 25", || {
+        // RFC 021 P2c: tier 1 — no field predicate, no field sort, so no
+        // payload is decoded until the winners of `limit` are known. The
+        // largest effect RFC 021 produced; nothing above this line measured
+        // it. Labeled explicitly as tier 1 so a reader does not need to know
+        // the tier taxonomy to see two different things are being measured.
+        let (rows, elapsed) = timed("  query: [tier 1] limit 25, no predicate", || {
+            engine.query().limit(25).run().expect("scale tier-1 query")
+        });
+        if let Some(expected) = tier1_row_count {
+            assert_eq!(
+                rows.len(),
+                expected,
+                "tier-1 query row count changed across repeats"
+            );
+        }
+        tier1_row_count = Some(rows.len());
+        tier1_times.push(elapsed);
+
+        let (rows, elapsed) = timed("  query: [tier 2] field_gt + order_by + limit 25", || {
             engine
                 .query()
                 .field_gt("score", (scale / 2) as f64)
@@ -541,8 +561,9 @@ fn main() {
     }
 
     println!(
-        "      → field_gt {} rows; path_in_dir {} rows; glob {} rows literal / {} rows \
-         wildcard{}",
+        "      → tier1 {} rows; field_gt {} rows; path_in_dir {} rows; glob {} rows literal / \
+         {} rows wildcard{}",
+        tier1_row_count.unwrap_or(0),
         field_gt_row_count.unwrap_or(0),
         path_in_dir_row_count.unwrap_or(0),
         literal_row_count.unwrap_or(0),
@@ -556,7 +577,8 @@ fn main() {
 
     if query_repeats > 1 {
         println!("\nreplication summary (median, min–max — R2):");
-        report_spread("field_gt + order_by + limit 25", &field_gt_times);
+        report_spread("[tier 1] limit 25, no predicate", &tier1_times);
+        report_spread("[tier 2] field_gt + order_by + limit 25", &field_gt_times);
         report_spread("path_in_dir (non-recursive)", &path_in_dir_times);
         report_spread("path_glob, leading literal", &literal_times);
         report_spread("path_glob, LEADING WILDCARD", &wildcard_times);
