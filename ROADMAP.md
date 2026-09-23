@@ -1302,6 +1302,9 @@ error type whose catch-all variant tells users little.
 
 ### Version plan — non-breaking work ships first
 
+**Authorized by the owner on 2026-09-23**, as revised by RFC 022 Amendment 2: the slice order
+below, the contents of each release, and the newly-rejected-input rule.
+
 | Release | Contents | Breaking? |
 |---|---|---|
 | **v0.21.4** | Q0: seven correctness fixes (RFC 022 R1, R2, R6–R9), release-tooling repair, docs and records reconciliation | no |
@@ -1310,7 +1313,8 @@ error type whose catch-all variant tells users little.
 
 v0.22.0 is now certain. Q3 and Q5 both change observable behaviour.
 
-**Rule, set 2026-09-23: newly rejected input ships only in a minor release.** When the library
+**Rule, set 2026-09-23 and authorized by the owner the same day: newly rejected input ships only
+in a minor release.** When the library
 starts returning an error for input it previously accepted, that ships only in a minor release,
 using the error variants Q3 defines. This holds even when the input never did what the caller
 intended. A consumer's `cargo update` within `0.21` must never turn a working startup or a working
