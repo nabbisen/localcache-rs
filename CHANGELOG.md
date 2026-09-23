@@ -30,6 +30,15 @@ authorization, not before.
   engine's own namespace; other open engines on the same database and namespace must be reopened with
   the new key, engines on other namespaces are unaffected, and a watcher needs no action. No signature
   change.
+- `QueryBuilder::run` (`crates/localcache/src/cache/query.rs`): `offset` now counts only entries
+  that decode successfully, on every execution path.
+  Since 0.21.3, a query with no field predicate, or with only `field_gt`/`field_lt`, counted
+  entries that could not be decoded toward `offset`. Examples are an entry under a different
+  encryption key, or a missing payload row. So consecutive pages could repeat or skip an entry,
+  and the result depended on which execution path the query took.
+  Affected: callers paging with `offset` over a namespace that contains undecodable entries.
+  A deep `offset` now decodes up to `offset + limit` entries. That is still bounded by the page
+  position, not by the namespace size.
 
 ## [0.21.3] — 2026-08-04
 

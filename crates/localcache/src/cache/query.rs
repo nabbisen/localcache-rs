@@ -766,15 +766,17 @@ where
         .collect())
 }
 
-/// RFC 021 pass 2: materialize `candidates[order[..]]`, decoding payloads
-/// only for the rows that survive `offset`/`limit`. A row whose payload is
-/// missing or fails to decode is skipped and backfilled from the next
-/// candidate in `order`, matching today's behaviour of returning up to
-/// `limit` successfully-decoded rows rather than a short page — the skip
-/// just moves after the (cheap, payload-free) sort instead of before it.
+/// RFC 021 pass 2 / RFC 022 R2: materialize `candidates[order[..]]`,
+/// decoding payloads only for the rows needed to fill `offset`/`limit`.
+/// `offset` counts only entries that decode successfully: a row whose
+/// payload is missing or fails to decode is never counted toward `offset`
+/// and never appears in the result, and the next candidate in `order` is
+/// tried in its place. Before RFC 022 R2, `offset` counted candidates
+/// positionally, so a bad row before or within the window could shift or
+/// duplicate a page; that defect is what this fixes.
 /// `candidates`/`order` were already fully materialized in memory by pass 1
-/// to make that sort possible, so backfilling costs no extra SQL beyond the
-/// occasional additional `payloads_for_ids` chunk.
+/// to make sorting possible, so scanning past a bad row costs no extra SQL
+/// beyond the occasional additional `payloads_for_ids` chunk.
 fn materialize<T>(
     q: &QueryBuilder<'_, T>,
     candidates: &[CandidateRow],
@@ -785,13 +787,21 @@ where
 {
     use std::collections::HashMap;
 
-    let start = q.offset.min(order.len());
-    let target = q.limit.unwrap_or(order.len().saturating_sub(start));
+    // Matches `payloads_for_ids`' own internal chunk size — not required
+    // for correctness (it chunks internally regardless), but keeps each
+    // window's SQL query the same granularity as the rest of the pipeline.
+    const WINDOW_CHUNK: usize = 500;
+
+    let mut to_skip = q.offset;
+    let target = q.limit;
     let mut out = Vec::new();
-    let mut idx = start;
-    while out.len() < target && idx < order.len() {
-        let need = target - out.len();
-        let window_end = (idx + need).min(order.len());
+    let mut idx = 0;
+    while target.is_none_or(|t| out.len() < t) && idx < order.len() {
+        let want = match target {
+            Some(t) => to_skip.saturating_add(t - out.len()),
+            None => order.len() - idx,
+        };
+        let window_end = (idx + want.min(WINDOW_CHUNK)).min(order.len());
         let window = &order[idx..window_end];
         let ids: Vec<i64> = window.iter().map(|&i| candidates[i].id).collect();
         let payload_rows = repository::payloads_for_ids(q.core.conn, &ids)?;
@@ -801,6 +811,8 @@ where
             .collect();
         for &i in window {
             let c = &candidates[i];
+            // Missing payload or decode failure: never counted toward
+            // `offset`, never in the result — try the next candidate.
             let Some((content, encoding)) = payload_map.remove(&c.id) else {
                 continue;
             };
@@ -808,6 +820,12 @@ where
                 Ok(p) => p,
                 Err(_) => continue,
             };
+            if to_skip > 0 {
+                // A successful decode counts toward `offset`, but is not
+                // itself part of the page.
+                to_skip -= 1;
+                continue;
+            }
             out.push(CacheEntry {
                 path: PathBuf::from(&c.path),
                 metadata: FileMetadata {
@@ -817,6 +835,9 @@ where
                 },
                 payload,
             });
+            if target.is_some_and(|t| out.len() == t) {
+                break;
+            }
         }
         idx = window_end;
     }

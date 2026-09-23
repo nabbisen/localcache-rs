@@ -604,6 +604,103 @@ fn touch_protects_from_lru_eviction() {
 }
 
 // ====================================================================
+// RFC 022 R2 — `offset` counts only rows that materialize.
+//
+// Ungated (no Cargo features required): closes the no-features gap
+// `ROADMAP.md` notes under P2b, since `limit`/`offset`/`order_by_updated_at`
+// are always available. The bad row is made by deleting its payload row
+// directly via `rusqlite`, never by a type-mismatched decode -- bincode's
+// legacy format can decode foreign bytes into a wrong value instead of
+// failing, which would test the wrong thing.
+// ====================================================================
+
+#[test]
+fn offset_and_limit_with_order_by_updated_at_skip_a_bad_row() {
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("offset_no_features.sqlite3");
+
+    let engine: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
+        database_path: db.clone(),
+        ..CacheOptions::default()
+    })
+    .unwrap();
+
+    for i in 0..5 {
+        let p = write_file(&dir, &format!("f{i}.txt"), b"x");
+        engine.set(&p, &vec![1.0_f32]).unwrap();
+    }
+
+    // Give each row a distinct, known `updated_at` directly via SQL, so the
+    // sort order is deterministic regardless of filesystem mtime
+    // resolution: f0 oldest .. f4 newest.
+    let conn = rusqlite::Connection::open(&db).unwrap();
+    for stored in engine.keys(None).unwrap() {
+        let name = stored.file_name().unwrap().to_str().unwrap().to_owned();
+        let i: i64 = name
+            .trim_start_matches('f')
+            .trim_end_matches(".txt")
+            .parse()
+            .unwrap();
+        conn.execute(
+            "UPDATE files SET updated_at = ?1, mtime = ?1 WHERE path = ?2",
+            rusqlite::params![1_000_000_i64 + i, stored.to_str().unwrap()],
+        )
+        .unwrap();
+    }
+
+    // Corrupt f1 (second-oldest) by deleting its payload row -- an orphan.
+    let f1 = engine
+        .keys(None)
+        .unwrap()
+        .into_iter()
+        .find(|p| p.to_str().unwrap().contains("f1.txt"))
+        .unwrap();
+    let f1_id: i64 = conn
+        .query_row(
+            "SELECT id FROM files WHERE path = ?1",
+            rusqlite::params![f1.to_str().unwrap()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    conn.execute(
+        "DELETE FROM payloads WHERE file_id = ?1",
+        rusqlite::params![f1_id],
+    )
+    .unwrap();
+    drop(conn);
+
+    // Ascending order_by_updated_at: f0, f1(bad), f2, f3, f4 -- 4 good rows
+    // (f0, f2, f3, f4). `offset(3)` must skip 3 *good* rows (f0, f2, f3),
+    // leaving only f4, so `limit(2)` can return just 1 entry, not an error
+    // and not 2. Must fail on v0.21.3: the old positional code applied
+    // `offset` to raw candidate position, so `offset(3)` skipped f0, f1(bad),
+    // f2 and started its window at f3, returning `[f3, f4]` -- 2 entries,
+    // with f1's slot silently counted toward the offset despite never
+    // decoding.
+    let page = engine
+        .query()
+        .order_by_updated_at(true)
+        .offset(3)
+        .limit(2)
+        .run()
+        .unwrap();
+
+    assert_eq!(
+        page.len(),
+        1,
+        "only f4 remains after skipping the 3 good rows before it -- got {:?}",
+        page.iter()
+            .map(|e| e.path.to_str().unwrap().to_owned())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        page[0].path.to_str().unwrap().contains("f4.txt"),
+        "got {:?}",
+        page[0].path
+    );
+}
+
+// ====================================================================
 // Phase 11 — Persistent index management
 // ====================================================================
 

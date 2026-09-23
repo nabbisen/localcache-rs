@@ -379,3 +379,319 @@ fn undecodable_payload_and_missing_payload_row_are_skipped_and_backfilled() {
     limited_paths.sort();
     assert_eq!(limited_paths, expected);
 }
+
+// ---------------------------------------------------------------------------
+// 9. RFC 022 R2 — `offset` counts only rows that materialize
+// ---------------------------------------------------------------------------
+
+enum BadKind {
+    /// File row survives, its payload row is deleted.
+    Orphan,
+    /// Payload row survives, its content is not valid JSON.
+    Corrupt,
+}
+
+fn make_bad_row(engine: &CacheEngine<Value>, path: &std::path::Path, kind: BadKind) {
+    let id = file_id(engine, path);
+    match kind {
+        BadKind::Orphan => {
+            engine
+                .conn
+                .execute("DELETE FROM payloads WHERE file_id = ?1", params![id])
+                .unwrap();
+        }
+        BadKind::Corrupt => {
+            engine
+                .conn
+                .execute(
+                    "UPDATE payloads SET content = ?1 WHERE file_id = ?2",
+                    params![b"not valid json".to_vec(), id],
+                )
+                .unwrap();
+        }
+    }
+}
+
+fn paths_of(entries: &[crate::cache::entry::CacheEntry<Value>]) -> Vec<PathBuf> {
+    entries.iter().map(|e| e.path.clone()).collect()
+}
+
+/// Candidates in path order `bad, a, b, c, d` (`bad` = corrupt).
+/// `order_by_path(true).limit(2)` at offsets 0, 2, 4 must page `[a,b]`,
+/// `[c,d]`, `[]` — not `[a,b]`, `[b,c]`, `[c,d]` (the pre-R2 positional
+/// defect, which double-counts `b`). Must fail on v0.21.3.
+#[test]
+fn offset_counts_only_successfully_decoded_rows() {
+    let dir = TempDir::new().unwrap();
+    let engine = engine();
+
+    let p_bad = write_file(&dir, "0_bad.txt");
+    let p_a = write_file(&dir, "1_a.txt");
+    let p_b = write_file(&dir, "2_b.txt");
+    let p_c = write_file(&dir, "3_c.txt");
+    let p_d = write_file(&dir, "4_d.txt");
+
+    for p in [&p_bad, &p_a, &p_b, &p_c, &p_d] {
+        engine.set(p, &json!({"ok": true})).unwrap();
+    }
+    make_bad_row(&engine, &p_bad, BadKind::Corrupt);
+
+    let page0 = engine
+        .query()
+        .order_by_path(true)
+        .offset(0)
+        .limit(2)
+        .run()
+        .unwrap();
+    let page1 = engine
+        .query()
+        .order_by_path(true)
+        .offset(2)
+        .limit(2)
+        .run()
+        .unwrap();
+    let page2 = engine
+        .query()
+        .order_by_path(true)
+        .offset(4)
+        .limit(2)
+        .run()
+        .unwrap();
+
+    assert_eq!(paths_of(&page0), vec![p_a.clone(), p_b.clone()], "offset 0");
+    assert_eq!(paths_of(&page1), vec![p_c.clone(), p_d.clone()], "offset 2");
+    assert!(
+        page2.is_empty(),
+        "offset 4 (== good-row count) must be empty, not error"
+    );
+}
+
+/// The same data as `offset_counts_only_successfully_decoded_rows`, forced
+/// into tier 3 by a non-`json`-encoded row plus a numeric field predicate
+/// that matches every good row (same mechanism as
+/// `mixed_encoding_namespace_with_field_predicate_matches_all_decode_path`).
+/// Tier 3 was never positionally broken — this proves tier 1/2's fix keeps
+/// the two tiers' pages identical, as the handoff requires.
+#[test]
+fn offset_counts_only_successfully_decoded_rows_tier3() {
+    let dir = TempDir::new().unwrap();
+    let engine = scored_engine();
+
+    let p_bad = write_file(&dir, "0_bad.txt");
+    let p_a = write_file(&dir, "1_a.txt");
+    let p_b = write_file(&dir, "2_b.txt");
+    let p_c = write_file(&dir, "3_c.txt");
+    let p_d = write_file(&dir, "4_d.txt");
+
+    for p in [&p_bad, &p_a, &p_b, &p_c, &p_d] {
+        engine.set(p, &Scored { score: 5.0 }).unwrap();
+    }
+
+    let bad_id = file_id(&engine, &p_bad);
+    engine
+        .conn
+        .execute(
+            "UPDATE payloads SET content = ?1 WHERE file_id = ?2",
+            params![b"not valid json".to_vec(), bad_id],
+        )
+        .unwrap();
+
+    // Force tier 3: re-encode one good row as bincode, same as the
+    // mixed-encoding test.
+    let (bytes, tag) = encode_payload(
+        &Scored { score: 5.0 },
+        true,
+        Codec::Bincode,
+        #[cfg(feature = "encryption")]
+        None,
+    )
+    .unwrap();
+    assert_ne!(tag, "json", "the whole point is a non-json row");
+    let c_id = file_id(&engine, &p_c);
+    engine
+        .conn
+        .execute(
+            "UPDATE payloads SET content = ?1, encoding = ?2 WHERE file_id = ?3",
+            params![bytes, tag, c_id],
+        )
+        .unwrap();
+
+    // Matches every good row (all have score == 5.0).
+    let query = || engine.query().field_gt("score", -1.0).order_by_path(true);
+    let page0 = query().offset(0).limit(2).run().unwrap();
+    let page1 = query().offset(2).limit(2).run().unwrap();
+    let page2 = query().offset(4).limit(2).run().unwrap();
+
+    assert_eq!(
+        paths_of3(&page0),
+        vec![p_a.clone(), p_b.clone()],
+        "offset 0, tier 3"
+    );
+    assert_eq!(
+        paths_of3(&page1),
+        vec![p_c.clone(), p_d.clone()],
+        "offset 2, tier 3"
+    );
+    assert!(page2.is_empty(), "offset 4, tier 3");
+}
+
+fn paths_of3(entries: &[crate::cache::entry::CacheEntry<Scored>]) -> Vec<PathBuf> {
+    entries.iter().map(|e| e.path.clone()).collect()
+}
+
+/// A bad row at the start, in the middle, at the end, and every row bad,
+/// each queried with `offset > 0`.
+#[test]
+fn offset_skips_bad_rows_at_any_position() {
+    let dir = TempDir::new().unwrap();
+
+    check_offset_around_bad_rows(&dir, "start", &[0]);
+    check_offset_around_bad_rows(&dir, "middle", &[2]);
+    check_offset_around_bad_rows(&dir, "end", &[4]);
+    check_offset_around_bad_rows(&dir, "all", &[0, 1, 2, 3, 4]);
+}
+
+fn check_offset_around_bad_rows(dir: &TempDir, label: &str, bad_positions: &[usize]) {
+    let engine = engine();
+    let paths: Vec<_> = (0..5)
+        .map(|i| write_file(dir, &format!("{label}_{i}.txt")))
+        .collect();
+    for p in &paths {
+        engine.set(p, &json!({"ok": true})).unwrap();
+    }
+    for &i in bad_positions {
+        make_bad_row(&engine, &paths[i], BadKind::Corrupt);
+    }
+
+    let good_paths: Vec<_> = (0..5)
+        .filter(|i| !bad_positions.contains(i))
+        .map(|i| paths[i].clone())
+        .collect();
+
+    let result = engine.query().order_by_path(true).offset(1).run().unwrap();
+    let expected = if good_paths.len() > 1 {
+        good_paths[1..].to_vec()
+    } else {
+        Vec::new()
+    };
+    assert_eq!(
+        paths_of(&result),
+        expected,
+        "offset=1 with bad rows at {label} ({bad_positions:?})"
+    );
+}
+
+/// An orphan (no payload row) behaves exactly like a corrupt row for
+/// `offset` purposes: neither counts toward it, and it never appears.
+#[test]
+fn orphan_row_behaves_like_corrupt_row_for_offset() {
+    let dir = TempDir::new().unwrap();
+
+    let engine_orphan = engine();
+    let paths_orphan: Vec<_> = (0..5)
+        .map(|i| write_file(&dir, &format!("orphan_{i}.txt")))
+        .collect();
+    for p in &paths_orphan {
+        engine_orphan.set(p, &json!({"ok": true})).unwrap();
+    }
+    make_bad_row(&engine_orphan, &paths_orphan[0], BadKind::Orphan);
+
+    let engine_corrupt = engine();
+    let paths_corrupt: Vec<_> = (0..5)
+        .map(|i| write_file(&dir, &format!("corrupt_{i}.txt")))
+        .collect();
+    for p in &paths_corrupt {
+        engine_corrupt.set(p, &json!({"ok": true})).unwrap();
+    }
+    make_bad_row(&engine_corrupt, &paths_corrupt[0], BadKind::Corrupt);
+
+    let result_orphan = engine_orphan
+        .query()
+        .order_by_path(true)
+        .offset(1)
+        .limit(2)
+        .run()
+        .unwrap();
+    let result_corrupt = engine_corrupt
+        .query()
+        .order_by_path(true)
+        .offset(1)
+        .limit(2)
+        .run()
+        .unwrap();
+
+    // Both engines have row 0 bad and rows 1..4 good; offset(1) skips the
+    // first good row (index 1), so the page is indices 2 and 3.
+    assert_eq!(
+        paths_of(&result_orphan),
+        vec![paths_orphan[2].clone(), paths_orphan[3].clone()],
+        "orphan"
+    );
+    assert_eq!(
+        paths_of(&result_corrupt),
+        vec![paths_corrupt[2].clone(), paths_corrupt[3].clone()],
+        "corrupt"
+    );
+}
+
+/// `offset` beyond the materializable count returns an empty `Vec`, not
+/// `Err`.
+#[test]
+fn offset_far_beyond_materializable_count_returns_empty_not_err() {
+    let dir = TempDir::new().unwrap();
+    let engine = engine();
+
+    let paths: Vec<_> = (0..5)
+        .map(|i| write_file(&dir, &format!("f{i}.txt")))
+        .collect();
+    for p in &paths {
+        engine.set(p, &json!({"n": 0})).unwrap();
+    }
+    make_bad_row(&engine, &paths[0], BadKind::Corrupt);
+
+    let result = engine.query().offset(1000).run().unwrap();
+    assert!(result.is_empty());
+    let result = engine.query().offset(1000).limit(10).run().unwrap();
+    assert!(result.is_empty());
+}
+
+/// The decode bound for `offset > 0`: `decode_calls <= offset + limit +
+/// bad_rows_encountered`, where `bad_rows_encountered` counts only rows
+/// that reach an actual decode attempt (a corrupt payload) — an orphan
+/// (no payload row at all) never reaches `decode_with` and costs nothing.
+/// `decode_count_is_bounded_by_limit_not_namespace_size` (no `offset`, no
+/// bad rows) passes unmodified alongside this.
+#[test]
+fn decode_count_is_bounded_by_offset_plus_limit_plus_bad_rows() {
+    let dir = TempDir::new().unwrap();
+    let engine = engine();
+
+    let paths: Vec<_> = (0..10)
+        .map(|i| write_file(&dir, &format!("f{i:02}.txt")))
+        .collect();
+    for p in &paths {
+        engine.set(p, &json!({"ok": true})).unwrap();
+    }
+    // Two corrupt rows inside the path-sorted range the query below must
+    // scan through to fill offset(2) + limit(3).
+    make_bad_row(&engine, &paths[1], BadKind::Corrupt);
+    make_bad_row(&engine, &paths[4], BadKind::Corrupt);
+    let bad_rows_encountered = 2;
+
+    reset_decode_calls();
+    let offset = 2;
+    let limit = 3;
+    let results = engine
+        .query()
+        .order_by_path(true)
+        .offset(offset)
+        .limit(limit)
+        .run()
+        .unwrap();
+    assert_eq!(results.len(), limit);
+    assert!(
+        decode_calls() <= offset + limit + bad_rows_encountered,
+        "decode_calls={} exceeds offset({offset}) + limit({limit}) + bad_rows({bad_rows_encountered})",
+        decode_calls()
+    );
+}
