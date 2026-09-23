@@ -1397,6 +1397,24 @@ is discussed. The questions it must answer:
 
 The standing `rusqlite ^0.39` register entry is re-evaluated against this policy in Q1, not before.
 
+### Q0 progress — code slices complete, CI green (2026-09-23)
+
+All six code slices of v0.21.4 are implemented, independently reviewed, and committed. Each had a
+failing-before test, reproduced by the architect on a detached worktree of the preceding commit.
+
+| Slice | RFC 022 | Commit |
+|---|---|---|
+| Q0a key rotation | R1 (with Amendment 2 items 5–6) | `88f2d0f` |
+| Q0b query `offset` | R2 | `df06335` |
+| Q0c LRU eviction | R6 (re-scoped; eviction inside the write's transaction) | `46c7ec9` |
+| Q0g size change is conclusive | R7 | `332d4e3` |
+| Q0h async batch results | R8 | `14b2712` |
+| Q0i watcher helper configuration | R9 | `280c05a` |
+
+Pushed with owner authorization. **CI run 35844256083 is green on `280c05a`, 26/26 jobs**, and the
+Docs workflow also succeeded. Test count 425 → 459. Remaining for v0.21.4: Q0d (release tooling),
+Q0e (hygiene, docs, records), and Q0f (release).
+
 ### Deferred register — Phase 24
 
 | Item | Origin | Note |
