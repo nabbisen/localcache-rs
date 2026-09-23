@@ -50,6 +50,13 @@ authorization, not before.
   transaction: `Ok` from `set`/`batch_set` means the entries were stored and the bound enforced,
   `Err` means nothing changed. A concurrent writer waits under the busy timeout; it never turns a
   committed write into a reported failure.
+- `MetadataThenPartialHash` / `MetadataThenFullHash` change detection
+  (`crates/localcache/src/detection/strategy.rs`): a file-size change is now conclusive proof of a
+  change, checked before any hashing. Previously, under `MetadataThenPartialHash`, a file that
+  changed size but kept its first and last 64 KiB byte-identical (a change confined to the middle
+  of a file larger than 128 KiB) was reported `Fresh`, and `get_if_fresh` returned the stale
+  payload — the partial hash only samples the head and tail, so it never saw the change.
+  `StrictFullHash` and `explain()`'s diagnostic `hash_match` are unaffected.
 
 ### Changed
 

@@ -53,6 +53,13 @@ fn detect_metadata_then_partial_hash(
     if metadata_matches(stored, &current) {
         return Ok(CacheStatus::Fresh);
     }
+    if stored.file_size != current.file_size {
+        // RFC 022 R7: a size change is conclusive proof the file changed.
+        // The partial hash only samples the head and tail, so it cannot
+        // see a change confined to the middle — checked before any
+        // hashing, not after.
+        return Ok(CacheStatus::Stale);
+    }
 
     // Metadata changed — confirm with a hash.
     match &stored.hash {
@@ -79,6 +86,11 @@ fn detect_metadata_then_full_hash(
     let current = collect_metadata(path)?;
     if metadata_matches(stored, &current) {
         return Ok(CacheStatus::Fresh);
+    }
+    if stored.file_size != current.file_size {
+        // RFC 022 R7: conclusive without hashing — see the partial-hash
+        // mode's comment above for why this check exists at all.
+        return Ok(CacheStatus::Stale);
     }
     compare_full_hash(path, stored)
 }

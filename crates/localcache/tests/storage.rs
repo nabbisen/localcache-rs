@@ -102,6 +102,107 @@ fn partial_hash_small_file_is_still_fresh() {
 }
 
 // ====================================================================
+// RFC 022 R7 — a size change is conclusive in the metadata-then-hash modes
+// ====================================================================
+
+/// The reproduction: a file grows with a longer middle, but its first and
+/// last 64 KiB (everything the partial hash samples) are byte-identical to
+/// before. Must fail on v0.21.3: the partial hash cannot see a change
+/// confined to bytes it never reads, so it reports `Fresh`.
+#[test]
+fn partial_hash_size_change_is_conclusive_even_with_unchanged_head_and_tail() {
+    let dir = TempDir::new().unwrap();
+    let engine: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
+        database_path: dir.path().join("size_change.sqlite3"),
+        change_detection_mode: ChangeDetectionMode::MetadataThenPartialHash,
+        ..CacheOptions::default()
+    })
+    .unwrap();
+
+    const SAMPLE: usize = 64 * 1024;
+    let head = vec![0xAA_u8; SAMPLE];
+    let tail = vec![0xBB_u8; SAMPLE];
+
+    let mut original = head.clone();
+    original.extend(vec![0x11_u8; 8 * 1024]);
+    original.extend(tail.clone());
+
+    let path = write_file(&dir, "grow.bin", &original);
+    engine.set(&path, &vec![1.0_f32]).unwrap();
+    assert_eq!(
+        engine.check_status(&path).unwrap(),
+        CacheStatus::Fresh,
+        "sanity: unchanged file is Fresh"
+    );
+
+    // Rewrite with a much longer middle; head and tail bytes unchanged.
+    let mut grown = head.clone();
+    grown.extend(vec![0x22_u8; 96 * 1024]);
+    grown.extend(tail.clone());
+    assert_ne!(original.len(), grown.len(), "sanity: size actually changed");
+    write_file(&dir, "grow.bin", &grown);
+
+    assert_eq!(
+        engine.check_status(&path).unwrap(),
+        CacheStatus::Stale,
+        "a size change must be conclusive even when head and tail are unchanged"
+    );
+    assert!(
+        engine.get_if_fresh(&path).unwrap().is_none(),
+        "get_if_fresh must not return the stale payload"
+    );
+}
+
+#[test]
+fn full_hash_size_change_is_conclusive() {
+    let dir = TempDir::new().unwrap();
+    let engine: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
+        database_path: dir.path().join("full_size_change.sqlite3"),
+        change_detection_mode: ChangeDetectionMode::MetadataThenFullHash,
+        ..CacheOptions::default()
+    })
+    .unwrap();
+
+    let original = vec![0x33_u8; 10 * 1024];
+    let path = write_file(&dir, "full_grow.bin", &original);
+    engine.set(&path, &vec![1.0_f32]).unwrap();
+    assert_eq!(engine.check_status(&path).unwrap(), CacheStatus::Fresh);
+
+    let mut grown = original.clone();
+    grown.extend(vec![0x44_u8; 1024]);
+    write_file(&dir, "full_grow.bin", &grown);
+
+    assert_eq!(engine.check_status(&path).unwrap(), CacheStatus::Stale);
+}
+
+#[test]
+fn unchanged_file_stays_fresh_in_both_hash_modes() {
+    for mode in [
+        ChangeDetectionMode::MetadataThenPartialHash,
+        ChangeDetectionMode::MetadataThenFullHash,
+    ] {
+        let dir = TempDir::new().unwrap();
+        let engine: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
+            database_path: dir.path().join("unchanged.sqlite3"),
+            change_detection_mode: mode,
+            ..CacheOptions::default()
+        })
+        .unwrap();
+
+        let content = vec![0x55_u8; 4 * 1024];
+        let path = write_file(&dir, "unchanged.bin", &content);
+        engine.set(&path, &vec![1.0_f32]).unwrap();
+
+        assert_eq!(
+            engine.check_status(&path).unwrap(),
+            CacheStatus::Fresh,
+            "{mode:?}"
+        );
+        assert!(engine.get_if_fresh(&path).unwrap().is_some(), "{mode:?}");
+    }
+}
+
+// ====================================================================
 // Phase 3 — In-memory backend
 // ====================================================================
 
