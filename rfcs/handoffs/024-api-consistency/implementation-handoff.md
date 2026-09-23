@@ -41,9 +41,15 @@ The cadence is the project's usual one:
 2. file the review request describing the **uncommitted** tree;
 3. wait for the review in `.git-exclude/reviewed/`;
 4. commit with the message the review gives;
-5. push only when the review allows.
+5. **do not push** (see below).
 
-The tree holds exactly one slice when you file. **Commit and push only your own work, and only
+The tree holds exactly one slice when you file.
+
+**No Part A slice is pushed until the v0.21.5 release preparation** *(added 2026-09-24, review
+019)*. The Docs workflow deploys the book from `main`. A pushed slice would publish docs for API
+that the released crate (0.21.4) lacks, and a reader copying the book would get compile errors.
+The slices accumulate as local commits, each verified by the full local gates. The batch is pushed
+at the release preparation, followed by CI on the exact tip and the RC run. **Commit and push only your own work, and only
 after its review approves it** (owner rule, 2026-09-23).
 
 **Failing-before evidence** applies where the RFC's test plan names it: R3 on `c6d36c5`, R7's
@@ -162,8 +168,13 @@ be poisoned from a test without `unsafe` or a test hook, say so, and use the mod
   code path changed.
 - Add a **migration table** to `docs/src/api.md`: each deprecated item → its replacement → "removed
   in 0.22.0" (or "kept until Q5 decides" for `drop_path_index` and `list_path_indexes`).
-- Afterwards, `git grep` for each deprecated name across those locations. The only hits allowed
-  are the migration table and the deprecation notes themselves. Show the command and its output.
+- Afterwards, `git grep` for each deprecated name across those locations. The hits allowed are:
+  the migration table; the deprecation notes themselves; and **dated history** that names the item
+  as it was then, marked with its new name, for example "`ConnectionPool` (renamed
+  `SyncCacheEngine` in 0.21.5)". **Never rewrite history; only present-tense guidance moves to the
+  new names** *(corrected 2026-09-24, review 019 K1)*. Show the command and its output.
+- Public text (docs, CHANGELOG, rustdoc) never uses internal milestone labels such as "Q5". Say
+  what will happen, not which slice decides it (review 019 K2).
 
 ### Tests
 

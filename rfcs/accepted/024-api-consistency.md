@@ -376,6 +376,11 @@ Removed in v0.22.0:
 `drop_path_index` and `list_path_indexes` stay (deprecated) until Q5 decides what schema v6 does
 with existing `lc_user_*` indexes. Users need a way to see and drop them until then.
 
+With the removals, the two observable strings that still name `ConnectionPool` change to
+`SyncCacheEngine`: the `LocalFileCacheError::Poisoned { resource }` value, and the `ReadPool` open
+error that recommends it. v0.21.x keeps both unchanged, because v0.21.5 changes no behaviour
+*(added 2026-09-24, Q2c review 019)*.
+
 ## Detailed design notes
 
 - **Deprecation inside the crate.** Internal uses of deprecated items must not warn: the
