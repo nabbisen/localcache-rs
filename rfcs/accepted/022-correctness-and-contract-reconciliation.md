@@ -2,12 +2,12 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted (owner, 2026-09-23); R6 amendment accepted by the owner the same day |
-| Feature | *(core; `encryption` for R1; `json` affects R2's tiers)* |
-| Touches | `crates/localcache/src/cache/engine.rs`, `crates/localcache/src/cache/query.rs`, `crates/localcache/src/db/repository.rs`, `crates/cli/src/main.rs`, `scripts/release.py`, `scripts/check_advisories.py`, `scripts/release-tools.toml`, `Makefile.toml`, `.github/workflows/docs.yaml`, `README.md`, `CHANGELOG.md`, `docs/src/`, `rfcs/README.md`, `ROADMAP.md` |
-| Finding | Architect onboarding review, 2026-09-23 |
+| Status | Accepted (owner, 2026-09-23); R6 amendment accepted the same day; **Amendment 2** (R1 items 4–6, R6 re-scoped, new R7–R9) authorized by the owner the same day |
+| Feature | *(core; `encryption` for R1; `json` affects R2's tiers; async features for R8; `watching` for R9)* |
+| Touches | `crates/localcache/src/cache/engine.rs`, `crates/localcache/src/cache/query.rs`, `crates/localcache/src/db/repository.rs`, `crates/localcache/src/detection/strategy.rs`, `crates/localcache/src/cache/async_engine.rs`, `crates/localcache/src/cache/watcher.rs`, `crates/localcache/src/cache/entry.rs`, `crates/localcache/src/cache/options.rs`, `crates/localcache/src/read_pool.rs`, `crates/localcache/src/error.rs`, `crates/cli/src/main.rs`, `scripts/release.py`, `scripts/check_advisories.py`, `scripts/release-tools.toml`, `Makefile.toml`, `.github/workflows/docs.yaml`, `README.md`, `CHANGELOG.md`, `docs/src/`, `rfcs/README.md`, `ROADMAP.md` |
+| Finding | Architect onboarding review, 2026-09-23; architect re-onboarding and Q0a review, 2026-09-23 (Amendment 2) |
 | Milestone | Phase 24 Q0 |
-| Breaking | **No** — no public signature, schema, or wire-format change; one documented field meaning is corrected (R6.6); targets v0.21.4 |
+| Breaking | **No** — no public signature, schema, wire-format, or dependency change, and no input v0.21.3 accepted now returns an error; targets v0.21.4 |
 | Authorship | High-capability model; **reviewed by the owner** (arrangement of 2026-08-01) |
 | Handoffs | [`../handoffs/022-correctness-and-contract-reconciliation/`](../handoffs/022-correctness-and-contract-reconciliation/implementation-handoff.md) — implementation handoff and QA checklist |
 
@@ -24,10 +24,16 @@ project itself calls broken. This RFC fixes all of them in one non-breaking patc
   path cannot pass; the advisory fetcher retries 404s; the Pages workflow over-grants write scopes.
 - **R4** — small code-hygiene items with no behaviour change.
 - **R5** — documentation and records reconciliation.
-- **R6** — `max_entries` eviction can remove the entry the same `set` just wrote.
+- **R6** — `max_entries` eviction can remove the entry the same `set` just wrote. *(Re-scoped by
+  Amendment 2.)*
+- **R7** — partial-hash detection reports a file `Fresh` after its size changed, and serves the old
+  payload. *(Amendment 2.)*
+- **R8** — `AsyncCacheEngine`'s batch methods return one result for many paths on failure.
+  *(Amendment 2.)*
+- **R9** — starting a watcher switches the database's journal mode to WAL. *(Amendment 2.)*
 
-R1, R2, and R6 are the reason this is a release rather than a docs sweep. They are designed here.
-R3–R5 are mechanical, and are specified precisely enough that they need no further design.
+R1, R2, and R6–R9 are the reason this is a release rather than a docs sweep. They are designed
+here. R3–R5 are mechanical, and are specified precisely enough that they need no further design.
 
 ## R1 — Key rotation must update the rotating engine
 
@@ -54,18 +60,38 @@ defect before fixing it.
 1. Store the key as `Cell<Option<[u8; 32]>>`. `CacheEngine` is already `!Sync`, because
    `rusqlite::Connection` is, so a `Cell` changes no auto trait. `Send`, `!Sync`, `UnwindSafe`, and
    `RefUnwindSafe` must all be **asserted by a compile-time test** before and after the change.
+   *(Recorded at Q0a.)* On v0.21.3 the observed set was `Send`, `!Sync`, `!UnwindSafe`,
+   `!RefUnwindSafe`. The two unwind-safety traits were already absent, because of the connection's
+   `RefCell` statement cache and the `dyn Fn` eviction callback. The `Cell` changes none of the
+   four. They are asserted in `crates/localcache/tests/core.rs`.
 2. `rotate_encryption_key` keeps `&self` and its signature. It sets the new key **only after
    `tx.commit()` returns `Ok`**. On any error the engine keeps the old key, which still matches the
    rolled-back database.
 3. `EngineCore` must not snapshot the key when `query()` is called. It borrows the `Cell` and reads
    the key at decode time, so a `QueryBuilder` built before a rotation and run after it decodes
    with the current key.
-4. Every other engine is **not** updated, and cannot be: other processes, other `ConnectionPool`
-   instances, `ReadPool` slots, and a watcher's helper connection. The rustdoc of
+4. *(Corrected by Amendment 2.)* Rotation covers **only the rotating engine's namespace**. Every
+   other open engine on the same database **and namespace** is not updated, and cannot be. That
+   includes engines in other processes, other `ConnectionPool` instances, and `ReadPool` slots.
+   Each must be reopened with the new key. Until then it returns `EncryptionError` on rotated
+   entries. Engines on **other namespaces** are unaffected and must keep their own key. A watcher
+   needs no action: its helper connection holds no key and never decodes payloads (verified in Q0a).
+   `AsyncCacheEngine` clones share one engine, so they continue with the new key. The rustdoc of
    `CacheEngine::rotate_encryption_key` and `AsyncCacheEngine::rotate_encryption_key`, and the
-   `docs/src/cookbook.md` encryption recipe, must say so: **after rotation, every other open
-   engine on this database must be reopened with the new key.** The watcher helper only deletes
-   rows and never decodes, but the implementer must verify that rather than assume it.
+   `docs/src/cookbook.md` encryption recipe, must say exactly this. The first version of this item
+   said "every other open engine on this database", which is wrong for other namespaces. A user
+   following it would lose access to their unrotated rows.
+5. *(Amendment 2.)* **`Ok` means the engine switched keys**, including when no entry needed
+   re-encryption. The first implementation returned `Ok(0)` early on an empty set and kept the old
+   key. Every later write then used a key the caller believed retired (reproduced in the Q0a
+   review).
+6. *(Amendment 2.)* **The read-modify-write is one transaction.** Rotation opens an `IMMEDIATE`
+   transaction **before** loading the encrypted rows, and holds it until commit. Before this, rows
+   were loaded in autocommit mode and written back by id in a later transaction. A concurrent write
+   landing between the two was overwritten with the old payload re-encrypted, under the new
+   metadata: a Fresh entry holding stale data. The rustdoc already promised "a single SQLite
+   transaction". Now the code keeps that promise. A concurrent writer waits or gets `SQLITE_BUSY`;
+   it is never lost.
 
 **Rejected:** changing the method to `&mut self`. It is the more obvious signature, but it is a
 breaking signature change. Every caller holding `&CacheEngine`, including closures passed to
@@ -84,6 +110,11 @@ whose `&self` form is equally sound.
 - A `QueryBuilder` created before a rotation and run after it returns the rotated rows, not an
   empty result.
 - The compile-time auto-trait assertions from design item 1.
+- *(Amendment 2.)* Rotating a namespace with nothing to re-encrypt, then writing through the same
+  engine: the row decodes after reopening with the new key only (item 5).
+- *(Amendment 2.)* A write from another connection between the load and the update is refused or
+  preserved, never overwritten (item 6). This needs a `#[cfg(test)]` interleaving hook, following
+  the pattern in `crates/localcache/src/db/indexes.rs`.
 
 ## R2 — `offset` counts only rows that materialize, in every tier
 
@@ -187,7 +218,7 @@ feature. That closes the one real no-features query coverage gap, the narrower o
 4. *(Superseded by R6.)* This item first proposed keeping the write path's `last_accessed_at`
    behaviour and correcting only the comments. Re-reviewing that choice against the owner's
    "APIs for users not to be confused" principle exposed the R6 defect: the behaviour itself is
-   wrong, not only the comment.
+   wrong, not only the comment. R6 as re-scoped by Amendment 2 corrects that comment.
 5. `PayloadVersionMismatch` is never constructed. Removing it would be breaking. Document it as
    reserved and currently unused, and fix `docs/src/errors.md`: a version mismatch makes
    `get_if_fresh` return `None` and `check_status` return `Stale`. Whether to use or remove the
@@ -246,17 +277,57 @@ Every item was verified against the code on 2026-09-23.
   - Link the mdBook user guide.
 - **`CHANGELOG.md`** → add compare links for 0.20.1–0.21.4, and correct every existing link to the
   repository's actual, unprefixed tag names, as the Rust project rule requires.
+- *(Amendment 2)* **Rustdoc that misstates behaviour**, each verified against the code on
+  2026-09-23:
+  - `QueryBuilder::path_like`, `CacheEngine::keys`, and the CLI `query --path-like` help: the
+    pattern uses `\` as its `LIKE` escape character. A literal `%`, `_`, or `\` must be written as
+    `\%`, `\_`, or `\\`. This matters for Windows paths. The same sentence goes in
+    `docs/src/querying.md` and `docs/src/cli.md`.
+  - `ReadPool::get`: the paragraph about `last_accessed_at` contradicts itself. State that a
+    read-only slot never updates `last_accessed_at`.
+  - `ReadPool::cache_stats`: says "hit-rate", which the method does not return.
+  - `AsyncCacheEngine` type doc: says every operation runs on `tokio::task::spawn_blocking`. It
+    runs on whichever runtime feature is active.
+  - `CacheWatcher::watch`: says "no effect if the path does not exist". It returns an error.
+  - `LocalFileCacheError::EncryptionError`: lists "missing `encryption` feature" as a cause. That
+    case returns `UnknownEncoding`, and a missing key returns `UnsupportedFeature`. State both.
+  - `CacheOptions::ttl` and `CacheEngineBuilder::ttl`: TTL has one-second resolution, and a
+    duration under one second makes every entry immediately stale. It is rejected from v0.22.0
+    (RFC 025).
+  - `CacheOptions::max_entries` and `CacheEngineBuilder::max_entries`: per R6 design items 1 and 4.
+  - `ChangeDetectionMode::MetadataThenPartialHash`: per R7.
+- *(Amendment 2)* **`docs/src/change_detection.md`** → R7's contract. **`docs/src/cli.md`** → the
+  writable commands open the database with WAL and `synchronous = NORMAL`, and WAL persists in the
+  file. Document this; do not change it. Whether an engine should leave an existing journal mode
+  alone is an API question for Q2.
 - **`rfcs/README.md`** → the architect does this when this RFC is filed; listed here for
   completeness.
 - **`ROADMAP.md`** → the architect maintains it; no implementer action.
 
-## R6 — A write is an access; `set` never evicts what it just wrote
+## R6 — `set` never evicts what it just wrote; eviction is deterministic
 
-> **Amendment, 2026-09-23, after acceptance.** R6 was added when the architect re-reviewed R4.4
-> against the owner's principle that APIs must not confuse users. The defect below is **reproduced**
-> (scratch probe under `.git-exclude/tmp/lru-probe/`), not inferred. It is within this RFC's theme,
-> a correctness fix restoring a documented contract, but it added scope, so the owner confirmed it
-> explicitly (**accepted 2026-09-23**).
+> **Amendment history.** R6 was added on 2026-09-23 after acceptance, when the architect
+> re-reviewed R4.4 against the owner's principle that APIs must not confuse users. The defect below
+> is **reproduced** (scratch probe under `.git-exclude/tmp/lru-probe/`). The owner accepted it the
+> same day.
+>
+> **Amendment 2, 2026-09-23 — R6 re-scoped, authorized by the owner.** The first design made a
+> write count as an access. `last_accessed_at` has one-second resolution, so under that design a
+> write and a later `touch` or `get` in the same second tie. The `id` tiebreak then evicts the
+> entry the caller just touched. `touch` is documented as protection from eviction, and would stop
+> providing it within the second; `touch_protects_from_lru_eviction`
+> (`crates/localcache/tests/query.rs`) would fail. The first design also rejected `max_entries(0)`
+> and oversized batches. That turns calls that returned `Ok` in v0.21.3 into `Err`, in a patch
+> release. It would also have broken `batch_set_respects_max_entries`
+> (`crates/localcache/tests/codec_lru.rs`) and a read-only `max_entries(0)` case in
+> `crates/localcache/tests/read_only_contract.rs`. RFC 022's compatibility section had not
+> disclosed any of this.
+>
+> The principled end state is still a true least-recently-used policy, where reads and writes
+> both count. It needs a recency signal finer than one second, which is a schema change. It also
+> needs rejection errors that use the variants Phase 24 Q3 defines. Both belong in **v0.22.0**, as
+> **RFC 026** (recency) and **RFC 025** (rejections). This patch fixes the reproduced defect with
+> one rule, and makes every document tell the truth about the policy it actually implements.
 
 ### Defect
 
@@ -270,67 +341,183 @@ max_entries(2); set(a); set(b); get(a); get(b); set(c)
 → set(c) returns Ok(()), and contains(c) == false
 ```
 
-The user sees `set` succeed and the next `get` miss. That contradicts:
-
-- `docs/src/builder.md` ("true LRU based on `last_accessed_at`");
-- `README.md` ("evicts the least recently accessed entries");
-- `CacheOptions::max_entries`' rustdoc.
-
-The existing tests pass only because they never read every surviving entry before a write. They
-also depend on a tie at one-second `updated_at` resolution, which SQLite breaks in an unspecified
-order.
+The user sees `set` succeed and the next `get` miss. `batch_set` has the same defect at a larger
+scale: its new rows all start at `0`, so a batch that fits within `max_entries` can evict its own
+rows while older, read entries survive. The same-second `updated_at` tie is broken in an order
+SQLite leaves unspecified.
 
 ### Design
 
-1. **A write is an access.** Insert and overwrite (`upsert_in_tx`) both set `last_accessed_at` to the
-   current time. That is the same clock and unit `get` uses (Unix seconds).
-   `last_accessed_at` then means "last read or write". This is what "least recently used"
-   means to every user of an LRU cache.
-2. **Deterministic eviction order:** `last_accessed_at ASC, updated_at ASC, id ASC`. The final
-   key removes the unspecified same-second tie. `id` is first-insert order, and an overwrite
-   keeps its `id`. Apply the same order in `list_lru_n_paths`, so the `on_evict` callback reports
-   exactly the rows deleted.
-3. **`set` never evicts the entry it just wrote.** Exclude that row from the eviction candidates.
-   **`max_entries(0)` is rejected when the engine is opened** (`CacheEngine::open`, and therefore
-   `build()`, `build_read_pool()`, `ReadPool::open`, `ConnectionPool::open`, and
-   `AsyncCacheEngine::open`), with `UnsupportedFeature("max_entries must be at least 1")`. A cache
-   that can hold nothing would make every `set` an `Ok` that stored nothing, which is the confusion
-   R6 exists to remove. Q3 re-homes the variant when it splits `UnsupportedFeature`.
-4. **`batch_set` excludes its own entries from eviction.** A batch whose **distinct stored paths
-   exceed `max_entries` is rejected before anything is written**, with
-   `UnsupportedFeature("batch of N distinct entries exceeds max_entries M")`. The only other
-   design would store the batch and then evict part of it inside the same call. `BatchSetReport`
-   has no truthful way to report that: those items neither failed nor remain stored. Rejection is
-   all-or-nothing, and the caller can split the batch. "Distinct stored paths" counts only items
-   that passed preparation; duplicate paths in one batch count once.
-5. **No schema change and no migration.** Rows written before 0.21.4 keep `last_accessed_at = 0`
-   until next read or written, so they are evicted first. That is correct, because they are the
-   least recently used.
-6. **Documented meaning change.** `EntryInfo::last_accessed_at`, `ExportRecord::last_accessed_at`,
-   `order_by_last_accessed`, the CLI `list` "never" label, `docs/src/architecture.md`, and
-   `docs/src/builder.md` all say "last read or write". `0` then means only "written by an earlier
-   version and never read since". That changes a documented meaning, so it goes under
-   `### Changed`, and the note must say plainly that **localcache no longer distinguishes "never
-   read" from "written"**. Deriving it from `updated_at` is unreliable at one-second resolution,
-   and the docs must not suggest it. Callers who need that signal track it themselves.
-   **Rejected alternative:** keep `last_accessed_at` as read-only and evict by
-   `MAX(last_accessed_at, updated_at)`. It preserves the signal, but no index can serve that
-   expression, so every eviction would sort the whole namespace. N4 measured eviction at 1M rows,
-   and this would regress it without a schema change to add an expression index.
+1. **The recency signal is unchanged in v0.21.x.** `last_accessed_at` is the Unix-second time of
+   the last **read** (`get`, `get_if_fresh`, `touch`). It is `0` if the entry was never read. An
+   overwrite keeps it. Eviction therefore removes the **least recently read** entries, and entries
+   never read go first. Every document states exactly that policy:
+   - `CacheOptions::max_entries`, `CacheEngineBuilder::max_entries`, and
+     `docs/src/builder.md`: replace "true LRU based on `last_accessed_at`";
+   - `README.md`: replace "least recently accessed";
+   - `docs/src/architecture.md`;
+   - `EntryInfo::last_accessed_at` and `ExportRecord::last_accessed_at`: say "last read", and
+     "`0` = never read"; an overwrite does not reset it;
+   - `QueryBuilder::order_by_last_accessed`.
+
+   The stale comment in `upsert_in_tx`, which claims a reset to `0` on every write, is corrected.
+   The code only writes `0` on insert.
+2. **A write never evicts the entries it wrote.** One rule, with no exception, for `set` (its one
+   row) and `batch_set` (every row it wrote). Eviction chooses only among the namespace's other
+   rows.
+3. **Deterministic, exact eviction.**
+   - Order: `last_accessed_at ASC, updated_at ASC, id ASC`. `id` is first-insert order, and an
+     overwrite keeps its `id`.
+   - One repository function selects the victims (excluding the protected ids) and deletes them
+     by id, both in **one** transaction.
+   - `on_evict` receives exactly the deleted paths, **after** commit.
+   - The selection must be served by `idx_files_lru` without a temporary sort. SQLite appends the
+     rowid to the index, so `id ASC` is covered. Check this with `EXPLAIN QUERY PLAN`.
+4. **Consequences of rule 2, documented in the rustdoc and in `docs/src/builder.md`.** These are
+   consequences, not exceptions:
+   - A `batch_set` that stores more distinct entries than `max_entries` stores all of them, and
+     reports all of them as stored. The namespace stays above the bound until the next write,
+     which evicts down to `max_entries`.
+   - `max_entries(0)` keeps only the entry written most recently.
+
+   Both inputs are rejected with an explicit error **from v0.22.0** (RFC 025). The rustdoc and the
+   `### Changed` entry announce this now. v0.21.3 silently deleted entries it had just reported as
+   stored. Storing more than the bound for one call is the safe direction: no data is lost, and
+   no `Ok` is false.
+5. **No schema change, no new error, no public signature change.**
 
 ### Tests
 
 - The reproduction above fails on v0.21.3 and passes after the fix.
-- Eviction order holds with same-second ties: no reliance on sleeps or unspecified order.
-- The `on_evict` callback paths equal the deleted paths.
-- `batch_set` within `max_entries`, and a batch larger than `max_entries`. In both, every path
-  reported stored is present.
-- Overwriting an entry makes it most-recent.
+- `batch_set` within the bound, with older read entries present: none of the batch is evicted,
+  and older rows go instead. This fails on v0.21.3.
+- Eviction order with same-second ties: the victim is fully determined, with no `sleep` and no
+  reliance on unspecified order. Assert the exact survivor set.
+- The `on_evict` paths equal the set of rows that disappeared.
+- An oversized `batch_set` stores every reported entry, and the next `set` restores the bound.
+- `max_entries(0)`: after a `set`, only that entry remains.
 - An imported `ExportRecord` keeps its exported `last_accessed_at` (unchanged behaviour).
+- These pass **unmodified**: `max_entries_evicts_oldest`, `lru_evicts_least_recently_accessed`,
+  `touch_protects_from_lru_eviction`, and the read-only `max_entries(0)` case in
+  `crates/localcache/tests/read_only_contract.rs`.
+- **One existing test's premise is withdrawn:** `batch_set_respects_max_entries`
+  (`crates/localcache/tests/codec_lru.rs`). It asserts that a 5-entry batch under `max_entries(2)`
+  leaves at most 2 entries. That assertion encodes the defect: three entries reported as stored
+  are silently gone. It is rewritten to assert rule 4 (all 5 present, then the bound restored by
+  the next `set`). This is the only existing test this RFC authorizes changing, and the review
+  request must show the diff.
+
+## R7 — A size change is conclusive in the metadata-then-hash modes
+
+*(Amendment 2, authorized by the owner 2026-09-23.)*
+
+### Defect
+
+`MetadataThenPartialHash` hashes the first and last 64 KiB and ignores the length. When a file's
+size changes but its head and tail do not, for example after an insertion in the middle,
+`check_status` returns **`Fresh`** and `get_if_fresh` **serves the old payload**. Reproduced on
+v0.21.3 (`.git-exclude/tmp/arch-probe/`): 335 872 → 438 272 bytes, `status=Fresh`,
+`size_changed=true`. The mode is documented as "may miss changes in the middle". A reader expects
+that to mean same-size edits, not a file that grew by 100 KiB. A size change is certain evidence
+that the content changed.
+
+### Design
+
+In `MetadataThenPartialHash` and `MetadataThenFullHash`, when the stored and current
+`file_size` differ, the status is `Stale` **without hashing**. For the full-hash mode this changes
+no result, because the digest would differ anyway, but it skips a full read of a file already
+known to be changed. `StrictFullHash` is unchanged: its name promises a hash on every check, and
+its result is identical anyway.
+
+`docs/src/change_detection.md` and the `ChangeDetectionMode` rustdoc state the contract. Partial
+hashing detects any size change and any change within the first or last 64 KiB. It does not detect
+a same-size change confined to the middle.
+
+### Tests
+
+- The reproduction above, as an integration test in `crates/localcache/tests/storage.rs`. It must
+  fail on v0.21.3.
+- A size change under `MetadataThenFullHash` → `Stale`.
+- Unchanged file → `Fresh` in both modes (regression).
+
+## R8 — `AsyncCacheEngine` batch methods return one result per path
+
+*(Amendment 2, authorized by the owner 2026-09-23.)*
+
+### Defect
+
+`AsyncCacheEngine::batch_get`, `batch_get_fresh`, and `check_status_batch` return
+`vec![Err(e)]`, **one** element, when the engine lock is poisoned or the blocking task panics,
+whatever the number of paths requested. A caller doing `paths.iter().zip(results)` silently loses
+every path but the first. This is the defect v0.21.1 fixed for `ConnectionPool`; the third wrapper
+was missed. Reproduced on v0.21.3: 3 paths requested, 1 result from each method.
+
+### Design
+
+The three methods return exactly one result per requested path on every path.
+- Lock poisoning → one `Poisoned { resource: "AsyncCacheEngine" }` per path, built inside the
+  blocking closure, as `ConnectionPool` does. The closure then cannot fail.
+- A failed blocking task → one `AsyncTaskPanicked` per path. Once the closure cannot fail, the
+  only error `spawn` can return is the runtime's `AsyncTaskPanicked`. The code states that
+  invariant in a comment and a `debug_assert!`.
+- The rustdoc of each method states the one-per-path guarantee, matching `ConnectionPool` and
+  `ReadPool`.
+
+### Tests
+
+On every async backend the suite runs, using the `macro_rules!` pattern in
+`crates/localcache/tests/pool_observe.rs`:
+- Poison the engine (a panic inside `query_run`, as the existing poisoning test does), then call
+  each batch method with 3 paths: 3 results each, all `Poisoned`. This must fail on v0.21.3.
+- A payload type whose `Deserialize` panics: `batch_get` over 3 stored paths returns 3
+  `AsyncTaskPanicked`.
+
+## R9 — Watcher helpers inherit the engine's database configuration
+
+*(Amendment 2, authorized by the owner 2026-09-23.)*
+
+### Defect
+
+`watcher()` and `debounced_watcher()` open a helper connection with **default** options. Opening
+a writable engine applies its journal mode and `synchronous` setting, and journal mode is
+persistent in the database file. A database the application opened with `JournalMode::Delete` is
+therefore **switched to WAL** as a side effect of starting a watcher. Reproduced on v0.21.3: no
+`-wal` file before `watcher()`, one after. That can matter a great deal: WAL does not work on
+network filesystems, which is a common reason to choose `Delete`.
+
+Two smaller defects in the same code:
+- `watcher()` opens **two** helper connections. The first carries the encryption key and is
+  discarded after its fields are read. The second, the one actually used, carries no key.
+- `CacheDebouncedWatcher`'s callback, on a poisoned helper lock, skips the removal but still sends
+  a `WatchEvent` claiming invalidation. `CacheWatcher` sends nothing in that case, and RFC 015 R5
+  requires that no notification claim an invalidation that did not happen.
+
+### Design
+
+1. `CacheEngine` records the journal mode and `synchronous` setting it was opened with.
+2. One internal function builds the helper's `CacheOptions` from the parent engine. It carries
+   database path, namespace, detection mode, codec, TTL, payload version, journal mode, and
+   `synchronous`. It carries **no** encryption key and no compression setting: the helper never
+   encodes or decodes, so it should not hold key material.
+3. Both watcher constructors use that function. `watcher()` opens exactly one helper connection.
+4. The debounced callback sends nothing when it could not take the lock, matching `CacheWatcher`.
+
+### Tests
+
+- A database opened with `JournalMode::Delete`: after `watcher()`, and separately after
+  `debounced_watcher()`, `PRAGMA journal_mode` on the file (read through a raw `rusqlite`
+  connection) is still `delete`. This must fail on v0.21.3.
+- The poisoned-lock path is not reachable through the public API. It is verified by review, and
+  the review request says so.
 
 ## Non-goals
 
-- Splitting `UnsupportedFeature`, or deciding `PayloadVersionMismatch`'s fate (Phase 24 Q2, breaking).
+- Splitting `UnsupportedFeature`, or deciding `PayloadVersionMismatch`'s fate (Phase 24 Q3, breaking).
+- **Any new error for input v0.21.3 accepted.** This covers the `max_entries(0)`,
+  oversized-batch, and sub-second-TTL rejections. They go to RFC 025 (v0.22.0), under Phase 24's
+  rule that a newly rejected input ships only in a minor release.
+- **A true least-recently-used policy, where writes count.** It needs recency finer than one
+  second, which is a schema change. That goes to RFC 026 (v0.22.0).
 - Paging `rotate_encryption_key`'s full load of encrypted payloads into memory (registered; RFC
   020's paging would apply).
 - Any MSRV or dependency change (Phase 24 Q1).
@@ -339,15 +526,27 @@ order.
 
 ## Compatibility and release
 
-No public signature, schema, SQL shape, or wire-format change.
+No public signature, schema, SQL shape, wire-format, or dependency change. **No input that
+v0.21.3 accepted now returns an error.**
 
-**Two observable behaviour corrections**, both restoring a documented contract:
-- After R1, a rotating engine keeps working after the rotation.
-- After R2, `offset` pages in tiers 1 and 2 match tier 3 and pre-0.21.3 behaviour when undecodable
+**Observable behaviour corrections**, each restoring a documented or reasonably expected
+contract:
+- **R1:** after rotation, the rotating engine uses the new key, including when nothing needed
+  re-encryption. A concurrent write during rotation waits or fails with busy; it is no longer
+  overwritten.
+- **R2:** `offset` pages in tiers 1 and 2 match tier 3 and pre-0.21.3 behaviour when undecodable
   rows exist.
+- **R6:** a write never evicts what it wrote, and eviction order is deterministic. The one visible
+  change: an oversized `batch_set` keeps every entry it reports as stored, instead of silently
+  deleting some of them.
+- **R7:** a file whose size changed is `Stale` under partial hashing. Entries previously and
+  wrongly reported `Fresh` are recomputed once.
+- **R8:** `AsyncCacheEngine` batch methods return one result per path on failure.
+- **R9:** starting a watcher no longer changes the database's journal mode.
 
-Both go under `### Fixed` in the 0.21.4 changelog, each with a sentence on who could have been
-affected. This is non-breaking work at its own breaking point, so it ships as a patch.
+All go under `### Fixed` in the 0.21.4 changelog, except R6's documentation of the read-based
+policy and its v0.22.0 notice, which go under `### Changed`. Each entry has a sentence on who could
+have been affected. This is non-breaking work at its own breaking point, so it ships as a patch.
 
 ## Resolved: the two non-RFC handoff directories
 

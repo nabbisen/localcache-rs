@@ -1246,8 +1246,10 @@ v0.21.0. Recorded here so it is in the RFC when written, rather than appended at
 
 ## Phase 24 — Correctness, Contracts, and API Consistency (v0.21.4, v0.21.5, v0.22.0)
 
-**Status: authorized by the owner 2026-09-23.** RFC 022 was accepted the same day. The owner set
-two standing principles for this phase:
+**Status: authorized by the owner 2026-09-23.** RFC 022 was accepted the same day. Its
+**Amendment 2** was authorized the same day, after the architect's re-onboarding and the Q0a
+review. It corrects R1, re-scopes R6, and adds R7–R9 (see "Amendment 2" below). The owner set two
+standing principles for this phase:
 
 - **"Finally clean, safe and secure, robust and sophisticated design."**
 - **Public APIs must not confuse or mislead users.**
@@ -1266,6 +1268,17 @@ replanning report. The architect's onboarding review of v0.21.3 (2026-09-23) fou
 - install examples in the docs that point users at a release the project itself documents as
   broken on its MSRV;
 - records that had drifted: the RFC index, the CHANGELOG links, and this file's registers.
+
+A second architect session re-onboarded the same day, after the first was lost. It found four
+more defects, each reproduced by a scratch probe:
+- partial-hash detection serves stale data after a size change;
+- `AsyncCacheEngine` batch methods return one result for many paths;
+- starting a watcher switches the database's journal mode;
+- a TTL under one second expires every entry at once.
+
+The Q0a review then found two more in key rotation. **RFC 022 R6 as first accepted was also
+unsound**: at one-second resolution, making a write count as access stops `touch` from protecting
+an entry within the same second, and its new rejections broke callers in a patch release.
 
 Phase 24 fixes those first, as a patch. It then takes up the API-contract themes the review
 surfaced: wrapper surfaces that disagree, names that say something the code does not do, and an
@@ -1291,12 +1304,20 @@ error type whose catch-all variant tells users little.
 
 | Release | Contents | Breaking? |
 |---|---|---|
-| **v0.21.4** | Q0: three correctness fixes, release-tooling repair, docs and records reconciliation (RFC 022) | no |
+| **v0.21.4** | Q0: seven correctness fixes (RFC 022 R1, R2, R6–R9), release-tooling repair, docs and records reconciliation | no |
 | **v0.21.5** | Q2: API consistency, additions and deprecations only; plus the Q2b module split and any non-breaking outcome of Q4 | no |
-| **v0.22.0** | Q3: error-taxonomy completion, and removal of anything Q2 deprecated. Also any MSRV raise, **only** if Q1 approves one | **yes** |
+| **v0.22.0** | Q3: error-taxonomy completion, configuration and argument validation, and removal of anything Q2 deprecated. Q5: the LRU recency contract (schema v6). Also any MSRV raise, **only** if Q1 approves one | **yes** |
 
-If Q2 deprecates nothing and Q3 concludes with no behavioural change, there is no v0.22.0. As in Phase 23, that is a good
-outcome, not a shortfall.
+v0.22.0 is now certain. Q3 and Q5 both change observable behaviour.
+
+**Rule, set 2026-09-23: newly rejected input ships only in a minor release.** When the library
+starts returning an error for input it previously accepted, that ships only in a minor release,
+using the error variants Q3 defines. This holds even when the input never did what the caller
+intended. A consumer's `cargo update` within `0.21` must never turn a working startup or a working
+call into an `Err`. Until then, the patch documents the current behaviour plainly and announces the
+rejection one release ahead, the same notice principle Q1 proposes for MSRV. The rule applies
+first to `max_entries(0)`, to a `batch_set` larger than `max_entries`, and to a TTL under one
+second.
 
 ### Milestones
 
@@ -1305,21 +1326,47 @@ provisional until the file is created (RFC 000).
 
 | Milestone | Scope | Authority | Depends on |
 |---|---|---|---|
-| **Q0a — Key rotation state** | The rotating engine adopts the new key only after commit, via an interior-mutable key; reopen-after-rotation contract documented | RFC 022 R1 | RFC 022 accepted ✅ |
+| **Q0a — Key rotation state** | The rotating engine adopts the new key only after commit, via an interior-mutable key; `Ok` always means the engine switched keys; the read-modify-write holds one `IMMEDIATE` transaction; namespace-scoped reopen contract documented | RFC 022 R1 (amended) | RFC 022 accepted ✅; first review: corrections required (2026-09-23) |
 | **Q0b — Query `offset` contract** | `offset` counts only rows that materialize, in every tier | RFC 022 R2 | RFC 022 accepted ✅ |
-| **Q0c — LRU recency** | A write is an access; deterministic eviction order; `set` never evicts what it just wrote; `max_entries(0)` and oversized batches rejected | RFC 022 R6 | RFC 022 accepted ✅; R6 amendment accepted ✅ |
+| **Q0c — LRU eviction** | A write never evicts what it wrote (`set` and `batch_set`); deterministic, exact eviction; every doc states the read-based policy it actually implements. No new error | RFC 022 R6 (re-scoped by Amendment 2) | Amendment 2 authorized ✅ |
+| **Q0g — Size change is conclusive** | In the metadata-then-hash modes a size change is `Stale` without hashing, so partial hashing never serves stale data after a size change | RFC 022 R7 | Amendment 2 authorized ✅ |
+| **Q0h — Async batch results** | `AsyncCacheEngine` batch methods return one result per path on failure, matching `ConnectionPool` and `ReadPool` | RFC 022 R8 | Amendment 2 authorized ✅ |
+| **Q0i — Watcher helper configuration** | Watcher helpers inherit the engine's journal mode and `synchronous`, hold no key, and open one connection; the debounced watcher sends no false notification | RFC 022 R9 | Amendment 2 authorized ✅ |
 | **Q0d — Release tooling** | Version gate covers every install example; retire the Makefile publish tasks; no retry on HTTP 404; Pages workflow least privilege | RFC 022 R3 | RFC 022 accepted ✅ |
-| **Q0e — Hygiene, docs, and records** | RFC 022 R4 and R5, including the documentation for Q0a–Q0c's contracts | RFC 022 R4–R5 | Q0a–Q0d |
+| **Q0e — Hygiene, docs, and records** | RFC 022 R4 and R5, including the documentation for every code slice's contract | RFC 022 R4–R5 | Q0a–Q0d, Q0g–Q0i |
 | **Q0f — Release v0.21.4** | Gates, evidence, release decision, owner tag/publish | owner | Q0e |
 | **Q1 — MSRV policy** | Design only (**RFC 023**): when and how a library with app consumers may raise its MSRV. Evaluate the `rusqlite 0.40` / Rust 1.95 question against it. **No MSRV change in this milestone** | owner approval required | — (runs in parallel with Q0) |
 | **Q2 — API consistency** | **RFC 024**. (1) `ConnectionPool`, `AsyncCacheEngine`, and `ReadPool` each hand-delegate a different subset of `CacheEngine`: define each one's intended surface, add what is missing, and add a test that fails when a wrapper silently falls behind. (2) Names that mislead: `order_by_updated_at`/`then_by_updated_at` sort by the source file's `mtime`, not `updated_at` (RFC 021 hazard 1); `SortOrder` is exported but no public signature accepts it; the CLI `migrate` command copies rather than moves. Fix by adding correctly named items and **deprecating**, never by silently changing what an existing name does. Removal waits for v0.22.0 | RFC 024 | Q0f |
 | **Q2b — Module-size split** | A pure move, verified at token level as in Phase 22 N5: `crates/localcache/src/cache/query.rs` (~719 production ELOC after RFC 021) at the builder/execution seam; `crates/localcache/src/db/repository.rs` (~890) re-assessed. It is a separate commit, because a move must never carry a fix | — | Q2, which touches the same files |
-| **Q3 — Error-taxonomy completion** | **RFC 025**: split `UnsupportedFeature`'s remaining uses (invalid argument / invalid configuration / precondition) into matchable variants; decide `PayloadVersionMismatch` (use it or remove it); remove what Q2 deprecated. Adding variants is additive because the enum is `#[non_exhaustive]`, but changing which variant an existing failure returns is behavioural, hence v0.22.0 | RFC 025 | v0.21.5 released |
+| **Q3 — Error taxonomy and input validation** | **RFC 025**. (1) Split `UnsupportedFeature`'s remaining uses (invalid argument / invalid configuration / precondition) into matchable variants. (2) Decide `PayloadVersionMismatch`: use it or remove it. (3) Remove what Q2 deprecated. (4) Reject the inputs the patch line documents but must not reject: `max_entries(0)` and a TTL under one second at open, and a `batch_set` with more distinct entries than `max_entries` before writing. Adding variants is additive because the enum is `#[non_exhaustive]`, but changing which variant an existing failure returns, or rejecting accepted input, is behavioural, hence v0.22.0 | RFC 025 | v0.21.5 released |
 | **Q4 — `path_in_dir` share** | Measurement only: `path_in_dir`'s share of a realistic query workload, answering the question deferred at the Phase 23 exit review. An RFC follows only if the share justifies a query-planner change | — | Q0f |
+| **Q5 — LRU recency contract** | **RFC 026**: a true least-recently-used policy where reads **and writes** count, on a recency signal finer than one second. It is a schema change (v6), under RFC 010's migration discipline, with the export/import format decided in the RFC. The same migration evaluates dropping `idx_files_namespace_path`, which duplicates the `UNIQUE(namespace, path)` autoindex (see the register). Implemented after Q3, as its own review point, and shipped in the same v0.22.0, so users absorb one break | RFC 026 | Q3's variants |
 
-Q0a–Q0d are independent and may run in parallel. Q0e comes after them because it documents
-Q0a–Q0c's contracts, and so that Q0d's widened gate checks the corrected examples the first time.
+Q0 runs one slice at a time, in this order: **Q0a → Q0b → Q0c → Q0g → Q0h → Q0i → Q0d → Q0e →
+Q0f**. Each is an independent review point.
+- The code slices come first.
+- Q0e comes after them because it documents their contracts, and so that Q0d's widened gate
+  checks the corrected examples the first time.
+- Slice letters are stable identifiers, not positions. Q0f was already the release, so the new
+  slices start at g.
+
 Q1 is design work and blocks nothing in v0.21.x.
+
+### Amendment 2 (RFC 022), 2026-09-23
+
+- **R1 corrected.** Found by the Q0a review, and reproduced:
+  - a rotation with nothing to re-encrypt returned `Ok` and kept the old key;
+  - rotation read its rows outside its transaction, so a concurrent write could be overwritten
+    with stale data under fresh metadata;
+  - the rustdoc told users to reopen every engine on the database, but rotation is
+    namespace-scoped.
+- **R6 re-scoped.** v0.21.4 fixes the reproduced defect with one rule: a write never evicts what
+  it wrote. The docs now state the read-based policy the code actually implements. The true LRU
+  (Q5) and the rejections (Q3) move to v0.22.0. The earlier design would have broken `touch`
+  within a second and broken callers in a patch.
+- **R7–R9 added**: the three reproduced defects above that fit a patch. The fourth, the
+  sub-second TTL, is a newly rejected input, so it goes to Q3 under the rule above. v0.21.4
+  documents the current behaviour.
 
 **Handoff placement (decided 2026-09-23, RFC 022).** A tracked handoff exists only as the companion
 of its governing RFC, under `rfcs/handoffs/NNN-slug/`. A milestone with no RFC, such as Q2b or Q4,
@@ -1356,7 +1403,14 @@ The standing `rusqlite ^0.39` register entry is re-evaluated against this policy
 | `upload-artifact@v4` / `download-artifact@v4` are behind current majors | 2026-09-23 review | **Q0d must check whether GitHub has announced a runtime-retirement date affecting these pins.** If it has, this becomes a dated external constraint and moves into Q0d. |
 | Watcher behaviour on large trees; async-runtime concurrency | Phase 23, unchanged | Still unmeasured; still nothing measured argues for it. |
 | `max_entries` is enforced only by `set`/`batch_set`, not by `import_entries`, `import_from`, or `namespace_copy` | 2026-09-23, found while writing the RFC 022 handoff | Consistent with the rustdoc ("when exceeded after a `set`"), so it is not a defect, and Q0e documents it plainly. Whether an import should honour the bound, and what it should do with the overflow, is an API-contract question for **Q2** (RFC 024). |
-| Encryption key material is copied into engine memory and never zeroized | 2026-09-23, while designing RFC 022 R1 | Pre-existing, and R1 does not widen it materially. Zeroizing needs `zeroize` (a new dependency under RFC 014's watch) and a decision on the builder's `Vec<u8>` key input. Assess at Q2 or Q3, whichever next touches key handling. |
+| Encryption key material is copied into engine memory and never zeroized | 2026-09-23, while designing RFC 022 R1 | Pre-existing, and R1 does not widen it materially. Zeroizing needs `zeroize` (a new dependency under RFC 014's watch) and a decision on the builder's `Vec<u8>` key input. Assess at Q2 or Q3, whichever next touches key handling. A zeroizing wrapper is not `Copy`, so the `Cell` introduced by Q0a must then move to `replace`/`take`. Redesign it then; do not patch around it. |
+| Every writable open applies its own journal mode and `synchronous` setting, and WAL persists in the file. The CLI's writable commands, and any engine opened with default options, silently switch a `Delete`-mode database to WAL | 2026-09-23 re-onboarding | Q0i removes the case the user never chose: watcher helpers. For explicit opens the behaviour is at least requested, if not understood, so v0.21.4 documents it. Whether an engine that does not ask for a journal mode should leave the existing one alone is an API question for **Q2** (RFC 024). |
+| `QueryBuilder::run` silently skips entries it cannot decode (for example, under the wrong encryption key), where `get` returns the error | 2026-09-23 re-onboarding | A query under a wrong key returns an empty, successful result, which the Q0a failing-before output showed in practice. RFC 022 R2 keeps skipping (it defines `offset` over it), so this is a contract question: report, skip, or make it selectable. **Q2** (RFC 024). A change of result is behavioural, so it lands in v0.22.0. |
+| `idx_files_namespace_path` duplicates the `UNIQUE(namespace, path)` autoindex exactly (verified in SQLite), and `create_path_index` builds a third identical index | 2026-09-23 re-onboarding | Every write maintains two identical indexes, and the path is stored three times. The public path-index API (`create_path_index`, `drop_path_index`, `list_path_indexes`, `index_hint`) can only create duplicates, so it adds no capability while `querying.md` presents it as a performance tool. Dropping the built-in is a schema change: evaluate it in **Q5** (RFC 026, schema v6). Whether the path-index API should exist is **Q2** (RFC 024). |
+| `CacheWatcher::watched_count` returns the namespace's entry count, not the number of watched paths | 2026-09-23 re-onboarding | The name says something the code does not do. **Q2**: add a correctly named item and deprecate. |
+| After a metadata-only change (for example `touch`), `MetadataThenFullHash` re-hashes the file on **every** check, because the stored metadata is never refreshed when the hash confirms freshness | 2026-09-23 re-onboarding | Correct results, repeated cost; a `git checkout` touching a tree makes every later check a full read. The fix is a write on the read path, so it needs design. Measure first, as Phase 23 taught; revisit when Q4's measurement work runs. |
+| Tokio's `JoinError` on runtime shutdown (cancellation) is reported as `AsyncTaskPanicked` | 2026-09-23 re-onboarding | Mislabelled, but only on shutdown. **Q3** (RFC 025), with the rest of the error taxonomy. |
+| `TERMS_OF_USE.md` says `NOTICE` summarizes third-party dependencies; `NOTICE` contains only the project's own copyright and licence notice | 2026-09-23 re-onboarding | A factual cross-reference inconsistency between two files, not a legal conclusion. The wording of a terms file is the owner's to decide, so it is not delegated to the dev team. **Owner decision pending.** |
 
 ## Future / Unscheduled
 

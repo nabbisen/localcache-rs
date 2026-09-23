@@ -1,17 +1,21 @@
 # RFC 022 Implementation Handoff — Correctness and Contract Reconciliation (v0.21.4)
 
-RFC: `rfcs/accepted/022-correctness-and-contract-reconciliation.md` (accepted 2026-09-23, R6
-amendment accepted the same day)
-Milestones: Phase 24 **Q0a–Q0e**. Q0f, the release, gets its own handoff later.
+RFC: `rfcs/accepted/022-correctness-and-contract-reconciliation.md` (accepted 2026-09-23; R6
+amendment and Amendment 2 authorized the same day)
+Milestones: Phase 24 **Q0a–Q0e and Q0g–Q0i**. Q0f, the release, gets its own handoff later.
+**Revised 2026-09-23 for Amendment 2:** § 2 gained Q0a's corrections, § 4 (Q0c) was re-specified,
+and §§ 4a–4c (Q0g, Q0h, Q0i) are new. If you read this handoff earlier, re-read §§ 1, 2, 4–4c, 6,
+and 7.
 QA companion: `rfcs/handoffs/022-correctness-and-contract-reconciliation/acceptance-qa-checklist.md`
 
 ## 0. What this is
 
-This is a **non-breaking patch**. It fixes three correctness defects that no current test catches,
+This is a **non-breaking patch**. It fixes seven correctness defects that no current test catches,
 repairs release tooling, and brings documentation and records back in line with the code.
 
-**No public signature, schema, SQL-shape, wire-format, or dependency change.** If you find that one
-is needed, stop and file a design request. Do not work around it.
+**No public signature, schema, SQL-shape, wire-format, or dependency change, and no input that
+v0.21.3 accepted may start returning an error.** If you find that one is needed, stop and file a
+design request. Do not work around it.
 
 Two standing principles from the owner govern every judgement call here:
 
@@ -25,11 +29,15 @@ Two standing principles from the owner govern every judgement call here:
 |---|---|---|
 | **Q0a** key rotation | R1 | `crates/localcache/src/cache/engine.rs`, `crates/localcache/src/cache/query.rs` (`EngineCore` use), tests |
 | **Q0b** query `offset` | R2 | `crates/localcache/src/cache/query.rs`, `crates/localcache/src/cache/query/tests.rs`, `crates/localcache/tests/query.rs` |
-| **Q0c** LRU recency | R6 | `crates/localcache/src/cache/engine.rs`, `crates/localcache/src/db/repository.rs`, `crates/localcache/tests/codec_lru.rs` |
+| **Q0c** LRU eviction | R6 | `crates/localcache/src/cache/engine.rs`, `crates/localcache/src/db/repository.rs`, `crates/localcache/src/cache/entry.rs`, `crates/localcache/src/cache/options.rs`, `crates/localcache/src/cache/builder.rs`, `crates/localcache/tests/codec_lru.rs` |
+| **Q0g** size change is conclusive | R7 | `crates/localcache/src/detection/strategy.rs`, `crates/localcache/src/cache/options.rs`, `crates/localcache/tests/storage.rs` |
+| **Q0h** async batch results | R8 | `crates/localcache/src/cache/async_engine.rs`, `crates/localcache/tests/pool_observe.rs` |
+| **Q0i** watcher helper configuration | R9 | `crates/localcache/src/cache/engine.rs`, `crates/localcache/src/cache/watcher.rs`, `crates/localcache/tests/watching.rs` |
 | **Q0d** release tooling | R3 | `scripts/release.py`, `scripts/check_advisories.py`, `scripts/release-tools.toml`, `scripts/tests/`, `Makefile.toml`, `.github/workflows/docs.yaml` |
 | **Q0e** hygiene, docs, records | R4, R5 | `crates/cli/src/main.rs` (+ new `crates/cli/src/main/tests.rs`), `crates/localcache/tests/query.rs`, rustdoc sites, `docs/src/`, `README.md`, `CHANGELOG.md` |
 
-**Order: Q0a → Q0b → Q0c → Q0d → Q0e, one slice at a time.** Each slice is an independent review
+**Order: Q0a → Q0b → Q0c → Q0g → Q0h → Q0i → Q0d → Q0e, one slice at a time.** Slice letters
+are identifiers, not positions. Q0f is the release, which is why the new slices start at g. Each slice is an independent review
 point, and the working tree must hold exactly one slice's changes when you file its review request.
 Follow the project cadence:
 
@@ -39,10 +47,10 @@ Follow the project cadence:
 4. commit with the message the review gives;
 5. start the next slice.
 
-**Never commit before the review lands.** Q0e comes last because it documents the contracts Q0a–Q0c
-establish, and Q0d's widened gate must check Q0e's corrected install examples the first time.
+**Never commit before the review lands.** Q0e comes last because it documents the contracts the
+code slices establish, and Q0d's widened gate must check Q0e's corrected install examples the first time.
 
-**Reproduce first, for Q0a, Q0b, and Q0c.** Write the new tests, run them against the unfixed
+**Reproduce first, for every code slice: Q0a, Q0b, Q0c, Q0g, Q0h, Q0i.** Write the new tests, run them against the unfixed
 code, and **capture the failing output** before you change any production code. That output is
 required evidence. A test that passes on v0.21.3 does not prove the defect is fixed.
 
@@ -125,6 +133,23 @@ Report the four results you observed on v0.21.3. If any differs from after the c
 
 ---
 
+### Corrections from the Q0a review (RFC 022 R1 items 4–6, Amendment 2)
+
+The review is `.git-exclude/reviewed/002-architect-q0a-key-rotation-review-2026-09-23.md`. It holds
+the full detail, and these points are durable here:
+
+- **`Ok` means the engine switched keys**, including when nothing needed re-encryption. Remove the
+  early `Ok(0)` that skips `set`.
+- **One `IMMEDIATE` transaction from load to commit.** Open it before
+  `load_encrypted_payloads`, and load through it.
+- **Scope:** rotation covers one namespace. Reopen engines on the same database **and namespace**.
+  Engines on other namespaces keep their key. Watchers need no action. `AsyncCacheEngine` clones
+  share the engine.
+- Two new tests: one for the no-rows rotation, and one `#[cfg(test)]` hook test for the concurrent
+  write. Both need failing-before output.
+
+---
+
 ## 3. Q0b — `offset` counts only rows that materialize (RFC 022 R2)
 
 ### The defect
@@ -191,31 +216,41 @@ it. It means the contract moved.
 
 ---
 
-## 4. Q0c — A write is an access; `set` never evicts what it just wrote (RFC 022 R6)
+## 4. Q0c — `set` never evicts what it just wrote; eviction is deterministic (RFC 022 R6, re-scoped)
+
+### What changed in this section, and why
+
+This section was **re-specified on 2026-09-23** by RFC 022 Amendment 2. The first version made a
+write count as an access. `last_accessed_at` has one-second resolution, so a same-second `touch`
+could no longer protect an entry. The first version also added two new errors. Both would have
+broken existing tests you were told to keep unmodified, and the new errors would have broken
+callers in a patch release. **Do not implement the earlier version.** In v0.21.4 the recency
+signal stays read-based, and nothing new returns an error. A true LRU and the rejections come in
+v0.22.0 (RFC 026 and RFC 025).
 
 ### The defect (reproduced)
 
 A probe is kept at `.git-exclude/tmp/lru-probe/`. `max_entries(2); set(a); set(b); get(a); get(b);
 set(c)` returns `Ok(())`, and then `contains(c) == false`. New rows start at
-`last_accessed_at = 0`, so they are the first eviction candidates.
+`last_accessed_at = 0`, so a write is the first eviction candidate for its own `set`. `batch_set`
+has the same defect: a batch within the bound can evict its own rows.
 
 ### Implementation
 
 1. **`upsert_in_tx`** (`crates/localcache/src/db/repository.rs`, around line 151):
-   - Use **one** `now_secs()` reading for both `updated_at` and `last_accessed_at` on insert.
-   - Add `last_accessed_at = excluded.last_accessed_at` to the `ON CONFLICT DO UPDATE` list.
-   - Return the row id: `Result<i64, _>`. It is already queried right after the insert.
-   - `upsert` passes the id through.
-   - Delete the stale comment claiming a reset to 0.
+   - `last_accessed_at` behaviour is **unchanged**: `0` on insert, and an overwrite keeps it.
+   - Return the row id, `Result<i64, _>`. It is already queried right after the insert. `upsert`
+     passes it through.
+   - Replace the stale comment ("reset to 0 on write") with the truth: `0` on insert means never
+     read, and an overwrite keeps the last read time.
 2. **`import_rows` is unchanged.** Imports keep the exported `last_accessed_at` on purpose.
-3. **Eviction becomes one selection, then deletion by id**, so `on_evict` reports exactly what was
-   deleted by construction, not by two queries agreeing. Replace `delete_lru_n` +
+3. **Eviction is one selection, then deletion by id.** Replace `delete_lru_n` and
    `list_lru_n_paths` with one repository function:
 
 ```rust
-/// RFC 022 R6: evict up to `n` least-recently-used rows of `namespace`,
-/// never touching `protected` ids. Order: last_accessed_at, updated_at, id.
-/// Returns the paths of the rows actually deleted.
+/// RFC 022 R6: evict up to `n` rows of `namespace` in least-recently-read
+/// order (last_accessed_at, updated_at, id), never touching `protected`
+/// ids. Returns the paths of the rows actually deleted.
 pub(crate) fn evict_lru(
     conn: &Connection,
     namespace: &str,
@@ -229,48 +264,155 @@ pub(crate) fn evict_lru(
    - Then `DELETE … WHERE id IN (…)`, both inside **one** transaction. Chunk the `IN` lists at
      500, as `payloads_for_ids` does.
    - `idx_files_lru` is `(namespace, last_accessed_at, updated_at)`, and SQLite appends the rowid,
-     so `id ASC` is index-served. **Check with `EXPLAIN QUERY PLAN` and include the plan in the
-     review request.**
-4. **`enforce_max_entries(&self, protected: &[i64])`**: `set` passes its own id; `batch_set` passes
-   every id it wrote. Callbacks run **after** the transaction commits, with the returned paths.
-5. **`max_entries == Some(0)` is rejected in `CacheEngine::open`**, before any database work, with
-   `LocalFileCacheError::UnsupportedFeature("max_entries must be at least 1".into())`. Every
-   constructor routes through `open`: `ConnectionPool::open`, `shared_engine`,
-   `AsyncCacheEngine::open`, `ReadPool::open`, and `CacheEngineBuilder::build`/`build_read_pool`.
-   One check covers all of them, but test at least `build()`, `ReadPool::open`, and
-   `ConnectionPool::open`.
-6. **An oversized `batch_set` is rejected before writing.**
-   - After preparation (the loop that fills `prepared`), count **distinct** `path_str` values.
-   - If `max_entries` is `Some(m)` and that count exceeds `m`, return
-     `Err(UnsupportedFeature(format!("batch of {n} distinct entries exceeds max_entries {m}")))`
-     and write nothing.
-   - This check runs **after** `guard_write()` and preparation, and **before** the transaction.
-7. **Docs in code.** These all say "last read or write". `0` now means only "written by a version
-   before 0.21.4 and never read since".
+     so `id ASC` should be index-served with no temporary sort. **Check with
+     `EXPLAIN QUERY PLAN` and include the plan in the review request.** A `USE TEMP B-TREE` line
+     is a finding to report, not to absorb.
+   - If fewer unprotected rows exist than `n`, delete all of them. This is not an error.
+4. **`enforce_max_entries(&self, protected: &[i64])`**: `set` passes its own id; `batch_set`
+   passes every id it wrote (from `upsert_in_tx`'s return values). Run the `on_evict` callbacks
+   **after** the eviction transaction commits, with the returned paths.
+5. **Nothing is rejected.** `max_entries(0)` and a `batch_set` larger than `max_entries` follow
+   from the one rule (RFC 022 R6 design item 4):
+   - an oversized batch stores all of its entries, and the next write brings the namespace back
+     within the bound;
+   - `max_entries(0)` keeps only the most recent write.
+6. **Docs in code.** Each states the read-based policy exactly (RFC 022 R6 design item 1):
    - `EntryInfo::last_accessed_at` and `ExportRecord::last_accessed_at`
-     (`crates/localcache/src/cache/entry.rs`, around lines 50 and 106);
-   - `QueryBuilder::order_by_last_accessed` (`query.rs`, around line 428);
-   - `CacheOptions::max_entries` (`options.rs`, around line 158). Also state the two rejections
-     and that the bound is enforced by `set`/`batch_set`, not by imports.
-8. **CLI `list`** (`crates/cli/src/commands/read.rs`, around line 30): the `LAST_ACCESS` column
-   keeps its values, and `0` still prints `never`. With 1–7 in place, `never` now only appears for
-   entries written by an older version and never read, which is accurate.
+     (`crates/localcache/src/cache/entry.rs`, around lines 50 and 106): Unix seconds of the last
+     **read** (`get`, `get_if_fresh`, `touch`); `0` = never read; an overwrite does not change it.
+   - `QueryBuilder::order_by_last_accessed` (`query.rs`, around line 428).
+   - `CacheOptions::max_entries` (`options.rs`, around line 158) and
+     `CacheEngineBuilder::max_entries`, which must state:
+     - eviction removes the least recently **read** entries: never-read first, then by oldest
+       write, then first insertion;
+     - a write never evicts the entries it wrote;
+     - the two consequences in item 5, each with "rejected with an error from v0.22.0";
+     - the bound is enforced by `set`/`batch_set`, not by `import_entries`, `import_from`, or
+       `namespace_copy`.
+7. **CLI `list`** (`crates/cli/src/commands/read.rs`): unchanged. `never` is accurate.
 
 ### Tests (`crates/localcache/tests/codec_lru.rs`, LRU section)
 
 1. **The reproduction**, as a test. **Must fail on v0.21.3.**
-2. Same-second determinism: fill, read, and write within one second, with no `sleep`. The eviction
-   victim is fully determined by `(last_accessed_at, updated_at, id)`. Assert the exact survivor
-   set.
-3. Overwriting an existing entry makes it most recent. It survives the next eviction.
+2. `batch_set` within the bound, with older **read** entries present: none of the batch is
+   evicted, and older rows go instead. **Must fail on v0.21.3.**
+3. Same-second determinism: fill, read, and write within one second, with no `sleep`. The victim
+   is fully determined by `(last_accessed_at, updated_at, id)`. Assert the exact survivor set.
 4. `on_evict` receives exactly the deleted paths. Assert equality with the set that disappeared.
-5. `batch_set` within the bound: none of the batch is evicted, and older rows go instead.
-6. `batch_set` over the bound: `Err`, and `entry_count()` is unchanged. Also one case where
-   duplicate paths make a nominally oversized batch fit.
-7. `max_entries(0)` is rejected through `build()`, `ConnectionPool::open`, and `ReadPool::open`.
-8. An imported `ExportRecord` keeps its `last_accessed_at` (unchanged behaviour).
-9. **Existing tests** `max_entries_evicts_oldest` and `lru_evicts_least_recently_accessed` must
-   still pass **unmodified**. If one fails, stop and report it. Do not edit it to pass.
+5. Oversized `batch_set` (5 distinct entries, `max_entries(2)`): `report.succeeded == 5`, and all
+   5 are present. Then one `set`: `entry_count() == 2`, and the new entry is present.
+6. `max_entries(0)`: `set(a); set(b)` leaves only `b`.
+7. An imported `ExportRecord` keeps its `last_accessed_at` (unchanged behaviour).
+8. **These must pass unmodified:**
+   - `max_entries_evicts_oldest` and `lru_evicts_least_recently_accessed` (`codec_lru.rs`);
+   - `touch_protects_from_lru_eviction` (`crates/localcache/tests/query.rs`);
+   - the `on_evict_*` tests in `crates/localcache/tests/builder_ops.rs`;
+   - the read-only `max_entries(0)` case in `crates/localcache/tests/read_only_contract.rs`.
+
+   If one fails, stop and report it.
+9. **The one authorized edit to an existing test:** rewrite `batch_set_respects_max_entries`
+   (`codec_lru.rs`). Its assertion `entry_count() <= 2` encodes the defect: three entries reported
+   stored are silently gone. Assert item 5's contract instead, and show the diff in the review
+   request.
+
+---
+
+## 4a. Q0g — A size change is conclusive in the metadata-then-hash modes (RFC 022 R7)
+
+### The defect (reproduced)
+
+Under `MetadataThenPartialHash`, a file that grew from 335 872 to 438 272 bytes, with its first and
+last 64 KiB unchanged, reports `Fresh`, and `get_if_fresh` returns the old payload. The probe is
+`.git-exclude/tmp/arch-probe/`, check `[2]`.
+
+### Implementation
+
+- `crates/localcache/src/detection/strategy.rs`, in `detect_metadata_then_partial_hash` and
+  `detect_metadata_then_full_hash`: once the metadata differs, if
+  `stored.file_size != current.file_size`, return `Ok(CacheStatus::Stale)` **before any hashing**.
+- `detect_strict_full_hash` is unchanged.
+- `explain()` is unchanged. Its `status` already comes from `check_status`, and its `hash_match`
+  stays a diagnostic.
+- Rustdoc on `ChangeDetectionMode::MetadataThenPartialHash`: it detects any size change and any
+  change within the first or last 64 KiB. It does not detect a same-size change confined to the
+  middle.
+
+### Tests (`crates/localcache/tests/storage.rs`)
+
+1. The reproduction: a file over 128 KiB, rewritten with a longer middle and the same head and
+   tail. `check_status` is `Stale` and `get_if_fresh` is `None`. **Must fail on v0.21.3.**
+2. `MetadataThenFullHash` with a size change → `Stale`.
+3. An unchanged file → `Fresh` in both modes.
+
+---
+
+## 4b. Q0h — `AsyncCacheEngine` batch methods return one result per path (RFC 022 R8)
+
+### The defect (reproduced)
+
+After the engine lock is poisoned, `batch_get`, `batch_get_fresh`, and `check_status_batch` each
+return 1 result for 3 requested paths (`vec![Err(e)]` in
+`crates/localcache/src/cache/async_engine.rs`). The probe is `.git-exclude/tmp/arch-probe/`, check
+`[1]`.
+
+### Implementation
+
+For each of the three methods:
+- Move lock handling **inside** the blocking closure. On a poisoned lock, return one
+  `Poisoned { resource: "AsyncCacheEngine" }` per path, as `ConnectionPool` does. The closure
+  then cannot return `Err`.
+- If `spawn` still returns `Err`, the only possible cause is the runtime's `AsyncTaskPanicked`.
+  Return one `AsyncTaskPanicked` per path, and state that invariant in a comment and a
+  `debug_assert!(matches!(e, LocalFileCacheError::AsyncTaskPanicked))`.
+- Use one small private helper for "n copies of an error", not three copies of the loop.
+- Add to each method's rustdoc the one-per-path sentence that `ConnectionPool`'s batch methods
+  carry.
+
+### Tests (`crates/localcache/tests/pool_observe.rs`)
+
+Put these in the existing per-backend modules, using the `macro_rules!` pattern there.
+1. Poison the engine the way `poisoned_mutex_recovers_on_subsequent_calls` does, then call each
+   batch method with 3 paths. Each returns 3 results, all
+   `Poisoned { resource: "AsyncCacheEngine" }`. **Must fail on v0.21.3.**
+2. A payload type whose `Deserialize` impl panics, with 3 entries stored: `batch_get` returns 3
+   results, all `AsyncTaskPanicked`.
+
+---
+
+## 4c. Q0i — Watcher helpers inherit the engine's database configuration (RFC 022 R9)
+
+### The defect (reproduced)
+
+A database opened with `JournalMode::Delete` has no `-wal` file before `watcher()` and has one
+after. The helper connection opened with default options and switched the file to WAL. The probe
+is `.git-exclude/tmp/arch-probe/`, check `[3]`.
+
+### Implementation
+
+1. `CacheEngine` gains `journal_mode: JournalMode` and `synchronous: SynchronousMode` fields,
+   gated on `watching` exactly as `database_path` is. `open` sets them from the options.
+2. One `#[cfg(feature = "watching")]` private function in `engine.rs` builds the helper's
+   `CacheOptions` from the parent. It sets:
+   - `database_path`, `namespace`, `change_detection_mode`, `codec`, `ttl`, and
+     `payload_version`;
+   - `journal_mode` and `synchronous` from the parent;
+   - `read_only: false`;
+   - everything else at its default. In particular: **no encryption key**, no compression, and
+     no `max_entries`.
+3. `CacheWatcher::new_with_paths` and `CacheDebouncedWatcher::new_with_paths` take that
+   `CacheOptions` instead of an engine or nine separate arguments. Both are `pub(crate)`, so no
+   public signature changes. `CacheEngine::watcher()` opens **exactly one** helper connection;
+   delete the discarded first one.
+4. In `CacheDebouncedWatcher`'s callback, when the helper lock cannot be taken, send no
+   notification. That matches `CacheWatcher` and RFC 015 R5. Keep the RFC 018 R4 comment.
+
+### Tests (`crates/localcache/tests/watching.rs`)
+
+1. File-backed database opened with `JournalMode::Delete` and one entry. After `watcher()`, a raw
+   `rusqlite` connection reads `PRAGMA journal_mode` = `delete`. **Must fail on v0.21.3.**
+2. The same for `debounced_watcher()`.
+3. The poisoned-lock path cannot be reached through the public API. Say in the review request
+   that it is verified by review only.
 
 ---
 
@@ -361,11 +503,11 @@ below are what you need to act on it.
 - **`docs/src/architecture.md`**:
   - Schema v5 DDL, with both built-in indexes (from `crates/localcache/src/db/schema/migration.rs`,
     `create_fresh`).
-  - `mtime` in nanoseconds; `last_accessed_at` = last read or write (Q0c).
+  - `mtime` in nanoseconds; `last_accessed_at` = last **read**, `0` = never read (Q0c).
   - `ON CONFLICT … DO UPDATE` rather than `INSERT OR REPLACE`.
   - Decoding is driven by the stored `encoding` tag, and configuration supplies only the key. This
     replaces lines 120–122, which contradict line 48.
-  - The eviction order from Q0c.
+  - The eviction policy and order from Q0c, including "a write never evicts what it wrote".
 - **`docs/src/watching.md`**:
   - `preload` has 4 arguments (`dir, ScanOptions, force, factory`).
   - `let mut watcher` where `watch(&mut self)` is called.
@@ -396,8 +538,12 @@ below are what you need to act on it.
   - In the encryption recipe, add the reopen-other-engines note from Q0a.
 - **`docs/src/builder.md`**:
   - Add `journal_mode` / `synchronous`.
-  - The `max_entries` paragraph: true LRU where a write counts as access; the two rejections; not
-    enforced on import.
+  - The `max_entries` paragraph, per Q0c § 4 item 6:
+    - least recently **read**, never-read first;
+    - a write never evicts what it wrote, and the two consequences;
+    - the v0.22.0 rejections;
+    - the bound is not enforced on import.
+  - The `ttl` paragraph: one-second resolution; rejected under one second from v0.22.0.
   - Fix the rustdoc-style links around lines 157/161.
 - **`docs/src/api.md`**:
   - Add `FileMetadata`, `SharedEngine`, `PathRegistrationError`, `CacheWatcher::watched_count`,
@@ -424,8 +570,15 @@ below are what you need to act on it.
   - Rewrite every compare link to the repository's **unprefixed** tag names (`git tag` shows
     `0.19.1`, not `v0.19.1`).
   - Add 0.20.1 through 0.21.3, plus `[Unreleased]: …/compare/0.21.3...HEAD`.
-  - The `### Changed` entry for Q0c must say plainly that localcache no longer distinguishes
-    "never read" from "written" (RFC 022 R6.6).
+  - The `### Changed` entry for Q0c must state:
+    - the eviction policy is least recently **read**, with never-read entries first;
+    - an oversized `batch_set` now keeps everything it reports as stored;
+    - `max_entries(0)`, an oversized `batch_set`, and a TTL under one second are rejected with
+      an error from v0.22.0.
+- **Amendment 2 rustdoc and docs items**: every bullet marked *(Amendment 2)* in RFC 022 § R5.
+  These are the `path_like` escape character, `ReadPool::get`/`cache_stats`, the
+  `AsyncCacheEngine` type doc, `CacheWatcher::watch`, `EncryptionError`, TTL resolution,
+  `change_detection.md`, and the CLI's journal-mode note.
 
 ---
 
@@ -434,8 +587,10 @@ below are what you need to act on it.
 - No MSRV change, no dependency added, removed, or upgraded (Phase 24 Q1). This includes
   `static_assertions` and `zeroize`.
 - No renames or deprecations: `order_by_updated_at`, `SortOrder`, CLI `migrate` (Q2).
-- No change to which error variant any existing failure returns (Q3). The two new
-  `UnsupportedFeature` rejections in Q0c are new failures, not re-homed ones.
+- No change to which error variant any existing failure returns (Q3). **No new error for any
+  input v0.21.3 accepted.** Rejecting `max_entries(0)`, oversized batches, and sub-second TTLs is
+  RFC 025, in v0.22.0.
+- No "write counts as access" change and no schema change. A true LRU is RFC 026, in v0.22.0.
 - No module splits (Q2b). **Never mix a move with a fix.**
 - No performance measurement or tuning. A deep `offset` getting slower in Q0b is the accepted cost.
 - No release action: no version bump, tag, or publish. That is Q0f, which is owner-authorized.
@@ -446,7 +601,9 @@ below are what you need to act on it.
 - `cargo fmt --all --check` clean
 - `cargo make matrix` (`scripts/feature_matrix.py`) green on every row. Clippy is `-D warnings`
   everywhere.
-- `cargo make msrv-check` under the 1.85 toolchain, for Q0a–Q0c and Q0e
+- `cargo make msrv-check` under the 1.85 toolchain, for every code slice (Q0a–Q0c, Q0g–Q0i)
+  and Q0e. Use a fresh `--output-dir` per run until the re-run defect in the Phase 24 register is
+  fixed. Report every attempt, including failed ones.
 - `python3 scripts/source_integrity.py --require-tracked` OK
 - Script tests (`python3 -m unittest discover -s scripts/tests`) for Q0d, including the
   restricted-`PATH` run
@@ -470,7 +627,7 @@ Contents, per the organization workflow § 9.2:
 4. important implementation decisions;
 5. differences from this handoff;
 6. tests added and run;
-7. **the failing-before output** (Q0a–Q0c) and the passing-after output;
+7. **the failing-before output** (Q0a–Q0c, Q0g–Q0i) and the passing-after output;
 8. gate results, with the commands as run;
 9. unresolved issues;
 10. known limitations;
