@@ -17,6 +17,26 @@ The separate async-std and smol rows are required because enabling all
 features selects Tokio by runtime priority. `--all-targets` also keeps
 benchmarks and development dependencies within the MSRV contract.
 
+## MSRV policy
+
+The declared MSRV changes only under a written rule
+([RFC 023](https://github.com/nabbisen/localcache-rs/blob/main/rfcs/accepted/023-msrv-policy.md)):
+
+- **Minor releases only** (0.21 → 0.22), never a patch, so `^0.21` never receives a
+  raise through `cargo update`.
+- **A named necessity, and no further.** Only a security fix that needs a newer
+  toolchain, a runtime dependency whose only maintained line does, or a defect with
+  no other fix. The new MSRV is the lowest version that meets it. "The MSRV is
+  old" is not one, and a development-only dependency is held back instead.
+- **A 12-month age floor** on the new MSRV, waived for security necessities.
+- **Notice one release ahead** in `CHANGELOG.md` and on this page; a security
+  raise is announced in the release that makes it, and says so.
+- **Verification:** the four locked rows above in CI and the release gate, and
+  after each publication a fresh consumer crate with `rust-version = "1.85"` builds
+  the published version on the declared toolchain.
+- **The previous minor line** gets security, data-loss, and corruption fixes for
+  6 months after a raise, where the fix does not itself need the raise.
+
 ## Why `rusqlite` is pinned below its newest line
 
 `localcache` requires `rusqlite ^0.39`, not the newer `0.40`. This is deliberate,
@@ -27,25 +47,46 @@ filing a request to change it.
 
 ```text
 rusqlite 0.39  ->  libsqlite3-sys 0.37.x   (bundles SQLite 3.51.3)
-rusqlite 0.40  ->  libsqlite3-sys 0.38.x   (bundles SQLite 3.53.2)
+rusqlite 0.40  ->  libsqlite3-sys 0.38.x   (bundles SQLite 3.53.1 to 3.53.2)
 ```
 
-`libsqlite3-sys 0.38.x` uses `cfg_select!` in its build script, which requires
-**Rust 1.95**. We bisected it against this workspace:
+Whether `rusqlite 0.40` builds on Rust 1.85 depends on the exact patch release,
+not on the line. `libsqlite3-sys 0.38.0` and `0.38.1` use the standard library's
+`cfg_select!` in their build script, which became stable in **Rust 1.95**;
+`0.38.2` defines its own `cfg_select` macro instead. `rusqlite 0.40.0` and
+`0.40.1` also use `cfg_select!` in their own source; `0.40.2` polyfills it and
+requires `libsqlite3-sys ^0.38.2` (on every target except
+`wasm32-unknown-unknown`, where it is `^0.38.1`).
 
-| Toolchain | `rusqlite 0.40` |
-|---|---|
-| 1.85.0 | fails — `cannot find macro cfg_select` |
-| 1.94 | fails — same |
-| **1.95.0** | passes |
+Measured 2026-09-23 (RFC 023's evidence) and re-verified 2026-09-24, each crate
+built alone with `features = ["bundled"]`:
 
-So moving to `rusqlite 0.40` would raise this crate's MSRV from 1.85 to exactly
-1.95 — currently within three releases of stable. We hold `^0.39` to keep the
-declared 1.85 contract real.
+| `libsqlite3-sys` | Published | 1.85.0 | 1.94.0 | 1.95.0 |
+|---|---|---|---|---|
+| 0.38.0 | 2026-05-26 | fails — `cannot find macro cfg_select` | fails — `cfg_select` is unstable | passes |
+| 0.38.1 | 2026-06-06 | fails — same | fails — same | passes |
+| **0.38.2** | 2026-08-08 | **passes** | passes | passes |
 
-The cost of that choice is the older bundled SQLite (3.51.3 rather than 3.53.2).
-No advisory currently affects it, and the dependency-security gate below scans
-`libsqlite3-sys` along with everything else, so a future one would surface there.
+With `libsqlite3-sys 0.38.2` locked, `rusqlite =0.40.0` and `=0.40.1` still fail on
+1.85.0 with the same error; `rusqlite =0.40.2` builds there.
+
+### Where this leaves `localcache`
+
+- **`localcache 0.21.x` keeps `rusqlite ^0.39`** — for compatibility, not because
+  of the toolchain. `rusqlite::Error` is part of this crate's public
+  `LocalFileCacheError::Database` variant, and `links` (below) allows one SQLite
+  line per dependency graph, so changing the line is a breaking change and ships
+  only in a minor release.
+- **`localcache 0.22.0` moves to `rusqlite 0.40.2`**, with the declared MSRV still
+  1.85. The requirement names `0.40.2`, not a bare `0.40`, so that no lockfile can
+  keep `rusqlite 0.40.0`/`0.40.1` and `libsqlite3-sys 0.38.0`/`0.38.1`, which need
+  1.95.
+- **Consumers who pin `rusqlite 0.40` directly** can use `localcache` from 0.22.0.
+
+The gain is a newer bundled SQLite (3.51.3 → 3.53.2). The cost of staying on
+`^0.39` until then is the older one: no advisory currently affects it, and the
+dependency-security gate below scans `libsqlite3-sys` along with everything else,
+so a future one would surface there.
 
 ### Why this cannot be worked around downstream
 
@@ -56,22 +97,22 @@ therefore not a tolerable duplicate — they are a hard resolution failure.
 The practical consequence: a crate depending directly on `rusqlite 0.40` cannot
 also depend on a `localcache` version requiring `^0.39`, and **no lockfile entry,
 `--precise` pin, or feature flag at the consumer's end can resolve it**. If that
-is your situation, the options are to move your own `rusqlite` to 0.39, or to tell
-us — see below.
+is your situation on `localcache 0.21.x` or earlier, the options are to move your
+own `rusqlite` to 0.39, or to wait for `localcache 0.22.0`, which requires
+`rusqlite 0.40.2`. You can also tell us — see below.
 
 ### The upstream cause
 
 Neither `rusqlite` nor `libsqlite3-sys` declares a `rust-version` in its manifest.
-Because of that, Cargo's MSRV-aware resolution cannot see the 1.95 requirement and
-cannot route around it.
+Because of that, Cargo's MSRV-aware resolution cannot see a toolchain requirement
+and cannot route around it.
 
-**If `libsqlite3-sys 0.38.x` declared `rust-version = "1.95"`, this whole conflict
-would disappear**: resolution would hand `0.37.x` to consumers with a lower floor
-and `0.38.x` to everyone else, automatically, and no choice would fall to this
-crate at all.
-
-Until then the constraint stands, and this section exists because it is likely to
-stand for a while.
+The `rusqlite 0.40.x` and `libsqlite3-sys 0.38.x` series show why that matters:
+the floor moved **within a patch series**, up (`rusqlite 0.40.0`/`0.40.1` and
+`libsqlite3-sys 0.38.0`/`0.38.1`) and then back down (`rusqlite 0.40.2` and
+`libsqlite3-sys 0.38.2`), invisibly to Cargo's MSRV-aware resolver. A consumer's
+build could break, or be repaired, with no change to anything they declared. That is why RFC 023 adds a check of a
+*fresh* resolution, rather than trusting the locked graph alone.
 
 We have not filed an upstream issue. Doing so would open a conversation this project
 would need to sustain, and the constraint is documented here regardless. If you have hit
@@ -89,6 +130,10 @@ right answer differed in each case.
 | 2026-08-01 | A declared `rust-version = "1.85"` that the graph could not meet, because `rusqlite ^0.40` pulled `libsqlite3-sys 0.38.x`. | Fixed here: `rusqlite` constrained to `^0.39` in v0.20.1, making the declared 1.85 genuine. |
 | 2026-08-01 | Blocked at `localcache 0.20.0`: the project pins `rusqlite 0.40` directly, so `^0.39` made every later version unresolvable. Requested `>=0.40`. | Declined — it would have raised this crate's MSRV to 1.95. The project moved its own `rusqlite` to 0.39 instead, having discovered its real floor was already 1.95 for the same reason. |
 
+On 2026-08-08, `rusqlite 0.40.2` and `libsqlite3-sys 0.38.2` (both published that
+day) removed the Rust 1.95 requirement, so the second case's request (`rusqlite >= 0.40`) is being met in `localcache 0.22.0`,
+without an MSRV change.
+
 The second case is the more instructive one: the reporter believed their floor was
 around 1.88, because Cargo only reports crates that *declare* `rust-version` — and
 `libsqlite3-sys` declares none. The constraint had been invisible to them the whole
@@ -101,19 +146,35 @@ named below rather than treated as resolved.
 
 ### Affected published versions
 
-**`0.19.1` and `0.20.0`** are broken under the constraint above: both declare
-`rust-version = "1.85"` and require `rusqlite ^0.40`, which resolves
-`libsqlite3-sys 0.38.x` and its Rust 1.95 `cfg_select!` macro — neither builds on
-the baseline it declares. `0.19.0` and earlier (`rusqlite ^0.39`) and `0.20.1`
-onward (constrained back to `^0.39`) are unaffected.
+**When they were published, `0.19.1` and `0.20.0` did not build on the baseline they
+declare.** Both declare `rust-version = "1.85"` and require `rusqlite ^0.40`, which
+then resolved `libsqlite3-sys 0.38.0`/`0.38.1` and `rusqlite 0.40.0`/`0.40.1` —
+all of which need Rust 1.95. They are the only published versions that require
+`rusqlite ^0.40`. Every other release requires an earlier line (`^0.32` up to
+`0.13.0`, `^0.39` otherwise), so none of them is affected.
 
-**Use `0.20.1` or greater.** If you are pinned to `localcache = "0.19"`, note that
-it resolves to `0.19.1` — move to `0.20.1`+ rather than expecting a working
-`0.19.x`.
+**Today, a fresh resolution builds on 1.85.** Resolving either version from
+scratch now selects `rusqlite 0.40.2` and `libsqlite3-sys 0.38.2`, and builds on
+Rust 1.85.0 (checked 2026-09-24 with a new crate declaring `rust-version = "1.85"`
+and depending on `=0.19.1` and on `=0.20.0`). A build from an **existing lockfile**
+that still holds `rusqlite 0.40.0`/`0.40.1` and `libsqlite3-sys 0.38.0`/`0.38.1`
+still fails on 1.85. Update both together:
+
+```sh
+cargo update -p rusqlite
+```
+
+`cargo update -p libsqlite3-sys` alone is not enough: it leaves `rusqlite 0.40.0`
+or `0.40.1` in place, and those need Rust 1.95 themselves. `rusqlite 0.40.2`
+requires `libsqlite3-sys ^0.38.2`, so updating `rusqlite` moves both.
+
+**Use `0.20.1` or greater**, and note that `^0.19` selects `0.19.1`, so move to
+`0.20.1`+ rather than expecting a later `0.19.x`. The reason is no longer an MSRV
+repair: later releases carry correctness fixes — see [`CHANGELOG.md`](https://github.com/nabbisen/localcache-rs/blob/main/CHANGELOG.md).
 
 Neither `0.19.1` nor `0.20.0` is yanked. A fresh `localcache = "0.20"` resolves to
-`0.20.1`, never `0.20.0`, so the broken version is reachable only by an exact pin or
-an existing lockfile; `0.19.1` is what `^0.19` selects, but its download volume is
+`0.20.1`, never `0.20.0`, so `0.20.0` is reachable only by an exact pin or an
+existing lockfile; `0.19.1` is what `^0.19` selects, but its download volume is
 indistinguishable from crawler traffic. Neither case justified a yank.
 
 ### If this blocks you

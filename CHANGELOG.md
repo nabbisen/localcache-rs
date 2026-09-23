@@ -9,6 +9,16 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Changed
+
+- `docs/src/dependency_security.md` (RFC 023 R10): the MSRV and dependency page is corrected,
+  and gains an "MSRV policy" section. It no longer says that `rusqlite 0.40` needs Rust 1.95:
+  that holds only for `libsqlite3-sys 0.38.0`/`0.38.1` and `rusqlite 0.40.0`/`0.40.1`, while
+  `libsqlite3-sys 0.38.2` and `rusqlite 0.40.2` (both 2026-08-08) build on 1.85. `0.19.1` and
+  `0.20.0` are no longer described as unbuildable: a fresh resolution of either builds on 1.85,
+  and only an existing lockfile still holding the older `rusqlite`/`libsqlite3-sys` fails, which
+  `cargo update -p rusqlite` repairs. The declared MSRV is unchanged at 1.85.
+
 ## [0.21.4] — 2026-09-23
 
 Patch release closing Phase 24 Q0 (RFC 022, correctness and contract reconciliation).
