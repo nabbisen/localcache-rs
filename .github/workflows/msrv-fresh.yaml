@@ -1,0 +1,59 @@
+name: MSRV fresh resolution
+
+# RFC 023 R6.2: does what a new consumer does -- resolve with no Cargo.lock
+# under the declared-MSRV Cargo, then build the declared-MSRV rows -- so that an
+# upstream crate that declares no `rust-version` and raises its real floor
+# is noticed here, before a consumer notices it.
+#
+# This is its own workflow, not a `schedule:` on ci.yaml: a failure caused by
+# an upstream publication must not turn unrelated pushes red, and must not run
+# the whole CI weekly. It is deliberately NOT part of `aggregate-ci`. The same
+# check also runs inside the `msrv` release gate (`scripts/release.py release`),
+# where drift blocks the release.
+#
+# Read-only, no secrets, actions pinned by full SHA with the same pins as
+# ci.yaml (RFC 009 R16). The runner image and the pins change only by a
+# deliberate, CI-verified change (RFC 022 R3 items 6-7).
+#
+# Deliberately no cache step: a cached registry or target directory would hide
+# exactly the fresh resolution this workflow exists to perform.
+
+on:
+  schedule:
+    - cron: "17 3 * * 1" # Mondays, 03:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  msrv-fresh:
+    name: MSRV fresh resolution (declared Rust 1.85)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Read declared MSRV
+        id: msrv
+        run: |
+          MSRV=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["rust-version"])')
+          test "$MSRV" = "1.85"
+          echo "toolchain=${MSRV}.0" >> "$GITHUB_OUTPUT"
+      - name: Install declared MSRV
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: ${{ steps.msrv.outputs.toolchain }}
+      - name: Check a fresh resolution builds on the declared MSRV (RFC 023 R6.2)
+        run: >-
+          python3 scripts/release.py msrv --fresh
+          --output-dir "$RUNNER_TEMP/msrv-fresh-evidence"
+      - name: Preserve fresh-resolution evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: msrv-fresh-evidence
+          path: ${{ runner.temp }}/msrv-fresh-evidence
+          if-no-files-found: error

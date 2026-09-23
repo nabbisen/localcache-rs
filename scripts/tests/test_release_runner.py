@@ -1,6 +1,8 @@
 import argparse
 import importlib.util
+import hashlib
 import io
+import json
 import os
 import re
 import subprocess
@@ -10,6 +12,7 @@ import tempfile
 import tomllib
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 SCRIPTS = Path(__file__).resolve().parents[1]
@@ -802,7 +805,9 @@ class ReleaseRunnerTests(unittest.TestCase):
         # must be the *resolved* toolchain, not the raw declared string --
         # and must fail closed rather than skip if that toolchain is absent.
         source_text = (SCRIPTS / "release.py").read_text(encoding="utf-8")
-        release_mode_text = source_text[source_text.index("def release_mode(") :]
+        # The step list moved into `release_steps` (RFC 023 Q1b), which sits
+        # directly above `release_mode`; slicing from it covers both.
+        release_mode_text = source_text[source_text.index("def release_steps(") :]
         self.assertIn(
             'command = ["rustup", "run", resolved_toolchain, *command]',
             release_mode_text,
@@ -1141,6 +1146,435 @@ class ReleaseRunnerTests(unittest.TestCase):
             },
         )
         return root
+
+
+class FreshResolutionTests(unittest.TestCase):
+    """RFC 023 R6.2 / Q1b: the fresh-resolution drift check.
+
+    The command runner (`run_gate`), the toolchain probe (`command_version`),
+    and the repository root are replaced, so nothing here needs Cargo, a
+    network, or the 1.85 toolchain.
+    """
+
+    DECLARED = "1.85"
+    RUSTC_OK = "rustc 1.85.0 (4d91de4e4 2025-02-17)"
+    CARGO_OK = "cargo 1.85.0 (d73d2caf9 2024-12-31)"
+    CRATES_IO = "registry+https://github.com/rust-lang/crates.io-index"
+    MATRIX = ["python3", "scripts/feature_matrix.py", "--run-msrv"]
+
+    @staticmethod
+    def fixture_repository(parent: Path) -> Path:
+        root = parent / "repository"
+        root.mkdir()
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        for key, value in (
+            ("user.name", "Fixture"),
+            ("user.email", "fixture@example.invalid"),
+            ("commit.gpgsign", "false"),
+        ):
+            subprocess.run(["git", "-C", str(root), "config", key, value], check=True)
+        files = {
+            "Cargo.toml": '[workspace.package]\nrust-version = "1.85"\n',
+            "Cargo.lock": "# repository lockfile\n",
+            "crates/a/Cargo.lock": "# nested lockfile\n",
+            "crates/a/src/lib.rs": "// lib\n",
+            "target/debug/build.txt": "build output\n",
+            "gone.txt": "tracked, then deleted from the working tree\n",
+        }
+        for relative, content in files.items():
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+        subprocess.run(["git", "-C", str(root), "add", "-f", "."], check=True)
+        subprocess.run(["git", "-C", str(root), "commit", "-qm", "fixture"], check=True)
+        (root / "gone.txt").unlink()
+        (root / "untracked.txt").write_text("never tracked\n", encoding="utf-8")
+        return root
+
+    @classmethod
+    def metadata_document(cls) -> dict[str, object]:
+        def package(name: str, version: str, source: str | None, rust_version: str | None):
+            return {
+                "name": name,
+                "version": version,
+                "source": source,
+                "rust_version": rust_version,
+            }
+
+        return {
+            "packages": [
+                package("zeta", "2.0.0", cls.CRATES_IO, None),
+                package("declared", "1.0.0", cls.CRATES_IO, "1.70"),
+                package("alpha", "0.3.1", cls.CRATES_IO, None),
+                package("sparse-undeclared", "0.1.0", "sparse+https://index.crates.io/", None),
+                package("workspace-member", "0.21.4", None, None),
+                package("git-dep", "0.1.0", "git+https://example.invalid/repo#abc", None),
+                package("other-registry", "0.1.0", "registry+https://example.invalid/index", None),
+                package("rusqlite", "0.40.1", cls.CRATES_IO, None),
+                package("libsqlite3-sys", "0.38.1", cls.CRATES_IO, None),
+                package("localcache", "0.21.4", None, "1.85"),
+                package("localcache-cli", "0.21.4", None, "1.85"),
+            ]
+        }
+
+    # -- the tracked copy -----------------------------------------------------
+
+    def test_tracked_copy_leaves_out_every_lockfile_and_target(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.fixture_repository(Path(directory))
+            destination = Path(directory) / "copy"
+            copied = RUNNER.copy_tracked_tree(
+                root, destination, RUNNER.tracked_files(root)
+            )
+            present = sorted(
+                str(path.relative_to(destination))
+                for path in destination.rglob("*")
+                if path.is_file()
+            )
+            self.assertEqual(present, ["Cargo.toml", "crates/a/src/lib.rs"])
+            self.assertEqual(copied, 2)
+            # Untracked and deleted-tracked files are never copied.
+            self.assertFalse((destination / "untracked.txt").exists())
+            self.assertFalse((destination / "gone.txt").exists())
+
+    # -- the undeclared-package parser ---------------------------------------
+
+    def test_undeclared_parser_lists_only_crates_io_packages_without_rust_version(
+        self,
+    ) -> None:
+        self.assertEqual(
+            RUNNER.undeclared_rust_version_packages(self.metadata_document()),
+            [
+                ("alpha", "0.3.1"),
+                ("libsqlite3-sys", "0.38.1"),
+                ("rusqlite", "0.40.1"),
+                ("sparse-undeclared", "0.1.0"),
+                ("zeta", "2.0.0"),
+            ],
+        )
+
+    def test_undeclared_parser_fails_closed_on_malformed_metadata(self) -> None:
+        with self.assertRaisesRegex(RUNNER.ReleaseError, "expected packages"):
+            RUNNER.undeclared_rust_version_packages({})
+
+    def test_resolved_versions_reports_absent_and_multiple(self) -> None:
+        document = {
+            "packages": [
+                {"name": "rusqlite", "version": "0.39.0"},
+                {"name": "rusqlite", "version": "0.40.1"},
+            ]
+        }
+        self.assertEqual(
+            RUNNER.resolved_versions(document, ("rusqlite", "libsqlite3-sys")),
+            {"rusqlite": "0.39.0, 0.40.1", "libsqlite3-sys": None},
+        )
+
+    # -- the lockfile guard ---------------------------------------------------
+
+    def test_lockfile_guard_fails_when_the_hash_changes(self) -> None:
+        RUNNER.require_lockfile_unchanged("abc", "abc")
+        with self.assertRaisesRegex(RUNNER.ReleaseError, "Cargo.lock changed"):
+            RUNNER.require_lockfile_unchanged("abc", "abd")
+
+    def test_lockfile_digest_is_the_sha256_or_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.assertEqual(RUNNER.lockfile_digest(root), "absent")
+            (root / "Cargo.lock").write_bytes(b"lock\n")
+            self.assertEqual(
+                RUNNER.lockfile_digest(root), hashlib.sha256(b"lock\n").hexdigest()
+            )
+
+    # -- msrv --fresh, end to end with the runner mocked ---------------------
+
+    def run_fresh(
+        self,
+        parent: Path,
+        *,
+        resolution_fails: bool = False,
+        matrix_fails: bool = False,
+        matrix_rewrites_repository_lock: bool = False,
+        rustc: str | None = None,
+    ):
+        root = self.fixture_repository(parent)
+        output = parent / "evidence"
+        calls: list[tuple[str, list[str], Path, bool]] = []
+
+        def fake_run_gate(logger, name, command, cwd, **_kwargs):
+            # Recorded at call time: the copy is deleted afterwards.
+            calls.append(
+                (name, list(command), Path(cwd), (Path(cwd) / "Cargo.lock").exists())
+            )
+            if name == "fresh-generate-lockfile":
+                if resolution_fails:
+                    raise RUNNER.ReleaseError("fresh-generate-lockfile failed")
+                (Path(cwd) / "Cargo.lock").write_text("# fresh\n", encoding="utf-8")
+            elif name == "declared-msrv-matrix-fresh":
+                if matrix_rewrites_repository_lock:
+                    (root / "Cargo.lock").write_text("# changed\n", encoding="utf-8")
+                if matrix_fails:
+                    raise RUNNER.ReleaseError(f"{name} failed with exit status 1")
+            elif name == "fresh-metadata":
+                return json.dumps(self.metadata_document())
+            return ""
+
+        def fake_command_version(command):
+            return rustc or self.RUSTC_OK if command[0] == "rustc" else self.CARGO_OK
+
+        args = argparse.Namespace(mode="msrv", output_dir=output, fresh=True)
+        error = None
+        with mock.patch.object(RUNNER, "repository_root", lambda: root), mock.patch.object(
+            RUNNER, "run_gate", fake_run_gate
+        ), mock.patch.object(RUNNER, "command_version", fake_command_version):
+            try:
+                RUNNER.msrv_mode(args)
+            except RUNNER.ReleaseError as raised:
+                error = raised
+        return root, output, calls, error
+
+    def summary(self, output: Path) -> str:
+        return (output / "summary.log").read_text(encoding="utf-8")
+
+    def test_fresh_passes_and_writes_the_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root, output, calls, error = self.run_fresh(Path(directory))
+            self.assertIsNone(error)
+            summary = self.summary(output)
+            for line in (
+                "context: msrv",
+                "mode: fresh",
+                "fresh-resolution: PASS",
+                "declared-msrv-matrix-fresh: PASS",
+                "undeclared-rust-version: 5 packages",
+                "repository-lockfile-unchanged: PASS",
+                "status: PASS",
+            ):
+                self.assertIn(line, summary)
+            self.assertEqual(
+                (output / "fresh-Cargo.lock").read_text(encoding="utf-8"), "# fresh\n"
+            )
+            self.assertIn(
+                "rusqlite 0.40.1\n",
+                (output / "fresh-undeclared-rust-version.txt").read_text(encoding="utf-8"),
+            )
+            manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["context"], "msrv")
+            self.assertEqual(manifest["status"], "pass")
+            self.assertEqual(
+                manifest["fresh"],
+                {
+                    "rusqlite": "0.40.1",
+                    "libsqlite3-sys": "0.38.1",
+                    "undeclared_rust_version_count": 5,
+                },
+            )
+            # The temporary copy is gone; the repository lockfile is untouched.
+            self.assertFalse((output / "fresh-work").exists())
+            self.assertEqual(
+                (root / "Cargo.lock").read_text(encoding="utf-8"), "# repository lockfile\n"
+            )
+
+    def test_fresh_resolves_without_a_lockfile_then_runs_the_one_row_list(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _root, output, calls, error = self.run_fresh(Path(directory))
+            self.assertIsNone(error)
+            self.assertEqual(
+                [name for name, *_ in calls],
+                ["fresh-generate-lockfile", "declared-msrv-matrix-fresh", "fresh-metadata"],
+            )
+            generate, matrix, _metadata = calls
+            # Resolution starts with no Cargo.lock in the copy...
+            self.assertFalse(generate[3])
+            self.assertEqual(generate[1], ["cargo", "generate-lockfile"])
+            # ...the rows run in the copy against the generated lockfile...
+            self.assertEqual(matrix[2], output / "fresh-work")
+            self.assertTrue(matrix[3])
+            # ...and are exactly `feature_matrix.py --run-msrv`: no second list.
+            self.assertEqual(matrix[1], self.MATRIX)
+
+    def test_fresh_refuses_any_toolchain_but_the_declared_one(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _root, output, calls, error = self.run_fresh(
+                Path(directory), rustc="rustc 1.98.1 (48a229cea 2026-09-01)"
+            )
+            self.assertIsNotNone(error)
+            self.assertIn("does not match declared MSRV", str(error))
+            self.assertEqual(calls, [])
+            self.assertFalse((output / "fresh-work").exists())
+
+    def test_fresh_row_failure_still_lists_the_undeclared_packages(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _root, output, calls, error = self.run_fresh(
+                Path(directory), matrix_fails=True
+            )
+            self.assertIsNotNone(error)
+            self.assertIn("declared-msrv-matrix-fresh failed", str(error))
+            self.assertIn("declared-msrv-matrix-fresh: FAIL", self.summary(output))
+            listed = (output / "fresh-undeclared-rust-version.txt").read_text(encoding="utf-8")
+            self.assertIn("rusqlite 0.40.1\n", listed)
+            self.assertIn("libsqlite3-sys 0.38.1\n", listed)
+            # Only a passing run writes a manifest; the copy is still removed.
+            self.assertFalse((output / "manifest.json").exists())
+            self.assertFalse((output / "fresh-work").exists())
+
+    def test_fresh_resolution_failure_skips_the_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _root, output, calls, error = self.run_fresh(
+                Path(directory), resolution_fails=True
+            )
+            self.assertIsNotNone(error)
+            self.assertIn("fresh-resolution: FAIL", self.summary(output))
+            self.assertEqual([name for name, *_ in calls], ["fresh-generate-lockfile"])
+            self.assertFalse((output / "fresh-work").exists())
+
+    def test_fresh_fails_when_the_repository_lockfile_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            _root, output, _calls, error = self.run_fresh(
+                Path(directory), matrix_rewrites_repository_lock=True
+            )
+            self.assertIsNotNone(error)
+            self.assertIn("Cargo.lock changed", str(error))
+            self.assertNotIn("repository-lockfile-unchanged: PASS", self.summary(output))
+            self.assertFalse((output / "manifest.json").exists())
+
+    # -- plain msrv, and release ---------------------------------------------
+
+    def test_plain_msrv_runs_no_fresh_step(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.fixture_repository(Path(directory))
+            output = Path(directory) / "evidence"
+            names: list[str] = []
+
+            def fake_run_gate(logger, name, command, cwd, **_kwargs):
+                names.append(name)
+                self.assertEqual(list(command), self.MATRIX)
+                self.assertEqual(Path(cwd), root)
+                return ""
+
+            for args in (
+                argparse.Namespace(mode="msrv", output_dir=output / "a"),
+                argparse.Namespace(mode="msrv", output_dir=output / "b", fresh=False),
+            ):
+                with mock.patch.object(RUNNER, "repository_root", lambda: root), mock.patch.object(
+                    RUNNER, "run_gate", fake_run_gate
+                ), mock.patch.object(
+                    RUNNER,
+                    "command_version",
+                    lambda command: self.RUSTC_OK if command[0] == "rustc" else self.CARGO_OK,
+                ):
+                    self.assertEqual(RUNNER.msrv_mode(args), 0)
+            self.assertEqual(names, ["declared-msrv-matrix", "declared-msrv-matrix"])
+            summary = self.summary(output / "a")
+            self.assertNotIn("mode: fresh", summary)
+            self.assertNotIn("fresh", (output / "a" / "manifest.json").read_text(encoding="utf-8"))
+
+    def test_fresh_flag_defaults_off_and_parses(self) -> None:
+        self.assertFalse(RUNNER.parse_args(["msrv", "--output-dir", "x"]).fresh)
+        self.assertTrue(RUNNER.parse_args(["msrv", "--fresh", "--output-dir", "x"]).fresh)
+
+    def test_release_steps_run_fresh_right_after_locked_msrv_under_the_toolchain(
+        self,
+    ) -> None:
+        output = Path("/out")
+        steps = RUNNER.release_steps("release.py", output, "1.85.0")
+        self.assertEqual(
+            [name for name, *_ in steps],
+            ["source", "msrv", "msrv-fresh", "doc-package", "security"],
+        )
+        commands = {name: command for name, command, _ in steps}
+        self.assertEqual(commands["msrv"][:4], ["rustup", "run", "1.85.0", sys.executable])
+        self.assertNotIn("--fresh", commands["msrv"])
+        self.assertEqual(
+            commands["msrv-fresh"][:4], ["rustup", "run", "1.85.0", sys.executable]
+        )
+        self.assertIn("--fresh", commands["msrv-fresh"])
+        self.assertEqual(commands["msrv-fresh"][commands["msrv-fresh"].index("msrv")], "msrv")
+        manifests = {name: path for name, _, path in steps}
+        self.assertEqual(manifests["msrv-fresh"], output / "msrv" / "fresh" / "manifest.json")
+        # The other gates keep their locations.
+        self.assertEqual(manifests["source"], output / "source" / "evidence" / "manifest.json")
+        self.assertEqual(manifests["msrv"], output / "msrv" / "manifest.json")
+
+    def run_release(self, parent: Path, *, fresh_fails: bool):
+        root = parent / "repository"
+        root.mkdir()
+        (root / "Cargo.toml").write_text(
+            '[workspace.package]\nrust-version = "1.85"\n', encoding="utf-8"
+        )
+        output = parent / "release-evidence"
+        order: list[str] = []
+        manifests = {
+            "source": {
+                "commit": "c" * 40,
+                "version": "0.21.4",
+                "rc_eligible": True,
+                "archive": "a.tar.gz",
+                "archive_uncompressed_sha256": "u" * 64,
+                "archive_compressed_sha256_advisory": "z" * 64,
+                "toolchain_identity": {},
+                "tool_versions": {},
+            },
+            "msrv": {
+                "declared_rust_version": "1.85",
+                "rustc_version": self.RUSTC_OK,
+                "cargo_version": self.CARGO_OK,
+            },
+            "msrv-fresh": {"fresh": {"rusqlite": "0.39.0", "libsqlite3-sys": "0.37.0"}},
+            "doc-package": {"packages": {}},
+            "security": {"advisories_evidence": "advisories"},
+        }
+
+        def fake_run_gate(logger, name, command, cwd, **_kwargs):
+            order.append(name)
+            if name == "msrv-fresh" and fresh_fails:
+                raise RUNNER.ReleaseError("msrv-fresh failed with exit status 1")
+            destination = Path(command[command.index("--output-dir") + 1])
+            manifest = (
+                destination / "evidence" / "manifest.json"
+                if name == "source"
+                else destination / "manifest.json"
+            )
+            manifest.parent.mkdir(parents=True, exist_ok=True)
+            manifest.write_text(json.dumps(manifests[name]), encoding="utf-8")
+            return ""
+
+        error = None
+        args = argparse.Namespace(mode="release", output_dir=output)
+        with mock.patch.object(RUNNER, "repository_root", lambda: root), mock.patch.object(
+            RUNNER, "run_gate", fake_run_gate
+        ), mock.patch.object(
+            RUNNER, "require_declared_toolchain_installed", lambda declared: "1.85.0"
+        ):
+            try:
+                RUNNER.release_mode(args)
+            except RUNNER.ReleaseError as raised:
+                error = raised
+        return output, order, error
+
+    def test_release_runs_fresh_after_locked_msrv_and_records_it(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output, order, error = self.run_release(Path(directory), fresh_fails=False)
+            self.assertIsNone(error)
+            self.assertEqual(
+                order, ["source", "msrv", "msrv-fresh", "doc-package", "security"]
+            )
+            manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                manifest["fresh_resolution"],
+                {"rusqlite": "0.39.0", "libsqlite3-sys": "0.37.0"},
+            )
+            summary = (output / "summary.log").read_text(encoding="utf-8")
+            self.assertIn("msrv: PASS", summary)
+            self.assertIn("msrv-fresh: PASS", summary)
+
+    def test_release_fails_on_fresh_drift_and_runs_nothing_after_it(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output, order, error = self.run_release(Path(directory), fresh_fails=True)
+            self.assertIsNotNone(error)
+            self.assertIn("msrv-fresh failed", str(error))
+            self.assertEqual(order, ["source", "msrv", "msrv-fresh"])
+            self.assertFalse((output / "manifest.json").exists())
+            self.assertNotIn("msrv-fresh: PASS", (output / "summary.log").read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

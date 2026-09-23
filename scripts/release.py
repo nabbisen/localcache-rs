@@ -10,6 +10,7 @@ import os
 import platform
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -817,15 +818,23 @@ def require_declared_toolchain_installed(declared: str) -> str:
     return matches[0]
 
 
-def msrv_mode(args: argparse.Namespace) -> int:
-    """RFC 009 R8/M6e item 10: declared-MSRV matrix with toolchain evidence."""
-    root = repository_root()
-    output = require_output_boundary(root, args.output_dir)
-    summary = output / "summary.log"
-    append_summary(summary, "context: msrv")
-    append_summary(summary, "status: RUNNING")
-    logger = GateLog(output / "gate.log")
+#: The two sources `cargo metadata` reports for a crates.io package. Path
+#: dependencies have no source and git dependencies start with `git+`, so
+#: neither matches and neither can be an "undeclared upstream" crate.
+CRATES_IO_SOURCES = (
+    "registry+https://github.com/rust-lang/crates.io-index",
+    "sparse+https://index.crates.io/",
+)
 
+#: The packages whose resolved versions the fresh-resolution evidence records.
+FRESH_RECORDED_PACKAGES = ("rusqlite", "libsqlite3-sys")
+
+
+def declared_msrv_toolchain(root: Path, summary: Path) -> tuple[str, str, str]:
+    """Read `[workspace.package].rust-version` and fail closed unless the
+    active `rustc` and `cargo` are exactly that toolchain. Shared by the
+    locked `msrv` gate and `msrv --fresh`: neither is meaningful under any
+    other toolchain."""
     with (root / "Cargo.toml").open("rb") as file:
         workspace_document = tomllib.load(file)
     try:
@@ -837,6 +846,25 @@ def msrv_mode(args: argparse.Namespace) -> int:
     cargo_version = command_version(["cargo", "--version"])
     verify_declared_toolchain(rustc_version, cargo_version, declared)
     append_summary(summary, f"declared-toolchain: PASS ({rustc_version})")
+    return declared, rustc_version, cargo_version
+
+
+def msrv_mode(args: argparse.Namespace) -> int:
+    """RFC 009 R8/M6e item 10: declared-MSRV matrix with toolchain evidence.
+
+    With `--fresh` (RFC 023 R6.2) this instead runs the fresh-resolution drift
+    check only; see `msrv_fresh_mode`.
+    """
+    if getattr(args, "fresh", False):
+        return msrv_fresh_mode(args)
+    root = repository_root()
+    output = require_output_boundary(root, args.output_dir)
+    summary = output / "summary.log"
+    append_summary(summary, "context: msrv")
+    append_summary(summary, "status: RUNNING")
+    logger = GateLog(output / "gate.log")
+
+    declared, rustc_version, cargo_version = declared_msrv_toolchain(root, summary)
 
     run_gate(
         logger,
@@ -854,6 +882,190 @@ def msrv_mode(args: argparse.Namespace) -> int:
             "declared_rust_version": declared,
             "rustc_version": rustc_version,
             "cargo_version": cargo_version,
+            **ci_identity(),
+        },
+    )
+    append_summary(summary, "status: PASS")
+    return 0
+
+
+def tracked_files(root: Path) -> list[str]:
+    """Every path `git ls-files` lists, relative to `root`."""
+    listing = git_output(root, "ls-files", "-z")
+    return [name for name in listing.split("\0") if name]
+
+
+def copy_tracked_tree(root: Path, destination: Path, tracked: Sequence[str]) -> int:
+    """Copy the **tracked** files into `destination` for a fresh resolution.
+
+    Leaves out every `Cargo.lock` (the point of the check is to resolve
+    without one) and anything under `target/`. Untracked files never come
+    across, because only `tracked` is copied. A tracked path that is missing
+    from the working tree (deleted, not yet committed) or is not a file or
+    symlink (a submodule) is skipped. Returns the number of files copied.
+    """
+    copied = 0
+    for relative in tracked:
+        path = Path(relative)
+        if path.name == "Cargo.lock" or path.parts[0] == "target":
+            continue
+        source = root / path
+        if not (source.is_symlink() or source.is_file()):
+            continue
+        target = destination / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target, follow_symlinks=False)
+        copied += 1
+    return copied
+
+
+def lockfile_digest(root: Path) -> str:
+    """SHA-256 of the repository's `Cargo.lock`, or `absent` if it has none."""
+    path = root / "Cargo.lock"
+    if not path.is_file():
+        return "absent"
+    return sha256_file(path)
+
+
+def undeclared_rust_version_packages(document: dict[str, object]) -> list[tuple[str, str]]:
+    """The crates.io packages in `cargo metadata` output that declare no
+    `rust-version`, as sorted `(name, version)` pairs. Cargo's MSRV-aware
+    resolver cannot see a toolchain requirement they raise, so on a failed
+    fresh check they are the likely culprits. Path and git packages are
+    excluded: the project controls the first and pins the second."""
+    try:
+        packages = document["packages"]
+        return sorted(
+            (package["name"], package["version"])
+            for package in packages
+            if package.get("source") in CRATES_IO_SOURCES
+            and package.get("rust_version") is None
+        )
+    except (KeyError, TypeError, AttributeError) as error:
+        raise ReleaseError("Cargo metadata did not contain expected packages") from error
+
+
+def resolved_versions(document: dict[str, object], names: Sequence[str]) -> dict[str, str | None]:
+    """The resolved version of each of `names` in `cargo metadata` output:
+    a comma-separated list if more than one is present, `None` if absent."""
+    versions: dict[str, list[str]] = {name: [] for name in names}
+    for package in document.get("packages", []):
+        if package.get("name") in versions:
+            versions[package["name"]].append(package["version"])
+    return {name: ", ".join(sorted(found)) or None for name, found in versions.items()}
+
+
+def require_lockfile_unchanged(before: str, after: str) -> None:
+    """The fresh check must never touch the repository's own lockfile."""
+    if before != after:
+        raise ReleaseError(
+            "the repository Cargo.lock changed during the fresh-resolution check: "
+            f"sha256 {before} before, {after} after"
+        )
+
+
+def msrv_fresh_mode(args: argparse.Namespace) -> int:
+    """RFC 023 R6.2: fresh-resolution drift check.
+
+    Does what a new consumer does: in a temporary copy of the tracked tree
+    with no `Cargo.lock`, resolve with the declared-MSRV Cargo (so that
+    `resolver = "3"`'s MSRV-aware fallback applies), then run the declared-MSRV
+    rows from `scripts/feature_matrix.py --run-msrv` unchanged. It catches a
+    dependency that declares no `rust-version` raising the effective floor,
+    which is how `0.19.1` and `0.20.0` shipped unbuildable on their declared
+    1.85.
+
+    Evidence is written whether the check passes or fails; only the temporary
+    copy is removed. The manifest, like every other gate's, is written only on
+    success.
+    """
+    root = repository_root()
+    output = require_output_boundary(root, args.output_dir)
+    summary = output / "summary.log"
+    append_summary(summary, "context: msrv")
+    append_summary(summary, "mode: fresh")
+    append_summary(summary, "status: RUNNING")
+    logger = GateLog(output / "gate.log")
+
+    declared, rustc_version, cargo_version = declared_msrv_toolchain(root, summary)
+
+    lock_before = lockfile_digest(root)
+    work = output / "fresh-work"
+    if work.exists():
+        raise ReleaseError(f"temporary fresh-resolution copy already exists: {work}")
+
+    failures: list[str] = []
+    document: dict[str, object] | None = None
+    try:
+        copy_tracked_tree(root, work, tracked_files(root))
+        try:
+            run_gate(logger, "fresh-generate-lockfile", ["cargo", "generate-lockfile"], work)
+        except ReleaseError as error:
+            append_summary(summary, "fresh-resolution: FAIL")
+            failures.append(str(error))
+        else:
+            append_summary(summary, "fresh-resolution: PASS")
+            shutil.copy2(work / "Cargo.lock", output / "fresh-Cargo.lock")
+            try:
+                run_gate(
+                    logger,
+                    "declared-msrv-matrix-fresh",
+                    ["python3", "scripts/feature_matrix.py", "--run-msrv"],
+                    work,
+                )
+            except ReleaseError as error:
+                append_summary(summary, "declared-msrv-matrix-fresh: FAIL")
+                failures.append(str(error))
+            else:
+                append_summary(summary, "declared-msrv-matrix-fresh: PASS")
+            # The metadata read is what names the likely culprit, so it runs
+            # after a failed row as well as after a passing one.
+            try:
+                _version, document = cargo_metadata(work, logger, gate_name="fresh-metadata")
+            except ReleaseError as error:
+                failures.append(str(error))
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+    undeclared: list[tuple[str, str]] = []
+    resolved: dict[str, str | None] = {name: None for name in FRESH_RECORDED_PACKAGES}
+    if document is not None:
+        undeclared = undeclared_rust_version_packages(document)
+        resolved = resolved_versions(document, FRESH_RECORDED_PACKAGES)
+        (output / "fresh-undeclared-rust-version.txt").write_text(
+            "".join(f"{name} {version}\n" for name, version in undeclared),
+            encoding="utf-8",
+        )
+        append_summary(summary, f"undeclared-rust-version: {len(undeclared)} packages")
+        append_summary(
+            summary,
+            "fresh-resolved: "
+            + ", ".join(f"{name} {version}" for name, version in resolved.items()),
+        )
+
+    try:
+        require_lockfile_unchanged(lock_before, lockfile_digest(root))
+    except ReleaseError as error:
+        failures.append(str(error))
+    else:
+        append_summary(summary, "repository-lockfile-unchanged: PASS")
+
+    if failures:
+        raise ReleaseError("; ".join(failures))
+
+    write_manifest(
+        output / "manifest.json",
+        {
+            "context": "msrv",
+            "mode": "fresh",
+            "status": "pass",
+            "declared_rust_version": declared,
+            "rustc_version": rustc_version,
+            "cargo_version": cargo_version,
+            "fresh": {
+                **resolved,
+                "undeclared_rust_version_count": len(undeclared),
+            },
             **ci_identity(),
         },
     )
@@ -1064,6 +1276,51 @@ def aggregate_ci_mode(args: argparse.Namespace) -> int:
     return 0
 
 
+def release_steps(
+    script: str, output: Path, resolved_toolchain: str
+) -> list[tuple[str, list[str], Path]]:
+    """The ordered steps `release` runs, as `(name, command, manifest path)`.
+
+    One step per `RELEASE_GATES` entry, plus the RFC 023 R6.2 fresh-resolution
+    check **immediately after the locked `msrv` step**, in the `msrv` context
+    of the bundle (`msrv/fresh/`). A drift failure fails the release, because
+    that release would declare an MSRV a new consumer cannot meet. Both `msrv`
+    steps run under the declared toolchain via `rustup run` (RC-2).
+    """
+    steps: list[tuple[str, list[str], Path]] = []
+    for gate in RELEASE_GATES:
+        gate_output = output / gate
+        command = [sys.executable, script, gate, "--output-dir", str(gate_output)]
+        if gate == "msrv":
+            command = ["rustup", "run", resolved_toolchain, *command]
+        manifest_path = (
+            gate_output / "evidence" / "manifest.json"
+            if gate == "source"
+            else gate_output / "manifest.json"
+        )
+        steps.append((gate, command, manifest_path))
+        if gate == "msrv":
+            fresh_output = gate_output / "fresh"
+            steps.append(
+                (
+                    "msrv-fresh",
+                    [
+                        "rustup",
+                        "run",
+                        resolved_toolchain,
+                        sys.executable,
+                        script,
+                        "msrv",
+                        "--fresh",
+                        "--output-dir",
+                        str(fresh_output),
+                    ],
+                    fresh_output / "manifest.json",
+                )
+            )
+    return steps
+
+
 def release_mode(args: argparse.Namespace) -> int:
     """RFC 009 R12: the canonical release entry point.
 
@@ -1091,6 +1348,10 @@ def release_mode(args: argparse.Namespace) -> int:
     matrix is what proves 1.85 compatibility. Running both gates under one
     toolchain was RC-1's composition assumption, and that assumption was the
     defect.
+
+    RFC 023 R6.2: the fresh-resolution drift check (`msrv --fresh`) runs
+    right after the locked `msrv` step, in the same `msrv` context of the
+    bundle, and a drift failure fails the release. See `release_steps`.
     """
     root = repository_root()
     output = require_output_boundary(root, Path(args.output_dir))
@@ -1114,20 +1375,13 @@ def release_mode(args: argparse.Namespace) -> int:
 
     script = str(Path(__file__).resolve())
     manifests: dict[str, dict[str, object]] = {}
-    for gate in RELEASE_GATES:
-        gate_output = output / gate
-        command = [sys.executable, script, gate, "--output-dir", str(gate_output)]
-        if gate == "msrv":
-            command = ["rustup", "run", resolved_toolchain, *command]
-        run_gate(logger, gate, command, root)
-        append_summary(summary, f"{gate}: PASS")
-        manifest_path = (
-            gate_output / "evidence" / "manifest.json"
-            if gate == "source"
-            else gate_output / "manifest.json"
-        )
+    for name, command, manifest_path in release_steps(
+        script, output, resolved_toolchain
+    ):
+        run_gate(logger, name, command, root)
+        append_summary(summary, f"{name}: PASS")
         with manifest_path.open("rb") as file:
-            manifests[gate] = json.load(file)
+            manifests[name] = json.load(file)
 
     source_manifest = manifests["source"]
     msrv_manifest = manifests["msrv"]
@@ -1153,6 +1407,7 @@ def release_mode(args: argparse.Namespace) -> int:
             "declared_rust_version": msrv_manifest["declared_rust_version"],
             "declared_rustc_version": msrv_manifest["rustc_version"],
             "declared_cargo_version": msrv_manifest["cargo_version"],
+            "fresh_resolution": manifests["msrv-fresh"]["fresh"],
             "packages": doc_package_manifest["packages"],
             "advisories_evidence": f"security/{security_manifest['advisories_evidence']}",
             **ci_identity(),
@@ -1442,6 +1697,13 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         "msrv", help="run the declared-MSRV matrix under the active toolchain"
     )
     msrv.add_argument("--output-dir", type=Path, required=True)
+    msrv.add_argument(
+        "--fresh",
+        action="store_true",
+        help="run only the RFC 023 R6.2 fresh-resolution drift check: resolve "
+        "with no lockfile under the declared toolchain, then run the "
+        "declared-MSRV rows",
+    )
     msrv.set_defaults(handler=msrv_mode)
 
     doc_package = subparsers.add_parser(

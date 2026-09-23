@@ -149,6 +149,17 @@ args = [
     ".git-exclude/msrv-evidence",
 ]
 
+[tasks.msrv-fresh]
+description = "RFC 023 R6.2: resolve with no lockfile under the declared MSRV, then run the declared-MSRV rows"
+command = "python3"
+args = [
+    "scripts/release.py",
+    "msrv",
+    "--fresh",
+    "--output-dir",
+    ".git-exclude/msrv-fresh-evidence",
+]
+
 # ---------------------------------------------------------------------------
 # Documentation
 # ---------------------------------------------------------------------------

@@ -9,6 +9,19 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+
+- Release tooling (RFC 023 R6.2): a fresh-resolution drift check. `scripts/release.py msrv --fresh`
+  copies the tracked tree without any `Cargo.lock`, resolves it with the declared-MSRV Cargo (so
+  `resolver = "3"`'s MSRV-aware fallback applies exactly as for a consumer), then runs the same four
+  declared-MSRV rows as `msrv`. It catches an upstream crate that declares no `rust-version` and
+  raises the real floor, which is how `0.19.1` and `0.20.0` were published unbuildable on their
+  declared 1.85. It runs weekly in the new `.github/workflows/msrv-fresh.yaml` (not part of `ci.yaml`
+  or `aggregate-ci`), and as a step of `release`, right after the locked `msrv` step, where a
+  failure blocks the release. Its evidence records the resolved `rusqlite` and `libsqlite3-sys`
+  versions and lists the crates.io packages that declare no `rust-version`. Plain `msrv` and the
+  push-time CI job are unchanged, and no MSRV changes.
+
 ### Changed
 
 - `docs/src/dependency_security.md` (RFC 023 R10): the MSRV and dependency page is corrected,

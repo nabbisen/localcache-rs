@@ -33,7 +33,9 @@ The declared MSRV changes only under a written rule
   raise is announced in the release that makes it, and says so.
 - **Verification:** the four locked rows above in CI and the release gate, and
   after each publication a fresh consumer crate with `rust-version = "1.85"` builds
-  the published version on the declared toolchain.
+  the published version on the declared toolchain. A fresh-resolution check — no
+  lockfile, resolved by the declared toolchain's Cargo, then the same four rows —
+  runs weekly and at every release, and a drift there blocks the release.
 - **The previous minor line** gets security, data-loss, and corruption fixes for
   6 months after a raise, where the fix does not itself need the raise.
 
