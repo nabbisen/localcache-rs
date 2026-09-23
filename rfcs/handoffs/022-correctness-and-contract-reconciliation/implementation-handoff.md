@@ -10,7 +10,7 @@ QA companion: `rfcs/handoffs/022-correctness-and-contract-reconciliation/accepta
 
 ## 0. What this is
 
-This is a **non-breaking patch**. It fixes seven correctness defects that no current test catches,
+This is a **non-breaking patch**. It fixes six correctness defects (R1, R2, R6–R9) that no current test catches,
 repairs release tooling, and brings documentation and records back in line with the code.
 
 **No public signature, schema, SQL-shape, wire-format, or dependency change, and no input that

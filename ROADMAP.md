@@ -1307,7 +1307,7 @@ below, the contents of each release, and the newly-rejected-input rule.
 
 | Release | Contents | Breaking? |
 |---|---|---|
-| **v0.21.4** | Q0: seven correctness fixes (RFC 022 R1, R2, R6–R9), release-tooling repair, docs and records reconciliation | no |
+| **v0.21.4** | Q0: six correctness fixes (RFC 022 R1, R2, R6–R9), release-tooling repair, docs and records reconciliation | no |
 | **v0.21.5** | Q2: API consistency, additions and deprecations only; plus the Q2b module split and any non-breaking outcome of Q4 | no |
 | **v0.22.0** | Q3: error-taxonomy completion, configuration and argument validation, and removal of anything Q2 deprecated. Q5: the LRU recency contract (schema v6). Also any MSRV raise, **only** if Q1 approves one | **yes** |
 
