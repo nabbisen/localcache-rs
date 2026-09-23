@@ -52,7 +52,10 @@ code slices establish, and Q0d's widened gate must check Q0e's corrected install
 
 **Reproduce first, for every code slice: Q0a, Q0b, Q0c, Q0g, Q0h, Q0i.** Write the new tests, run them against the unfixed
 code, and **capture the failing output** before you change any production code. That output is
-required evidence. A test that passes on v0.21.3 does not prove the defect is fixed.
+required evidence. A test that passes on v0.21.3 does not prove the defect is fixed. When the handoff
+leaves a test parameter open (an offset, a size, a position), choose the value that makes the test
+**fail on the unfixed code**, and say why in the review request. A test that passes on both trees
+is still a welcome regression guard, but it is not a reproduction and must not be presented as one.
 
 **CHANGELOG.** Each slice adds its own entries under a `## [Unreleased]` heading at the top of
 `CHANGELOG.md` (create it in Q0a). Q0f renames the heading to the version.
@@ -262,7 +265,13 @@ pub(crate) fn evict_lru(
    - Select `id, path … WHERE namespace = ?1 AND id NOT IN (…protected…) ORDER BY
      last_accessed_at ASC, updated_at ASC, id ASC LIMIT ?`.
    - Then `DELETE … WHERE id IN (…)`, both inside **one** transaction. Chunk the `IN` lists at
-     500, as `payloads_for_ids` does.
+     500.
+   - **One chunk constant** (from the Q0b review). Add a single `pub(crate) const` for the 500-id
+     chunk in `crates/localcache/src/db/repository.rs`, with a doc comment giving the reason: it
+     stays below SQLite's historical `SQLITE_MAX_VARIABLE_NUMBER` of 999. Use it in
+     `payloads_for_ids` (replacing its local `CHUNK`), in `evict_lru`, and in `materialize` in
+     `crates/localcache/src/cache/query.rs` (replacing its local `WINDOW_CHUNK`). This is
+     behaviour-neutral: three uses, one definition.
    - `idx_files_lru` is `(namespace, last_accessed_at, updated_at)`, and SQLite appends the rowid,
      so `id ASC` should be index-served with no temporary sort. **Check with
      `EXPLAIN QUERY PLAN` and include the plan in the review request.** A `USE TEMP B-TREE` line

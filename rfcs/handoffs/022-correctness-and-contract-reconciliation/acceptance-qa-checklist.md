@@ -38,6 +38,7 @@ section and in **G** holds.
 - [ ] `import_rows` still preserves the exported `last_accessed_at`
 - [ ] Eviction is one selection plus deletion by id in one transaction, ordered `last_accessed_at, updated_at, id`, excluding the protected ids
 - [ ] `EXPLAIN QUERY PLAN` for the eviction selection is attached and shows `idx_files_lru` with no temporary sort
+- [ ] One `pub(crate)` 500-id chunk constant in `repository.rs` is used by `payloads_for_ids`, `evict_lru`, and `materialize`; no local copies remain
 - [ ] `on_evict` receives exactly the deleted paths, after commit
 - [ ] `set` never evicts its own row. `batch_set` never evicts any row it wrote
 - [ ] **Nothing new returns an error**: `max_entries(0)` keeps only the latest write; an oversized `batch_set` stores all its entries and the next `set` restores the bound — each with a test
