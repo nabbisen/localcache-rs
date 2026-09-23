@@ -39,7 +39,9 @@ section and in **G** holds.
 - [ ] Eviction is one selection plus deletion by id in one transaction, ordered `last_accessed_at, updated_at, id`, excluding the protected ids
 - [ ] `EXPLAIN QUERY PLAN` for the eviction selection is attached and shows `idx_files_lru` with no temporary sort
 - [ ] One `pub(crate)` 500-id chunk constant in `repository.rs` is used by `payloads_for_ids`, `evict_lru`, and `materialize`; no local copies remain
+- [ ] The write, the count, and the eviction run in **one** `IMMEDIATE` transaction; `evict_lru` opens no transaction of its own; a hook test shows a failed eviction leaves the entry unstored (`Err` means nothing changed), with failing-before output
 - [ ] `on_evict` receives exactly the deleted paths, after commit
+- [ ] The slice's own CHANGELOG entries (`### Fixed` and `### Changed`) are in the tree and shown in the request
 - [ ] `set` never evicts its own row. `batch_set` never evicts any row it wrote
 - [ ] **Nothing new returns an error**: `max_entries(0)` keeps only the latest write; an oversized `batch_set` stores all its entries and the next `set` restores the bound — each with a test
 - [ ] The same-second eviction test uses no `sleep` and asserts the exact survivors

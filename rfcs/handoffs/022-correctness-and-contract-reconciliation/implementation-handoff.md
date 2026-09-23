@@ -57,8 +57,10 @@ leaves a test parameter open (an offset, a size, a position), choose the value t
 **fail on the unfixed code**, and say why in the review request. A test that passes on both trees
 is still a welcome regression guard, but it is not a reproduction and must not be presented as one.
 
-**CHANGELOG.** Each slice adds its own entries under a `## [Unreleased]` heading at the top of
-`CHANGELOG.md` (create it in Q0a). Q0f renames the heading to the version.
+**CHANGELOG.** **Each slice writes its own entries** under the `## [Unreleased]` heading at the
+top of `CHANGELOG.md`, in the same working tree as its code, and shows the CHANGELOG diff in its
+review request. Where § 6 describes a code slice's CHANGELOG content, that describes what the slice
+itself writes. Q0e only fixes the preamble and links. Q0f renames the heading to the version.
 
 ---
 
@@ -277,9 +279,22 @@ pub(crate) fn evict_lru(
      `EXPLAIN QUERY PLAN` and include the plan in the review request.** A `USE TEMP B-TREE` line
      is a finding to report, not to absorb.
    - If fewer unprotected rows exist than `n`, delete all of them. This is not an error.
-4. **`enforce_max_entries(&self, protected: &[i64])`**: `set` passes its own id; `batch_set`
-   passes every id it wrote (from `upsert_in_tx`'s return values). Run the `on_evict` callbacks
-   **after** the eviction transaction commits, with the returned paths.
+   - *(From the Q0c review.)* `evict_lru` takes the caller's `&Transaction` and opens none of its
+     own.
+4. **One `IMMEDIATE` transaction per write, eviction included** (RFC 022 R6 item 3, from the Q0c
+   review):
+   - `set` opens
+     `rusqlite::Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)`, calls
+     `upsert_in_tx`, enforces the bound in the same transaction, and commits. `batch_set` does the
+     same with its whole batch.
+   - `enforce_max_entries` counts and evicts inside that transaction, with `protected` = the
+     call's own ids. It returns the evicted paths.
+   - `on_evict` callbacks run **after** commit, with exactly those paths.
+   - `Ok` means stored and bounded; `Err` means nothing changed. Say so in the `set`/`batch_set`
+     rustdoc.
+   - A test proves `Err` means nothing changed: a `#[cfg(test)]` hook fails the eviction step.
+     See the Q0c review § 2 C1.
+   - Write this slice's own CHANGELOG entries (see § 1 and § 6).
 5. **Nothing is rejected.** `max_entries(0)` and a `batch_set` larger than `max_entries` follow
    from the one rule (RFC 022 R6 design item 4):
    - an oversized batch stores all of its entries, and the next write brings the namespace back
@@ -583,7 +598,7 @@ below are what you need to act on it.
   - Rewrite every compare link to the repository's **unprefixed** tag names (`git tag` shows
     `0.19.1`, not `v0.19.1`).
   - Add 0.20.1 through 0.21.3, plus `[Unreleased]: …/compare/0.21.3...HEAD`.
-  - The `### Changed` entry for Q0c must state:
+  - Q0c's own `### Changed` entry (written **in Q0c**, not here) must state:
     - the eviction policy is least recently **read**, with never-read entries first;
     - an oversized `batch_set` now keeps everything it reports as stored;
     - `max_entries(0)`, an oversized `batch_set`, and a TTL under one second are rejected with
@@ -641,7 +656,8 @@ Contents, per the organization workflow § 9.2:
 4. important implementation decisions;
 5. differences from this handoff;
 6. tests added and run;
-7. **the failing-before output** (Q0a–Q0c, Q0g–Q0i) and the passing-after output;
+7. **the failing-before output** (Q0a–Q0c, Q0g–Q0i) and the passing-after output, plus the
+   slice's CHANGELOG diff;
 8. gate results, with the commands as run;
 9. unresolved issues;
 10. known limitations;

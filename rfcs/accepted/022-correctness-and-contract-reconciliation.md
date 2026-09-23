@@ -379,7 +379,14 @@ SQLite leaves unspecified.
    - Order: `last_accessed_at ASC, updated_at ASC, id ASC`. `id` is first-insert order, and an
      overwrite keeps its `id`.
    - One repository function selects the victims (excluding the protected ids) and deletes them
-     by id, both in **one** transaction.
+     by id.
+   - *(Concretized at the Q0c review.)* That selection and deletion run inside **the write's own
+     `IMMEDIATE` transaction**, together with the count, following the same rule as R1 item 6: a
+     read-modify-write holds the write lock from its first read to its commit. A separate deferred
+     eviction transaction can fail with `SQLITE_BUSY_SNAPSHOT` under a concurrent writer, without
+     waiting. And a `set` whose eviction failed would return `Err` after its entry was already
+     stored. With one transaction, **`Ok` means stored and bounded, and `Err` means nothing
+     changed.**
    - `on_evict` receives exactly the deleted paths, **after** commit.
    - The selection must be served by `idx_files_lru` without a temporary sort. SQLite appends the
      rowid to the index, so `id ASC` is covered. Check this with `EXPLAIN QUERY PLAN`.
