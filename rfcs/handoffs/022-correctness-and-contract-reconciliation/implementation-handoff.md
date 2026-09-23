@@ -2,7 +2,7 @@
 
 RFC: `rfcs/accepted/022-correctness-and-contract-reconciliation.md` (accepted 2026-09-23; R6
 amendment and Amendment 2 authorized the same day)
-Milestones: Phase 24 **Q0a–Q0e and Q0g–Q0i**. Q0f, the release, gets its own handoff later.
+Milestones: Phase 24 **Q0a–Q0e and Q0g–Q0j**. Q0f, the release, gets its own handoff later.
 **Revised 2026-09-23 for Amendment 2:** § 2 gained Q0a's corrections, § 4 (Q0c) was re-specified,
 and §§ 4a–4c (Q0g, Q0h, Q0i) are new. If you read this handoff earlier, re-read §§ 1, 2, 4–4c, 6,
 and 7.
@@ -33,10 +33,11 @@ Two standing principles from the owner govern every judgement call here:
 | **Q0g** size change is conclusive | R7 | `crates/localcache/src/detection/strategy.rs`, `crates/localcache/src/cache/options.rs`, `crates/localcache/tests/storage.rs` |
 | **Q0h** async batch results | R8 | `crates/localcache/src/cache/async_engine.rs`, `crates/localcache/tests/pool_observe.rs` |
 | **Q0i** watcher helper configuration | R9 | `crates/localcache/src/cache/engine.rs`, `crates/localcache/src/cache/watcher.rs`, `crates/localcache/tests/watching.rs` |
+| **Q0j** CI runtime hygiene | R3 items 6–7 | `.github/workflows/ci.yaml`, `.github/workflows/docs.yaml`, `CHANGELOG.md` |
 | **Q0d** release tooling | R3 | `scripts/release.py`, `scripts/check_advisories.py`, `scripts/release-tools.toml`, `scripts/tests/`, `Makefile.toml`, `.github/workflows/docs.yaml` |
 | **Q0e** hygiene, docs, records | R4, R5 | `crates/cli/src/main.rs` (+ new `crates/cli/src/main/tests.rs`), `crates/localcache/tests/query.rs`, rustdoc sites, `docs/src/`, `README.md`, `CHANGELOG.md` |
 
-**Order: Q0a → Q0b → Q0c → Q0g → Q0h → Q0i → Q0d → Q0e, one slice at a time.** Slice letters
+**Order: Q0a → Q0b → Q0c → Q0g → Q0h → Q0i → Q0d → Q0e → Q0j, one slice at a time.** Slice letters
 are identifiers, not positions. Q0f is the release, which is why the new slices start at g. Each slice is an independent review
 point, and the working tree must hold exactly one slice's changes when you file its review request.
 Follow the project cadence:
@@ -492,6 +493,53 @@ is `.git-exclude/tmp/arch-probe/`, check `[3]`.
 
 ---
 
+## 5a. Q0j — CI runtime hygiene (RFC 022 R3 items 6–7, Amendment 3)
+
+### Why
+
+GitHub removed Node 20 from its runners on **2026-09-23**. CI run 35844256083 shows our two
+artifact actions, which still declare Node 20, being forced onto Node 24. Nothing is broken, but
+our CI now depends on a fallback we did not choose. Separately, `ubuntu-latest` becomes Ubuntu 26
+from **2026-10-19**, which would change our runner without any change on our side. The architect
+has already checked every other action at its pinned SHA: all of them declare `node24` or are
+composite. That includes `actions/upload-pages-artifact`, which internally uses
+`upload-artifact` v7.
+
+### Implementation (`.github/workflows/ci.yaml`, `.github/workflows/docs.yaml` only)
+
+1. `actions/upload-artifact` → **v7.0.1**, and `actions/download-artifact` → **v8.0.1**.
+   - Pin each to the full commit SHA its tag resolves to, with the tag as a comment, matching
+     the existing style.
+   - Resolve the SHAs yourself (`gh api repos/<owner>/<repo>/git/ref/tags/<tag>`, and dereference
+     an annotated tag) and record the commands. The architect's resolution was `043fb46d…` and
+     `3e5f45b2…`.
+   - Confirm each pinned commit's `action.yml` declares `runs.using: node24`.
+2. Change nothing about how artifacts are used. CI downloads by **name**, so v5's by-ID path
+   change does not apply. Every upload is a default zipped artifact, so v8's skip-unzip change
+   does not apply. v8's fail-on-digest-mismatch default is kept, because it is safer.
+3. Every `runs-on: ubuntu-latest` in both workflows → `runs-on: ubuntu-24.04`. There are 12
+   today.
+4. Every `actions/cache` key: replace the leading `${{ runner.os }}` with `ubuntu-24.04`, so the
+   key names the image the cache was built on. A later, deliberate image move then starts clean
+   caches instead of restoring binaries built on another image.
+5. Add one comment line in each workflow header: the runner image and action runtimes change only
+   by a deliberate, CI-verified change (RFC 022 R3 items 6–7).
+6. **No other workflow change.** No new job, no permission change, no step reordering.
+
+### Verification
+
+These workflows run only on GitHub, so there is no failing-before test for this slice.
+- **Before:** quote the Node 20 annotations from run 35844256083 (`gh api
+  repos/nabbisen/localcache-rs/check-runs/<job-id>/annotations`).
+- **After:** the first CI run and Docs run on the approved commit show 26/26 jobs green,
+  `aggregate-ci` passing, and **no Node 20 annotation**. The architect confirms this after the
+  push.
+- Locally: `python3 -m unittest discover -s scripts/tests`, normally and under the restricted
+  `PATH`, because the CI job names and required-job set in `scripts/release.py` must still match.
+  Also run `git grep -n "ubuntu-latest\|upload-artifact@\|download-artifact@" -- .github`, and
+  show that every line it prints is the new pin.
+- CHANGELOG: one `### Changed` entry.
+
 ## 6. Q0e — Hygiene, documentation, records (RFC 022 R4, R5)
 
 ### Code hygiene (R4)
@@ -634,7 +682,9 @@ below are what you need to act on it.
 - No module splits (Q2b). **Never mix a move with a fix.**
 - No performance measurement or tuning. A deep `offset` getting slower in Q0b is the accepted cost.
 - No release action: no version bump, tag, or publish. That is Q0f, which is owner-authorized.
-- No push, unless the review asks for one to exercise CI.
+- **Commit and push only your own work, and only after its review approves it** (owner rule,
+  2026-09-23). Commit with the message the review gives. Push only when the review allows it: a
+  review may hold a push back, as Q0d's did until Q0e.
 
 ## 8. Gates, for every slice
 

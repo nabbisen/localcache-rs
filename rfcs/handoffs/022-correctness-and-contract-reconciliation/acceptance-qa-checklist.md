@@ -1,4 +1,4 @@
-# RFC 022 Acceptance & QA Checklist — Q0a–Q0e, Q0g–Q0i
+# RFC 022 Acceptance & QA Checklist — Q0a–Q0e, Q0g–Q0j
 
 Companion to `rfcs/handoffs/022-correctness-and-contract-reconciliation/implementation-handoff.md`.
 This is what each slice's review checks. A slice is accepted only when every box in its own
@@ -83,6 +83,15 @@ section and in **G** holds.
 - [ ] A finding on the artifact actions' runtime retirement is reported with its source. The actions are not upgraded
 - [ ] Every changed script is re-pinned in `scripts/release-tools.toml`, and the hash check passes
 - [ ] Script tests pass normally and under the restricted `PATH` with an empty `CARGO_HOME`
+
+## D2. Q0j — CI runtime hygiene (R3 items 6–7)
+
+- [ ] `upload-artifact` v7.0.1 and `download-artifact` v8.0.1, each pinned to a full commit SHA with the tag in a comment; the resolution commands are recorded; each pinned `action.yml` declares `node24`
+- [ ] No artifact usage changed (still by name, still zipped)
+- [ ] Every job in both workflows runs on `ubuntu-24.04`; no `ubuntu-latest` remains
+- [ ] Every `actions/cache` key names `ubuntu-24.04` instead of `${{ runner.os }}`
+- [ ] The before-state Node 20 annotations are quoted; script tests pass normally and under the restricted `PATH`
+- [ ] After the push: CI 26/26 green, `aggregate-ci` passing, and no Node 20 annotation (confirmed by the architect)
 
 ## E. Q0e — Hygiene, docs, records (R4, R5)
 

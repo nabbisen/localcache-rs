@@ -1337,6 +1337,7 @@ provisional until the file is created (RFC 000).
 | **Q0h — Async batch results** | `AsyncCacheEngine` batch methods return one result per path on failure, matching `ConnectionPool` and `ReadPool` | RFC 022 R8 | Amendment 2 authorized ✅ |
 | **Q0i — Watcher helper configuration** | Watcher helpers inherit the engine's journal mode and `synchronous`, hold no key, and open one connection; the debounced watcher sends no false notification | RFC 022 R9 | Amendment 2 authorized ✅ |
 | **Q0d — Release tooling** | Version gate covers every install example; retire the Makefile publish tasks; no retry on HTTP 404; Pages workflow least privilege | RFC 022 R3 | RFC 022 accepted ✅ |
+| **Q0j — CI runtime hygiene** | Artifact actions to their Node 24 majors (`upload-artifact` v7.0.1, `download-artifact` v8.0.1), SHA-pinned; every job on `ubuntu-24.04`; cache keys name the image. Nothing runs on a retired runtime or a floating image | RFC 022 R3 items 6–7 (Amendment 3, approved 2026-09-23) | Q0e |
 | **Q0e — Hygiene, docs, and records** | RFC 022 R4 and R5, including the documentation for every code slice's contract | RFC 022 R4–R5 | Q0a–Q0d, Q0g–Q0i |
 | **Q0f — Release v0.21.4** | Gates, evidence, release decision, owner tag/publish | owner | Q0e |
 | **Q1 — MSRV policy** | Design only (**RFC 023**): when and how a library with app consumers may raise its MSRV. Evaluate the `rusqlite 0.40` / Rust 1.95 question against it. **No MSRV change in this milestone** | owner approval required | — (runs in parallel with Q0) |
@@ -1347,7 +1348,9 @@ provisional until the file is created (RFC 000).
 | **Q5 — LRU recency contract** | **RFC 026**: a true least-recently-used policy where reads **and writes** count, on a recency signal finer than one second. It is a schema change (v6), under RFC 010's migration discipline, with the export/import format decided in the RFC. The same migration evaluates dropping `idx_files_namespace_path`, which duplicates the `UNIQUE(namespace, path)` autoindex (see the register). Implemented after Q3, as its own review point, and shipped in the same v0.22.0, so users absorb one break | RFC 026 | Q3's variants |
 
 Q0 runs one slice at a time, in this order: **Q0a → Q0b → Q0c → Q0g → Q0h → Q0i → Q0d → Q0e →
-Q0f**. Each is an independent review point.
+Q0j → Q0f**. Q0j was added by RFC 022 Amendment 3 (owner approval, 2026-09-23). It comes before
+the release so that v0.21.4 is built and verified on a CI configuration we chose, ahead of the
+2026-10-19 runner-image change. Each is an independent review point.
 - The code slices come first.
 - Q0e comes after them because it documents their contracts, and so that Q0d's widened gate
   checks the corrected examples the first time.
@@ -1422,7 +1425,7 @@ Q0e (hygiene, docs, records), and Q0f (release).
 | `rotate_encryption_key` loads every encrypted payload of the namespace into memory at once | 2026-09-23 review | O(namespace) memory. RFC 020's keyset paging applies directly. Revisit when a consumer rotates a large encrypted namespace. |
 | `aggregate-ci` accepts zero or duplicated `--evidence-manifest` arguments and does not check each manifest's `context` | 2026-09-23 review | The same defect class RC-1 fixed for jobs. Mitigated because the workflow passes a fixed argument list. Fold into the next change to `scripts/release.py`'s aggregation. |
 | Re-running `msrv-check`/`security-check` fails confusingly on existing output directories | 2026-09-23 review | Operator ergonomics only; both fail closed. |
-| `upload-artifact@v4` / `download-artifact@v4` are behind current majors | 2026-09-23 review | **Q0d must check whether GitHub has announced a runtime-retirement date affecting these pins.** If it has, this becomes a dated external constraint and moves into Q0d. |
+| `upload-artifact@v4` / `download-artifact@v4` are behind current majors | 2026-09-23 review | **✅ Scheduled as Q0j.** Q0d found the dated constraint: Node 20 was removed from runners on 2026-09-23, and CI shows both actions forced onto Node 24. The Q0d review added a second constraint: `ubuntu-latest` becomes Ubuntu 26 from 2026-10-19. Both are addressed in Q0j (RFC 022 Amendment 3). |
 | Watcher behaviour on large trees; async-runtime concurrency | Phase 23, unchanged | Still unmeasured; still nothing measured argues for it. |
 | `max_entries` is enforced only by `set`/`batch_set`, not by `import_entries`, `import_from`, or `namespace_copy` | 2026-09-23, found while writing the RFC 022 handoff | Consistent with the rustdoc ("when exceeded after a `set`"), so it is not a defect, and Q0e documents it plainly. Whether an import should honour the bound, and what it should do with the overflow, is an API-contract question for **Q2** (RFC 024). |
 | Encryption key material is copied into engine memory and never zeroized | 2026-09-23, while designing RFC 022 R1 | Pre-existing, and R1 does not widen it materially. Zeroizing needs `zeroize` (a new dependency under RFC 014's watch) and a decision on the builder's `Vec<u8>` key input. Assess at Q2 or Q3, whichever next touches key handling. A zeroizing wrapper is not `Copy`, so the `Cell` introduced by Q0a must then move to `replace`/`take`. Redesign it then; do not patch around it. |

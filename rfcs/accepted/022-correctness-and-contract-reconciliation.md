@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted (owner, 2026-09-23); R6 amendment accepted the same day; **Amendment 2** (R1 items 4–6, R6 re-scoped, new R7–R9) authorized by the owner the same day |
+| Status | Accepted (owner, 2026-09-23); R6 amendment accepted the same day; **Amendment 2** (R1 items 4–6, R6 re-scoped, new R7–R9) authorized by the owner the same day; **Amendment 3** (R3 items 6–7, CI runtime) approved by the owner the same day |
 | Feature | *(core; `encryption` for R1; `json` affects R2's tiers; async features for R8; `watching` for R9)* |
 | Touches | `crates/localcache/src/cache/engine.rs`, `crates/localcache/src/cache/query.rs`, `crates/localcache/src/db/repository.rs`, `crates/localcache/src/detection/strategy.rs`, `crates/localcache/src/cache/async_engine.rs`, `crates/localcache/src/cache/watcher.rs`, `crates/localcache/src/cache/entry.rs`, `crates/localcache/src/cache/options.rs`, `crates/localcache/src/read_pool.rs`, `crates/localcache/src/error.rs`, `crates/cli/src/main.rs`, `scripts/release.py`, `scripts/check_advisories.py`, `scripts/release-tools.toml`, `Makefile.toml`, `.github/workflows/docs.yaml`, `README.md`, `CHANGELOG.md`, `docs/src/`, `rfcs/README.md`, `ROADMAP.md` |
 | Finding | Architect onboarding review, 2026-09-23; architect re-onboarding and Q0a review, 2026-09-23 (Amendment 2) |
@@ -21,7 +21,8 @@ project itself calls broken. This RFC fixes all of them in one non-breaking patc
 - **R2** — since RFC 021, `offset` counts undecodable rows in tiers 1 and 2 but not in tier 3, so
   paging repeats rows.
 - **R3** — release tooling: the version gate misses most install examples; the Makefile publish
-  path cannot pass; the advisory fetcher retries 404s; the Pages workflow over-grants write scopes.
+  path cannot pass; the advisory fetcher retries 404s; the Pages workflow over-grants write scopes;
+  CI runs actions on a retired runtime and on a floating runner image *(Amendment 3)*.
 - **R4** — small code-hygiene items with no behaviour change.
 - **R5** — documentation and records reconciliation.
 - **R6** — `max_entries` eviction can remove the entry the same `set` just wrote. *(Re-scoped by
@@ -205,6 +206,28 @@ feature. That closes the one real no-features query coverage gap, the narrower o
    `cargo install mdbook --vers "^0.5"` with the same pinned mdBook 0.5.4 download and SHA-256 check
    that `.github/workflows/ci.yaml` uses.
 5. Re-pin every changed script in `scripts/release-tools.toml`.
+6. *(Amendment 3, approved by the owner 2026-09-23.)* **No CI step runs on a retired runtime.**
+   GitHub removed Node 20 from its runners on 2026-09-23. Its changelog "Deprecation of Node 20
+   on GitHub Actions runners", 2025-09-19, is the source. CI run 35844256083 shows
+   `actions/upload-artifact` v4 and `actions/download-artifact` v4 being forced onto Node 24.
+   Every other action in both workflows, including the one nested inside
+   `actions/upload-pages-artifact`, already declares `node24` or is composite.
+   - Move `actions/upload-artifact` to **v7.0.1** and `actions/download-artifact` to **v8.0.1**.
+     Both declare `runs.using: node24`.
+   - Pin each by the commit its tag resolves to, as RFC 009 R16 requires: `043fb46d…` and
+     `3e5f45b2…`. The implementer re-resolves and records the full SHAs.
+   - The breaking changes in between do not touch this workflow's usage. v5 changed
+     download-by-ID paths, and CI downloads by **name**. v8 skips unzipping non-zip content, and
+     every upload here is a default zipped artifact. v8 also fails on a digest mismatch, which
+     is the safer default.
+7. *(Amendment 3.)* **The runner image changes only by decision.** `ubuntu-latest` moves to
+   Ubuntu 26 from 2026-10-19 (actions/runner-images#14748).
+   - Every job in `.github/workflows/ci.yaml` and `.github/workflows/docs.yaml` declares
+     `runs-on: ubuntu-24.04`.
+   - Every `actions/cache` key names that image in place of the bare `${{ runner.os }}`, so a
+     later, deliberate image move cannot restore caches built on another image.
+   - Moving to Ubuntu 26 later is its own change, verified by its own CI run. The same principle
+     already applies to action SHAs.
 
 ## R4 — Code hygiene, no behaviour change
 
