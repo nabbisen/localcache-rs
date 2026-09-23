@@ -595,6 +595,11 @@ below are what you need to act on it.
     (RFC 022)", since Q0 now also includes Q0g–Q0i.
   - Correct the 13 release headings dated 2025 (0.1.0 through 0.13.0) to their tag dates in 2026
     (`git tag --format='%(refname:short) %(creatordate:short)'`).
+  - *(From the Q0i review, N1.)* Add one clause to Q0i's `### Fixed` entry: watcher construction
+    can no longer return `Poisoned { resource: "CacheWatcher" }`, because the lock that produced it
+    no longer exists. In `docs/src/errors.md`, make sure the current variant table and patterns do
+    not present watcher construction as a poisoning site. Leave the v0.21.0 migration note as it
+    is, because it is history.
   - Rewrite every compare link to the repository's **unprefixed** tag names (`git tag` shows
     `0.19.1`, not `v0.19.1`).
   - Add 0.20.1 through 0.21.3, plus `[Unreleased]: …/compare/0.21.3...HEAD`.
