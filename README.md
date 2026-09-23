@@ -108,7 +108,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   leave no corrupt state.
 - **LRU eviction** — `max_entries` evicts the least recently **read** entries
   automatically; a write never evicts what it just wrote.
-- **Thread-safe** — `ConnectionPool<T>` wraps the engine in `Arc<Mutex<…>>` for
+- **Thread-safe** — `SyncCacheEngine<T>` wraps the engine in `Arc<Mutex<…>>` for
   multi-threaded use; `ReadPool<T>` gives N concurrent read-only connections for
   read-heavy workloads with a separate writer; `AsyncCacheEngine<T>` for async
   runtimes.

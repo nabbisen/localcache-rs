@@ -19,7 +19,7 @@ on GitHub for the full backlog with implementation notes.
 | 9 | 0.9 | Portability — export / import |
 | 10 | 0.10 | Queries — `QueryBuilder`, `contains`, `keys` |
 | 11 | 0.11 | Query sorting — multi-column, `offset`, indexes |
-| 12 | 0.12 | Release readiness — benchmarks, `ConnectionPool` |
+| 12 | 0.12 | Release readiness — benchmarks, `ConnectionPool` (renamed `SyncCacheEngine` in 0.21.5) |
 | 13 | 0.13 | Observability — `tracing`, `explain()`, DX |
 | 14 | 0.14 | File watching — `CacheWatcher`, `preload()` |
 | 15 | 0.15 | Production hardening — `metrics`, debounce, namespaces |
@@ -57,7 +57,7 @@ intuition: Phase 22's profile (N4) overturned two of its own three hypotheses, s
 from numbers instead. Three non-breaking patches shipped, each at its own breaking point with CI
 green before the next started:
 
-- **v0.21.1** — query documentation, a `ConnectionPool` batch-result fix, tooling hygiene.
+- **v0.21.1** — query documentation, a `ConnectionPool` (now `SyncCacheEngine`) batch-result fix, tooling hygiene.
 - **v0.21.2** — maintenance-delete batching (`cleanup_missing_files`/`cleanup_expired` page their
   scan and batch each page's deletes in one transaction).
 - **v0.21.3** — query execution redesign: one streaming query replaces the old per-row `SELECT`

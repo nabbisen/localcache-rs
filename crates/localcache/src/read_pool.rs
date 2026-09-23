@@ -11,12 +11,12 @@
 //! Every slot requires an existing database with the exact current schema;
 //! opening a pool never initializes or migrates the database.
 //!
-//! # When to use ReadPool vs ConnectionPool
+//! # When to use ReadPool vs SyncCacheEngine
 //!
 //! | Scenario | Recommended |
 //! |---|---|
 //! | Single writer + single thread | [`CacheEngine<T>`][crate::CacheEngine] |
-//! | Mixed read/write across threads | [`ConnectionPool<T>`][crate::ConnectionPool] |
+//! | Mixed read/write across threads | [`SyncCacheEngine<T>`][crate::SyncCacheEngine] |
 //! | Read-heavy fan-out with a separate writer | **`ReadPool<T>`** |
 //! | Async | [`AsyncCacheEngine<T>`][crate::AsyncCacheEngine] |
 //!
@@ -180,7 +180,7 @@ where
     /// A read-only connection never updates `last_accessed_at` — writing it
     /// requires read-write access, so the engine's normal LRU timestamp
     /// update is skipped on every slot. Use
-    /// [`ConnectionPool`][crate::ConnectionPool] if LRU tracking matters for
+    /// [`SyncCacheEngine`][crate::SyncCacheEngine] if LRU tracking matters for
     /// your workload.
     pub fn get<P: AsRef<Path>>(&self, path: P) -> Result<Option<CacheEntry<T>>, LocalFileCacheError>
     where

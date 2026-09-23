@@ -10,8 +10,8 @@ use std::sync::{
 use std::time::Duration;
 
 use localcache::{
-    CacheEngine, CacheOptions, ConnectionPool, ExportRecord, LocalFileCacheError, ReadPool,
-    ScanOptions, shared_engine,
+    CacheEngine, CacheOptions, ExportRecord, LocalFileCacheError, ReadPool, ScanOptions,
+    SyncCacheEngine,
 };
 use rusqlite::{Connection, OpenFlags};
 use tempfile::TempDir;
@@ -183,6 +183,8 @@ fn assert_historical_rejected_unchanged(path: &Path) {
     assert!(!PathBuf::from(format!("{}-shm", path.display())).exists());
 }
 
+// Covers the deprecated path-index API: legacy indexes must stay usable read-only.
+#[allow(deprecated)]
 #[test]
 fn exact_current_schema_supports_read_only_surfaces_without_lru_mutation() {
     let directory = TempDir::new().unwrap();
@@ -239,14 +241,14 @@ fn exact_current_schema_supports_read_only_surfaces_without_lru_mutation() {
     assert!(shared_reader.contains(&source).unwrap());
     drop(shared_reader);
 
-    let connection_pool = ConnectionPool::<Vec<f32>>::open(CacheOptions {
+    let sync_engine = SyncCacheEngine::<Vec<f32>>::open(CacheOptions {
         database_path: database.clone(),
         namespace: "readonly".into(),
         read_only: true,
         ..CacheOptions::default()
     })
     .unwrap();
-    assert!(connection_pool.contains(&source).unwrap());
+    assert!(sync_engine.contains(&source).unwrap());
 
     let pool = ReadPool::<Vec<f32>>::open(
         CacheOptions {
@@ -366,6 +368,8 @@ fn missing_file_and_explicit_read_only_memory_never_initialize() {
     assert_eq!(shared.get(source).unwrap().unwrap().payload, vec![3.0]);
 }
 
+// Deprecated mutators (`namespace_copy`, path indexes) must still return ReadOnly.
+#[allow(deprecated)]
 #[test]
 fn every_public_mutator_returns_read_only_before_other_work() {
     let directory = TempDir::new().unwrap();
@@ -449,6 +453,8 @@ fn every_public_mutator_returns_read_only_before_other_work() {
     assert!(!callback_called.load(Ordering::SeqCst));
 }
 
+// The subject of the last assertions is the deprecated `shared_engine` helper.
+#[allow(deprecated)]
 #[test]
 fn pool_escape_hatches_and_manual_shared_engine_keep_original_guard() {
     let directory = TempDir::new().unwrap();
@@ -464,7 +470,7 @@ fn pool_escape_hatches_and_manual_shared_engine_keep_original_guard() {
         ..CacheOptions::default()
     };
 
-    let pool = ConnectionPool::<Vec<f32>>::open(options.clone()).unwrap();
+    let pool = SyncCacheEngine::<Vec<f32>>::open(options.clone()).unwrap();
     assert_read_only(pool.touch(&missing).unwrap_err());
     assert_read_only(
         pool.with(|engine| engine.set(&missing, &vec![1.0]))
@@ -472,7 +478,7 @@ fn pool_escape_hatches_and_manual_shared_engine_keep_original_guard() {
     );
     assert_read_only(pool.with_mut(|engine| engine.remove(&missing)).unwrap_err());
 
-    let shared = shared_engine::<Vec<f32>>(options).unwrap();
+    let shared = localcache::shared_engine::<Vec<f32>>(options).unwrap();
     let error = shared.lock().unwrap().set(missing, &vec![1.0]).unwrap_err();
     assert_read_only(error);
 }

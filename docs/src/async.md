@@ -46,31 +46,32 @@ let results: Vec<_> = engine.query_run(|q| {
 }).await?;
 ```
 
-## `ConnectionPool<T>` (sync multi-threading)
+## `SyncCacheEngine<T>` (sync multi-threading)
 
 For synchronous multi-threaded applications (e.g. Actix-web handlers,
-Rayon workers) where you don't want an async runtime, use `ConnectionPool`:
+Rayon workers) where you don't want an async runtime, use `SyncCacheEngine` — one engine
+behind a mutex, the synchronous counterpart of `AsyncCacheEngine`:
 
 ```rust
 use std::{sync::Arc, thread};
-use localcache::{ConnectionPool, CacheOptions};
+use localcache::{SyncCacheEngine, CacheOptions};
 
-let pool = Arc::new(ConnectionPool::<Vec<f32>>::open(CacheOptions {
+let engine = Arc::new(SyncCacheEngine::<Vec<f32>>::open(CacheOptions {
     database_path: "cache.sqlite3".into(),
     ..Default::default()
 })?);
 
 let handles: Vec<_> = (0..8).map(|_| {
-    let pool = Arc::clone(&pool);
+    let engine = Arc::clone(&engine);
     thread::spawn(move || {
-        let _ = pool.get_if_fresh("some_file.txt");
+        let _ = engine.get_if_fresh("some_file.txt");
     })
 }).collect();
 
 for h in handles { h.join().unwrap(); }
 ```
 
-`ConnectionPool<T>` is `Clone` — all clones share the same engine.
+`SyncCacheEngine<T>` is `Clone` — all clones share the same engine.
 
 ## `ReadPool<T>` (concurrent read-only)
 
@@ -117,18 +118,6 @@ let pool: ReadPool<Vec<f32>> = ReadPool::open(
 )?;
 ```
 
-### `shared_engine` helper
-
-For code that needs direct `Arc<Mutex<CacheEngine<T>>>` access:
-
-```rust
-use localcache::{shared_engine, CacheOptions};
-
-let shared = shared_engine::<Vec<f32>>(CacheOptions::default())?;
-// shared: Arc<Mutex<CacheEngine<Vec<f32>>>>
-let count = shared.lock().unwrap().entry_count()?;
-```
-
 ## SQLite concurrency notes
 
 `localcache` uses SQLite's **WAL (Write-Ahead Logging)** journal mode by
@@ -138,7 +127,7 @@ default, which allows one writer and multiple concurrent readers.
   thread, but not shared across threads through a `&CacheEngine` (an
   `Arc<CacheEngine<T>>` is therefore not itself `Send`, since that
   requires `T: Sync`).
-- `ConnectionPool` and `AsyncCacheEngine` both solve this by wrapping the
+- `SyncCacheEngine` and `AsyncCacheEngine` both solve this by wrapping the
   engine in `Arc<Mutex<…>>` and holding the lock only for the duration of
   each operation.
 - Multiple `CacheEngine` instances can be opened on the **same file**
@@ -183,6 +172,6 @@ async fn main() -> Result<(), localcache::LocalFileCacheError> {
 | Async (Tokio) | `AsyncCacheEngine<T>` with `async` feature |
 | Async (async-std) | `AsyncCacheEngine<T>` with `async-std` feature |
 | Async (smol) | `AsyncCacheEngine<T>` with `smol` feature |
-| Sync multi-threaded — mixed reads and writes | `ConnectionPool<T>` |
+| Sync multi-threaded — mixed reads and writes | `SyncCacheEngine<T>` |
 | Sync multi-threaded — read-heavy, separate writer | `ReadPool<T>` (N concurrent connections) |
-| Manual Arc<Mutex<…>> control | `shared_engine()` |
+| Direct access to the inner engine | `SyncCacheEngine::with` / `with_mut` |

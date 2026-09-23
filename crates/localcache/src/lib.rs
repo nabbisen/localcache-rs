@@ -40,9 +40,11 @@ pub use cache::entry::{
 pub use cache::options::{
     CacheOptions, ChangeDetectionMode, Codec, JournalMode, ScanOptions, SynchronousMode,
 };
-pub use cache::query::{QueryBuilder, SortOrder};
+pub use cache::query::{QueryBuilder, SortKey, SortOrder};
 pub use error::LocalFileCacheError;
-pub use pool::{CacheOptionsExt, ConnectionPool, SharedEngine, shared_engine};
+pub use pool::{CacheOptionsExt, SyncCacheEngine};
+#[allow(deprecated)]
+pub use pool::{ConnectionPool, SharedEngine, shared_engine};
 pub use read_pool::ReadPool;
 
 #[cfg(feature = "watching")]

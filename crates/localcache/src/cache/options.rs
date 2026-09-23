@@ -180,7 +180,7 @@ pub struct CacheOptions {
     /// Rejecting these cases with an error is planned for v0.22.0.
     ///
     /// The bound is enforced by `set`/`batch_set` only — not by
-    /// `import_entries`, `import_from`, or `namespace_copy`.
+    /// `import_entries` or `import_from`.
     pub max_entries: Option<usize>,
 
     /// AES-256-GCM encryption key (exactly 32 bytes).

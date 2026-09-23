@@ -21,6 +21,36 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   failure blocks the release. Its evidence records the resolved `rusqlite` and `libsqlite3-sys`
   versions and lists the crates.io packages that declare no `rust-version`. Plain `msrv` and the
   push-time CI job are unchanged, and no MSRV changes.
+- `SortKey` (`#[non_exhaustive]`: `Field(String)` with the `json` feature, `Mtime`, `LastAccessed`,
+  `Path`) with `QueryBuilder::order_by(SortKey, SortOrder)` and `then_by(SortKey, SortOrder)`
+  (RFC 024 R4). One method and one enum replace eight `bool`-argument methods; `SortKey::Mtime`
+  says what the old `order_by_updated_at` actually sorted by.
+- `SyncCacheEngine<T>` (RFC 024 R5): the new name of `ConnectionPool<T>`. It is one engine behind a
+  mutex, not a pool. It is the same type, so existing code keeps compiling.
+- `CacheWatcher::entry_count()` (RFC 024 R7): returns `Result<usize, LocalFileCacheError>` and
+  reports a poisoned lock as `Poisoned { resource: "CacheWatcher" }`.
+
+### Deprecated
+
+Every item below keeps working and behaves as before; each is removed in v0.22.0 unless noted.
+The deprecation note names the replacement (RFC 024 R4–R8). `docs/src/api.md` has the migration table.
+
+- `QueryBuilder::order_by_field`, `order_by_updated_at`, `order_by_last_accessed`, `order_by_path`:
+  use `order_by(SortKey::…, SortOrder::…)`. `order_by_updated_at` sorts by the source file's mtime,
+  not by `updated_at`; use `SortKey::Mtime`.
+- `QueryBuilder::then_by_field`, `then_by_updated_at`, `then_by_last_accessed`, `then_by_path`:
+  use `then_by(SortKey::…, SortOrder::…)`.
+- `ConnectionPool<T>` (now a type alias): use `SyncCacheEngine<T>`. `Poisoned { resource }` still
+  reads `"ConnectionPool"` until v0.22.0.
+- `SharedEngine<T>` and `shared_engine`: use `SyncCacheEngine`.
+- `CacheEngine::namespace_copy`: identical to `import_from`; use `import_from`.
+- `CacheWatcher::watched_count`: it returns the engine's entry count, not a count of watched paths,
+  and reports a poisoned lock as `0`; use `entry_count()`.
+- `CacheEngine::create_path_index` and `QueryBuilder::index_hint`, and the `AsyncCacheEngine`
+  counterparts of the path-index methods: the index duplicates the built-in unique index on
+  `(namespace, path)` and cannot speed up a query. No replacement; stop calling them.
+- `CacheEngine::drop_path_index` and `list_path_indexes` (and their async counterparts): kept only
+  to remove or find indexes created by an earlier release; their future is decided with the next schema change.
 
 ### Changed
 
@@ -31,6 +61,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `0.20.0` are no longer described as unbuildable: a fresh resolution of either builds on 1.85,
   and only an existing lockfile still holding the older `rusqlite`/`libsqlite3-sys` fails, which
   `cargo update -p rusqlite` repairs. The declared MSRV is unchanged at 1.85.
+- The `connection_pool` example is renamed `multithreaded_cache` and uses `SyncCacheEngine`
+  (`cargo run --example multithreaded_cache`, no feature flag needed).
+- Tests, examples, benches and `docs/src` use `SortKey`/`order_by`, `SyncCacheEngine` and `import_from`;
+  the path-index sections of `docs/src/querying.md` and `docs/src/api.md` are replaced by one
+  paragraph, and `docs/src/api.md` gains a migration table.
 
 ## [0.21.4] — 2026-09-23
 

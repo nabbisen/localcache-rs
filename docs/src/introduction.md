@@ -43,7 +43,7 @@ engine.set("document.txt", &embedding)?;
 | Store any serialisable type | ✅ `T: Serialize + DeserializeOwned` |
 | Detect file changes automatically | ✅ metadata + BLAKE3 hash |
 | Works offline, no services | ✅ single SQLite file |
-| Thread-safe sharing | ✅ `ConnectionPool<T>` |
+| Thread-safe sharing | ✅ `SyncCacheEngine<T>` |
 | Concurrent read-heavy workloads | ✅ `ReadPool<T>` (N read-only connections) |
 | Async runtimes (Tokio / async-std / smol) | ✅ `AsyncCacheEngine<T>` |
 | React to file changes | ✅ `CacheWatcher<T>` (OS events, per-file or per-directory) |

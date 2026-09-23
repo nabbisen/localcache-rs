@@ -12,7 +12,7 @@ localcache = { version = "0.21.4", features = ["async", "compression", "json"] }
 
 | Feature | Description | Key types / functions |
 |---|---|---|
-| *(default)* | Core cache — bincode payloads, BLAKE3, SQLite | `CacheEngine<T>`, `ConnectionPool<T>` |
+| *(default)* | Core cache — bincode payloads, BLAKE3, SQLite | `CacheEngine<T>`, `SyncCacheEngine<T>` |
 | `async` | Tokio-based async wrapper | `AsyncCacheEngine<T>` |
 | `async-std` | async-std async wrapper | `AsyncCacheEngine<T>` |
 | `smol` | smol async wrapper | `AsyncCacheEngine<T>` |
@@ -80,7 +80,7 @@ let engine = CacheEngine::<MyDoc>::builder()
 // Filter by a field inside the payload.
 let results = engine.query()
     .field_gt("score", 0.9)
-    .order_by_field("score", false) // descending
+    .order_by(SortKey::Field("score".into()), SortOrder::Desc) // descending
     .limit(10)
     .run()?;
 ```

@@ -2,7 +2,9 @@ use std::hint::black_box;
 use std::path::PathBuf;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use localcache::{CacheEngine, CacheOptions, ChangeDetectionMode, Codec, ConnectionPool};
+use localcache::{
+    CacheEngine, CacheOptions, ChangeDetectionMode, Codec, SortKey, SortOrder, SyncCacheEngine,
+};
 use serde::{Deserialize, Serialize};
 use tempfile::TempDir;
 
@@ -62,7 +64,7 @@ impl EngineFixture {
 
 struct PoolFixture {
     _tempdir: TempDir,
-    pool: ConnectionPool<BenchPayload>,
+    pool: SyncCacheEngine<BenchPayload>,
     path: PathBuf,
 }
 
@@ -70,7 +72,7 @@ impl PoolFixture {
     fn populated(vector_len: usize) -> Self {
         let tempdir = tempfile::tempdir().expect("create pool benchmark tempdir");
         let path = create_files(&tempdir, 1).remove(0);
-        let pool = ConnectionPool::open(CacheOptions {
+        let pool = SyncCacheEngine::open(CacheOptions {
             database_path: tempdir.path().join("pool.sqlite3"),
             change_detection_mode: ChangeDetectionMode::MetadataOnly,
             codec: Codec::Json,
@@ -187,7 +189,7 @@ fn bench_query_json(c: &mut Criterion) {
                     .engine
                     .query()
                     .field_gt("score", 100.0)
-                    .order_by_field("score", false)
+                    .order_by(SortKey::Field("score".into()), SortOrder::Desc)
                     .limit(25)
                     .run()
                     .expect("benchmark JSON query"),

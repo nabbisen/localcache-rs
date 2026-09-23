@@ -371,8 +371,8 @@ mod rotation_tests {
     }
 
     #[test]
-    fn same_engine_read_after_rotation_through_connection_pool() {
-        use localcache::ConnectionPool;
+    fn same_engine_read_after_rotation_through_sync_cache_engine() {
+        use localcache::SyncCacheEngine;
 
         let dir = TempDir::new().unwrap();
         let db = dir.path().join("rot_pool_read.sqlite3");
@@ -380,7 +380,7 @@ mod rotation_tests {
             .map(|i| write_file(&dir, &format!("pool_read{i}.txt"), b"data"))
             .collect();
 
-        let pool: ConnectionPool<Vec<f32>> = ConnectionPool::open(CacheOptions {
+        let pool: SyncCacheEngine<Vec<f32>> = SyncCacheEngine::open(CacheOptions {
             database_path: db,
             encryption_key: Some(key(0x61)),
             ..CacheOptions::default()
@@ -404,15 +404,15 @@ mod rotation_tests {
     }
 
     #[test]
-    fn same_engine_write_after_rotation_through_connection_pool() {
-        use localcache::ConnectionPool;
+    fn same_engine_write_after_rotation_through_sync_cache_engine() {
+        use localcache::SyncCacheEngine;
 
         let dir = TempDir::new().unwrap();
         let db = dir.path().join("rot_pool_write.sqlite3");
         let existing = write_file(&dir, "pool_existing.txt", b"data");
         let new_path = write_file(&dir, "pool_new_after_rotation.txt", b"data2");
 
-        let pool: ConnectionPool<Vec<f32>> = ConnectionPool::open(CacheOptions {
+        let pool: SyncCacheEngine<Vec<f32>> = SyncCacheEngine::open(CacheOptions {
             database_path: db.clone(),
             encryption_key: Some(key(0x71)),
             ..CacheOptions::default()

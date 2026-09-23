@@ -133,7 +133,10 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use localcache::{CacheEngine, CacheOptions, ChangeDetectionMode, Codec, ReadPool, ScanOptions};
+use localcache::{
+    CacheEngine, CacheOptions, ChangeDetectionMode, Codec, ReadPool, ScanOptions, SortKey,
+    SortOrder,
+};
 use serde::{Deserialize, Serialize};
 use tempfile::TempDir;
 
@@ -553,7 +556,7 @@ fn main() {
             engine
                 .query()
                 .field_gt("score", (scale / 2) as f64)
-                .order_by_field("score", false)
+                .order_by(SortKey::Field("score".into()), SortOrder::Desc)
                 .limit(25)
                 .run()
                 .expect("scale JSON query")
@@ -664,7 +667,7 @@ fn main() {
             engine
                 .query()
                 .field_gt("score", (scale / 2) as f64)
-                .order_by_field("score", false)
+                .order_by(SortKey::Field("score".into()), SortOrder::Desc)
                 .limit(25)
                 .dry_run(),
         ),

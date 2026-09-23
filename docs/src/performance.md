@@ -30,7 +30,7 @@ not scale.
   entries is about 1.2 GB. Shorter or longer stored paths shift this — see below.
 - **In `path_glob`, start the pattern with a literal.** A leading literal stays flat
   at any size; a leading `*` grows with the namespace.
-- **A JSON field query with `order_by_field` is the most expensive query shape** —
+- **A JSON field query sorted by `SortKey::Field` is the most expensive query shape** —
   roughly 2.1 seconds per million entries, even with a small `limit`, because
   every candidate's field must still be extracted.
 - **`cleanup_missing_files` and `cleanup_expired` scale linearly** and are now fast
@@ -53,7 +53,7 @@ Time per operation at three namespace sizes, from one profile run at a
 | LRU eviction, per evicted entry | 5.17 µs | 4.08 µs | 4.15 µs | flat per entry |
 | `path_in_dir`, non-recursive | 2.63 ms | 15.6 ms | 120 ms | ~46× |
 | `path_glob`, **leading wildcard** | 2.40 ms | 13.0 ms | 108 ms | ~45× |
-| `field_gt` + `order_by_field` + `limit 25` | 21.7 ms | 224 ms | **2.11 s** | **~98×** |
+| `field_gt` + sort by `SortKey::Field` + `limit 25` | 21.7 ms | 224 ms | **2.11 s** | **~98×** |
 
 The `limit(25)` row is new — see "Why a `limit`-only query is not flat" below for
 why it grows with the namespace despite never decoding more than 25 payloads. The
@@ -126,7 +126,7 @@ execution path was taken and why:
 ```rust
 let plan = engine.query()
     .field_gt("score", 0.5)
-    .order_by_field("score", false)
+    .order_by(SortKey::Field("score".into()), SortOrder::Desc)
     .dry_run()?;
 println!("{plan}");
 ```

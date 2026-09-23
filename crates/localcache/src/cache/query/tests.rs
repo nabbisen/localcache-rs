@@ -16,6 +16,7 @@ use tempfile::TempDir;
 use super::DECODE_CALLS;
 use crate::cache::engine::CacheEngine;
 use crate::cache::options::Codec;
+use crate::cache::query::{SortKey, SortOrder};
 use crate::serialization::encode_payload;
 
 fn engine() -> CacheEngine<Value> {
@@ -112,11 +113,20 @@ fn order_by_path_is_component_wise_not_byte_wise() {
     engine.set(&p_ab_dir, &json!({"n": 1})).unwrap();
     engine.set(&p_a_dash_b, &json!({"n": 2})).unwrap();
 
-    let first = engine.query().order_by_path(true).limit(1).run().unwrap();
+    let first = engine
+        .query()
+        .order_by(SortKey::Path, SortOrder::Asc)
+        .limit(1)
+        .run()
+        .unwrap();
     assert_eq!(first.len(), 1);
     assert_eq!(first[0].path, p_ab_dir, "component-wise order must win");
 
-    let all = engine.query().order_by_path(true).run().unwrap();
+    let all = engine
+        .query()
+        .order_by(SortKey::Path, SortOrder::Asc)
+        .run()
+        .unwrap();
     assert_eq!(all.len(), 2);
     assert_eq!(all[0].path, p_ab_dir);
     assert_eq!(all[1].path, p_a_dash_b);
@@ -141,7 +151,11 @@ fn order_by_field_numeric_string_missing() {
     engine.set(&p_string, &json!({"score": "high"})).unwrap();
     engine.set(&p_numeric, &json!({"score": 5.0})).unwrap();
 
-    let results = engine.query().order_by_field("score", true).run().unwrap();
+    let results = engine
+        .query()
+        .order_by(SortKey::Field("score".into()), SortOrder::Asc)
+        .run()
+        .unwrap();
     assert_eq!(results.len(), 3);
     // A string or missing field both map to `None`, which sorts first
     // ascending (SQLite would instead order NULL < REAL < TEXT, sorting the
@@ -156,11 +170,11 @@ fn order_by_field_numeric_string_missing() {
 }
 
 // ---------------------------------------------------------------------------
-// 3. Ordering parity — hazard 1 (UpdatedAt compares mtime, not updated_at)
+// 3. Ordering parity — hazard 1 (Mtime compares mtime, not updated_at)
 // ---------------------------------------------------------------------------
 
 #[test]
-fn order_by_updated_at_compares_mtime_not_updated_at_column() {
+fn order_by_mtime_compares_source_mtime_not_updated_at_column() {
     let dir = TempDir::new().unwrap();
     let engine = engine();
 
@@ -173,13 +187,140 @@ fn order_by_updated_at_compares_mtime_not_updated_at_column() {
     set_mtime_updated_at(&engine, &p_low_mtime, 100, 9_999);
     set_mtime_updated_at(&engine, &p_high_mtime, 200, 1_111);
 
-    let results = engine.query().order_by_updated_at(true).run().unwrap();
+    let results = engine
+        .query()
+        .order_by(SortKey::Mtime, SortOrder::Asc)
+        .run()
+        .unwrap();
     assert_eq!(results.len(), 2);
     assert_eq!(
         results[0].path, p_low_mtime,
-        "order_by_updated_at must sort by metadata.mtime, not the updated_at column"
+        "SortKey::Mtime must sort by metadata.mtime, not the updated_at column"
     );
     assert_eq!(results[1].path, p_high_mtime);
+}
+
+// ---------------------------------------------------------------------------
+// 3b. RFC 024 R4 — the deprecated bool-taking methods order exactly like
+//     `order_by`/`then_by`, ties included
+// ---------------------------------------------------------------------------
+
+fn set_last_accessed(engine: &CacheEngine<Value>, path: &std::path::Path, last_accessed_at: i64) {
+    engine
+        .conn
+        .execute(
+            "UPDATE files SET last_accessed_at = ?1 WHERE namespace = ?2 AND path = ?3",
+            params![
+                last_accessed_at,
+                engine.namespace,
+                path.display().to_string()
+            ],
+        )
+        .unwrap();
+}
+
+/// The deprecated spelling of `order_by(key, order)`.
+#[allow(deprecated)]
+fn old_order_by<'e>(
+    query: crate::cache::query::QueryBuilder<'e, Value>,
+    key: &SortKey,
+    order: SortOrder,
+) -> crate::cache::query::QueryBuilder<'e, Value> {
+    let ascending = order == SortOrder::Asc;
+    match key {
+        SortKey::Field(path) => query.order_by_field(path.clone(), ascending),
+        SortKey::Mtime => query.order_by_updated_at(ascending),
+        SortKey::LastAccessed => query.order_by_last_accessed(ascending),
+        SortKey::Path => query.order_by_path(ascending),
+    }
+}
+
+/// The deprecated spelling of `then_by(key, order)`.
+#[allow(deprecated)]
+fn old_then_by<'e>(
+    query: crate::cache::query::QueryBuilder<'e, Value>,
+    key: &SortKey,
+    order: SortOrder,
+) -> crate::cache::query::QueryBuilder<'e, Value> {
+    let ascending = order == SortOrder::Asc;
+    match key {
+        SortKey::Field(path) => query.then_by_field(path.clone(), ascending),
+        SortKey::Mtime => query.then_by_updated_at(ascending),
+        SortKey::LastAccessed => query.then_by_last_accessed(ascending),
+        SortKey::Path => query.then_by_path(ascending),
+    }
+}
+
+#[test]
+fn deprecated_sort_methods_order_exactly_like_order_by_and_then_by() {
+    let dir = TempDir::new().unwrap();
+    let engine = engine();
+
+    // Every key has ties: mtime {100,100,200,200,300,100}, last_accessed
+    // {5,0,5,0,7,7}, field n {1,1,2,2,3,3}. Paths are distinct.
+    let mtimes = [100, 100, 200, 200, 300, 100];
+    let accessed = [5, 0, 5, 0, 7, 7];
+    let fields = [1, 1, 2, 2, 3, 3];
+    for i in 0..6 {
+        let path = write_file(&dir, &format!("f{i}.txt"));
+        engine.set(&path, &json!({"n": fields[i]})).unwrap();
+        // `updated_at` deliberately disagrees with `mtime`.
+        set_mtime_updated_at(&engine, &path, mtimes[i], 1_000 - mtimes[i]);
+        set_last_accessed(&engine, &path, accessed[i]);
+    }
+
+    let keys = [
+        SortKey::Field("n".to_owned()),
+        SortKey::Mtime,
+        SortKey::LastAccessed,
+        SortKey::Path,
+    ];
+    let orders = [SortOrder::Asc, SortOrder::Desc];
+
+    let mut distinct = std::collections::HashSet::new();
+    for key in &keys {
+        for order in orders {
+            let new = paths_of(&engine.query().order_by(key.clone(), order).run().unwrap());
+            let old = paths_of(&old_order_by(engine.query(), key, order).run().unwrap());
+            assert_eq!(new, old, "order_by({key:?}, {order:?})");
+            distinct.insert(new);
+        }
+    }
+    // The comparison is not vacuous: the eight primaries do not all agree.
+    assert!(
+        distinct.len() > 2,
+        "expected differing orders, got {distinct:?}"
+    );
+
+    for primary in &keys {
+        for secondary in keys.iter().filter(|k| *k != primary) {
+            for first in orders {
+                for second in orders {
+                    let new = paths_of(
+                        &engine
+                            .query()
+                            .order_by(primary.clone(), first)
+                            .then_by(secondary.clone(), second)
+                            .run()
+                            .unwrap(),
+                    );
+                    let old = paths_of(
+                        &old_then_by(
+                            old_order_by(engine.query(), primary, first),
+                            secondary,
+                            second,
+                        )
+                        .run()
+                        .unwrap(),
+                    );
+                    assert_eq!(
+                        new, old,
+                        "order_by({primary:?}, {first:?}).then_by({secondary:?}, {second:?})"
+                    );
+                }
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -373,7 +514,12 @@ fn undecodable_payload_and_missing_payload_row_are_skipped_and_backfilled() {
     // `limit(3)` against 5 candidates, 2 of which are bad: backfill must
     // still deliver all 3 good ones rather than stopping short at the
     // window a naive `limit` would have covered.
-    let limited = engine.query().order_by_path(true).limit(3).run().unwrap();
+    let limited = engine
+        .query()
+        .order_by(SortKey::Path, SortOrder::Asc)
+        .limit(3)
+        .run()
+        .unwrap();
     assert_eq!(limited.len(), 3, "backfill must reach past both bad rows");
     let mut limited_paths: Vec<_> = limited.iter().map(|e| e.path.clone()).collect();
     limited_paths.sort();
@@ -438,21 +584,21 @@ fn offset_counts_only_successfully_decoded_rows() {
 
     let page0 = engine
         .query()
-        .order_by_path(true)
+        .order_by(SortKey::Path, SortOrder::Asc)
         .offset(0)
         .limit(2)
         .run()
         .unwrap();
     let page1 = engine
         .query()
-        .order_by_path(true)
+        .order_by(SortKey::Path, SortOrder::Asc)
         .offset(2)
         .limit(2)
         .run()
         .unwrap();
     let page2 = engine
         .query()
-        .order_by_path(true)
+        .order_by(SortKey::Path, SortOrder::Asc)
         .offset(4)
         .limit(2)
         .run()
@@ -517,7 +663,12 @@ fn offset_counts_only_successfully_decoded_rows_tier3() {
         .unwrap();
 
     // Matches every good row (all have score == 5.0).
-    let query = || engine.query().field_gt("score", -1.0).order_by_path(true);
+    let query = || {
+        engine
+            .query()
+            .field_gt("score", -1.0)
+            .order_by(SortKey::Path, SortOrder::Asc)
+    };
     let page0 = query().offset(0).limit(2).run().unwrap();
     let page1 = query().offset(2).limit(2).run().unwrap();
     let page2 = query().offset(4).limit(2).run().unwrap();
@@ -568,7 +719,12 @@ fn check_offset_around_bad_rows(dir: &TempDir, label: &str, bad_positions: &[usi
         .map(|i| paths[i].clone())
         .collect();
 
-    let result = engine.query().order_by_path(true).offset(1).run().unwrap();
+    let result = engine
+        .query()
+        .order_by(SortKey::Path, SortOrder::Asc)
+        .offset(1)
+        .run()
+        .unwrap();
     let expected = if good_paths.len() > 1 {
         good_paths[1..].to_vec()
     } else {
@@ -607,14 +763,14 @@ fn orphan_row_behaves_like_corrupt_row_for_offset() {
 
     let result_orphan = engine_orphan
         .query()
-        .order_by_path(true)
+        .order_by(SortKey::Path, SortOrder::Asc)
         .offset(1)
         .limit(2)
         .run()
         .unwrap();
     let result_corrupt = engine_corrupt
         .query()
-        .order_by_path(true)
+        .order_by(SortKey::Path, SortOrder::Asc)
         .offset(1)
         .limit(2)
         .run()
@@ -683,7 +839,7 @@ fn decode_count_is_bounded_by_offset_plus_limit_plus_bad_rows() {
     let limit = 3;
     let results = engine
         .query()
-        .order_by_path(true)
+        .order_by(SortKey::Path, SortOrder::Asc)
         .offset(offset)
         .limit(limit)
         .run()

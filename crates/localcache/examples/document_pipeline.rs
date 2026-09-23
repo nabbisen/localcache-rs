@@ -13,7 +13,9 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use tempfile::TempDir;
 
-use localcache::{CacheEngine, CacheOptions, CacheStatus, ChangeDetectionMode, Codec};
+use localcache::{
+    CacheEngine, CacheOptions, CacheStatus, ChangeDetectionMode, Codec, SortKey, SortOrder,
+};
 
 // ---------------------------------------------------------------------------
 // Payload type — a rich document analysis result
@@ -145,7 +147,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let results = engine
             .query()
             .field_gt("word_count", 8.0)
-            .order_by_field("word_count", false)
+            .order_by(SortKey::Field("word_count".into()), SortOrder::Desc)
             .run()?;
 
         for entry in &results {

@@ -182,6 +182,10 @@ where
     /// structurally valid legacy indexes remain idempotently discoverable,
     /// but an out-of-grammar legacy spelling cannot be recreated after drop.
     /// Rejected names return [`LocalFileCacheError::UnsupportedFeature`].
+    #[deprecated(
+        since = "0.21.5",
+        note = "the index duplicates the built-in unique index on (namespace, path) and cannot speed up a query"
+    )]
     pub fn create_path_index(&self, name: &str) -> Result<String, LocalFileCacheError> {
         self.guard_write()?;
         indexes::create_path_index(&self.conn, name)
@@ -193,6 +197,10 @@ where
     /// no matching main-schema object exists. Structurally authorized legacy
     /// names can be removed safely; TEMP and attached-schema objects are
     /// never targets.
+    #[deprecated(
+        since = "0.21.5",
+        note = "the index duplicates the built-in unique index on (namespace, path) and cannot speed up a query; kept to remove indexes created earlier"
+    )]
     pub fn drop_path_index(&self, name: &str) -> Result<bool, LocalFileCacheError> {
         self.guard_write()?;
         indexes::drop_path_index(&self.conn, name)
@@ -202,6 +210,10 @@ where
     ///
     /// Each result is valid for the catalog snapshot used by this call. A
     /// later operation revalidates the index before using it.
+    #[deprecated(
+        since = "0.21.5",
+        note = "the index duplicates the built-in unique index on (namespace, path) and cannot speed up a query; kept to find indexes created earlier"
+    )]
     pub fn list_path_indexes(&self) -> Result<Vec<String>, LocalFileCacheError> {
         indexes::list_path_indexes(&self.conn)
     }

@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use localcache::{
-    CacheEngine, CacheOptions, CacheStatus, ChangeDetectionMode, ConnectionPool,
-    LocalFileCacheError, ReadPool, ScanOptions,
+    CacheEngine, CacheOptions, CacheStatus, ChangeDetectionMode, LocalFileCacheError, ReadPool,
+    ScanOptions, SyncCacheEngine,
 };
 use tempfile::TempDir;
 
@@ -336,7 +336,7 @@ fn non_utf8_filename_is_rejected_before_extension_exclusion() {
 
 #[test]
 fn sync_and_read_pools_share_terminal_glob_validation() {
-    let pool = ConnectionPool::<Vec<u8>>::open(CacheOptions {
+    let pool = SyncCacheEngine::<Vec<u8>>::open(CacheOptions {
         database_path: ":memory:".into(),
         ..CacheOptions::default()
     })
@@ -383,7 +383,7 @@ fn sync_pools_preserve_exact_deleted_key_outcomes() {
     }
     fs::remove_file(&source).unwrap();
 
-    let pool = ConnectionPool::<Vec<u8>>::open(CacheOptions {
+    let pool = SyncCacheEngine::<Vec<u8>>::open(CacheOptions {
         database_path: database.clone(),
         ..CacheOptions::default()
     })

@@ -91,7 +91,23 @@ where
     /// Returns the number of entries copied.
     ///
     /// The two engines may point to different databases or different namespaces
-    /// within the same database.
+    /// within the same database. Entries already in the current namespace for
+    /// the same path are replaced.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use localcache::CacheEngine;
+    /// # let src = CacheEngine::<Vec<f32>>::builder().database(":memory:").build()?;
+    /// // Copy every entry of `src` into namespace "v2" of another database.
+    /// let dst = CacheEngine::<Vec<f32>>::builder()
+    ///     .database("dst.sqlite3")
+    ///     .namespace("v2")
+    ///     .build()?;
+    /// let n = dst.import_from(&src)?;
+    /// println!("copied {n} entries");
+    /// # Ok::<(), localcache::LocalFileCacheError>(())
+    /// ```
     pub fn import_from<U>(&self, source: &CacheEngine<U>) -> Result<usize, LocalFileCacheError>
     where
         U: Serialize + DeserializeOwned,
@@ -109,28 +125,10 @@ where
         repository::list_namespaces(&self.conn)
     }
 
-    /// Copy all entries from `source_namespace` into `dest_namespace`.
+    /// Copy all entries from `source` into the current namespace.
     ///
-    /// The source and destination may be in the **same** database file (this
-    /// engine's database) or in different files — pass `source` as any
-    /// `CacheEngine` opened on the source database.
-    ///
-    /// Already-existing entries in `dest_namespace` for the same path are
-    /// replaced.  Returns the number of entries copied.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # use localcache::CacheEngine;
-    /// # let src = CacheEngine::<Vec<f32>>::builder().database(":memory:").build()?;
-    /// let dst = CacheEngine::<Vec<f32>>::builder()
-    ///     .database("dst.sqlite3")
-    ///     .namespace("v2")
-    ///     .build()?;
-    /// let n = dst.namespace_copy(&src)?;
-    /// println!("copied {n} entries");
-    /// # Ok::<(), localcache::LocalFileCacheError>(())
-    /// ```
+    /// Identical to [`import_from`](Self::import_from), which it calls.
+    #[deprecated(since = "0.21.5", note = "identical to import_from; use import_from")]
     pub fn namespace_copy<U>(&self, source: &CacheEngine<U>) -> Result<usize, LocalFileCacheError>
     where
         U: Serialize + DeserializeOwned,

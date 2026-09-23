@@ -288,7 +288,7 @@ mod watching_tests {
 }
 
 // ====================================================================
-// Phase 15 — namespace_list() and namespace_copy()
+// Phase 15 — namespace_list() and import_from() across namespaces
 // ====================================================================
 
 #[test]
@@ -334,7 +334,7 @@ fn namespace_list_empty_database() {
 }
 
 #[test]
-fn namespace_copy_copies_all_entries() {
+fn import_from_copies_all_entries_across_namespaces() {
     let dir = TempDir::new().unwrap();
     let db_src = dir.path().join("ns_src.sqlite3");
     let db_dst = dir.path().join("ns_dst.sqlite3");
@@ -356,13 +356,13 @@ fn namespace_copy_copies_all_entries() {
         .build()
         .unwrap();
 
-    let copied = dst.namespace_copy(&src).unwrap();
+    let copied = dst.import_from(&src).unwrap();
     assert_eq!(copied, 5);
     assert_eq!(dst.entry_count().unwrap(), 5);
 }
 
 #[test]
-fn namespace_copy_overwrites_existing_entries() {
+fn import_from_overwrites_existing_entries_across_namespaces() {
     let dir = TempDir::new().unwrap();
     let db = dir.path().join("ns_overwrite.sqlite3");
 
@@ -382,7 +382,7 @@ fn namespace_copy_overwrites_existing_entries() {
     dst.set(&p, &vec![99.0_f32]).unwrap();
 
     // Copy from src → dst; dst's entry should be overwritten.
-    let copied = dst.namespace_copy(&src).unwrap();
+    let copied = dst.import_from(&src).unwrap();
     assert_eq!(copied, 1);
     assert_eq!(dst.entry_count().unwrap(), 1);
 
@@ -391,6 +391,8 @@ fn namespace_copy_overwrites_existing_entries() {
     assert_eq!(entry.payload[0], 1.0_f32);
 }
 
+// Subject: the deprecated `namespace_copy` alias.
+#[allow(deprecated)]
 #[test]
 fn namespace_copy_is_equivalent_to_import_from() {
     let dir = TempDir::new().unwrap();

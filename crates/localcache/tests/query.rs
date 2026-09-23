@@ -6,7 +6,7 @@ use common::write_file;
 use tempfile::TempDir;
 
 #[allow(unused_imports)]
-use localcache::{CacheEngine, CacheOptions};
+use localcache::{CacheEngine, CacheOptions, SortKey, SortOrder};
 
 // ====================================================================
 #[test]
@@ -392,7 +392,7 @@ mod query_tests {
 #[cfg(feature = "json")]
 mod query_ordering_tests {
     use super::*;
-    use localcache::Codec;
+    use localcache::{Codec, SortKey, SortOrder};
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -427,7 +427,11 @@ mod query_ordering_tests {
     fn order_by_field_ascending() {
         let dir = TempDir::new().unwrap();
         let engine = ordered_engine(&dir);
-        let results = engine.query().order_by_field("rank", true).run().unwrap();
+        let results = engine
+            .query()
+            .order_by(SortKey::Field("rank".into()), SortOrder::Asc)
+            .run()
+            .unwrap();
         assert_eq!(results.len(), 5);
         for w in results.windows(2) {
             assert!(
@@ -441,7 +445,11 @@ mod query_ordering_tests {
     fn order_by_field_descending() {
         let dir = TempDir::new().unwrap();
         let engine = ordered_engine(&dir);
-        let results = engine.query().order_by_field("rank", false).run().unwrap();
+        let results = engine
+            .query()
+            .order_by(SortKey::Field("rank".into()), SortOrder::Desc)
+            .run()
+            .unwrap();
         assert_eq!(results.len(), 5);
         for w in results.windows(2) {
             assert!(
@@ -455,7 +463,11 @@ mod query_ordering_tests {
     fn order_by_path_ascending() {
         let dir = TempDir::new().unwrap();
         let engine = ordered_engine(&dir);
-        let results = engine.query().order_by_path(true).run().unwrap();
+        let results = engine
+            .query()
+            .order_by(SortKey::Path, SortOrder::Asc)
+            .run()
+            .unwrap();
         assert_eq!(results.len(), 5);
         for w in results.windows(2) {
             assert!(w[0].path <= w[1].path, "should be path-ascending");
@@ -466,10 +478,14 @@ mod query_ordering_tests {
     fn offset_skips_first_n() {
         let dir = TempDir::new().unwrap();
         let engine = ordered_engine(&dir);
-        let all = engine.query().order_by_field("rank", true).run().unwrap();
+        let all = engine
+            .query()
+            .order_by(SortKey::Field("rank".into()), SortOrder::Asc)
+            .run()
+            .unwrap();
         let skipped = engine
             .query()
-            .order_by_field("rank", true)
+            .order_by(SortKey::Field("rank".into()), SortOrder::Asc)
             .offset(2)
             .run()
             .unwrap();
@@ -485,7 +501,7 @@ mod query_ordering_tests {
         // Page 1: items 0-1
         let p1 = engine
             .query()
-            .order_by_field("rank", true)
+            .order_by(SortKey::Field("rank".into()), SortOrder::Asc)
             .limit(2)
             .offset(0)
             .run()
@@ -493,7 +509,7 @@ mod query_ordering_tests {
         // Page 2: items 2-3
         let p2 = engine
             .query()
-            .order_by_field("rank", true)
+            .order_by(SortKey::Field("rank".into()), SortOrder::Asc)
             .limit(2)
             .offset(2)
             .run()
@@ -501,7 +517,7 @@ mod query_ordering_tests {
         // Page 3: item 4
         let p3 = engine
             .query()
-            .order_by_field("rank", true)
+            .order_by(SortKey::Field("rank".into()), SortOrder::Asc)
             .limit(2)
             .offset(4)
             .run()
@@ -529,7 +545,7 @@ mod query_ordering_tests {
         let results = engine
             .query()
             .field_lt("rank", 3.0)
-            .order_by_field("rank", false) // descending within the matches
+            .order_by(SortKey::Field("rank".into()), SortOrder::Desc) // descending within the matches
             .run()
             .unwrap();
         // Items 0, 1, 2 match rank < 3.0
@@ -606,7 +622,7 @@ fn touch_protects_from_lru_eviction() {
 // RFC 022 R2 — `offset` counts only rows that materialize.
 //
 // Ungated (no Cargo features required): closes the no-features gap
-// `ROADMAP.md` notes under P2b, since `limit`/`offset`/`order_by_updated_at`
+// `ROADMAP.md` notes under P2b, since `limit`/`offset`/`order_by`
 // are always available. The bad row is made by deleting its payload row
 // directly via `rusqlite`, never by a type-mismatched decode -- bincode's
 // legacy format can decode foreign bytes into a wrong value instead of
@@ -614,7 +630,7 @@ fn touch_protects_from_lru_eviction() {
 // ====================================================================
 
 #[test]
-fn offset_and_limit_with_order_by_updated_at_skip_a_bad_row() {
+fn offset_and_limit_with_mtime_order_skip_a_bad_row() {
     let dir = TempDir::new().unwrap();
     let db = dir.path().join("offset_no_features.sqlite3");
 
@@ -668,7 +684,7 @@ fn offset_and_limit_with_order_by_updated_at_skip_a_bad_row() {
     .unwrap();
     drop(conn);
 
-    // Ascending order_by_updated_at: f0, f1(bad), f2, f3, f4 -- 4 good rows
+    // Ascending order_by(SortKey::Mtime, ..): f0, f1(bad), f2, f3, f4 -- 4 good rows
     // (f0, f2, f3, f4). `offset(3)` must skip 3 *good* rows (f0, f2, f3),
     // leaving only f4, so `limit(2)` can return just 1 entry, not an error
     // and not 2. Must fail on v0.21.3: the old positional code applied
@@ -678,7 +694,7 @@ fn offset_and_limit_with_order_by_updated_at_skip_a_bad_row() {
     // decoding.
     let page = engine
         .query()
-        .order_by_updated_at(true)
+        .order_by(SortKey::Mtime, SortOrder::Asc)
         .offset(3)
         .limit(2)
         .run()
@@ -703,6 +719,7 @@ fn offset_and_limit_with_order_by_updated_at_skip_a_bad_row() {
 // Phase 11 — Persistent index management
 // ====================================================================
 
+#[allow(deprecated)]
 #[test]
 fn create_and_list_and_drop_index() {
     let dir = TempDir::new().unwrap();
@@ -736,6 +753,7 @@ fn create_and_list_and_drop_index() {
     assert!(!engine.drop_path_index("by_prefix").unwrap());
 }
 
+#[allow(deprecated)]
 #[test]
 fn create_index_is_idempotent() {
     let dir = TempDir::new().unwrap();
@@ -758,6 +776,7 @@ fn create_index_is_idempotent() {
     );
 }
 
+#[allow(deprecated)]
 #[test]
 fn hostile_index_identifiers_fail_closed_without_mutation() {
     use localcache::LocalFileCacheError;
@@ -934,6 +953,7 @@ fn hostile_index_identifiers_fail_closed_without_mutation() {
     );
 }
 
+#[allow(deprecated)]
 #[test]
 fn index_creation_grammar_accepts_boundaries_and_reserved_words() {
     let engine: CacheEngine<Vec<f32>> =
@@ -951,6 +971,7 @@ fn index_creation_grammar_accepts_boundaries_and_reserved_words() {
     );
 }
 
+#[allow(deprecated)]
 #[test]
 fn read_only_precedes_identifier_validation_for_index_mutations() {
     use localcache::LocalFileCacheError;
@@ -1046,6 +1067,7 @@ mod async_phase11_tests {
         assert!(engine.contains(p).await.unwrap());
     }
 
+    #[allow(deprecated)]
     #[tokio::test]
     async fn async_index_lifecycle() {
         let dir = TempDir::new().unwrap();
@@ -1084,6 +1106,7 @@ mod async_phase11_tests {
         assert!(dropped);
     }
 
+    #[allow(deprecated)]
     #[tokio::test]
     async fn async_index_identifier_rejection_matches_sync_contract() {
         use localcache::LocalFileCacheError;
@@ -1122,6 +1145,7 @@ fn smol_index_lifecycle_and_rejection_match_sync_contract() {
     all(not(feature = "async"), feature = "async-std"),
     all(not(feature = "async"), not(feature = "async-std"), feature = "smol")
 ))]
+#[allow(deprecated)]
 async fn async_index_parity() {
     use localcache::{AsyncCacheEngine, CacheOptions, LocalFileCacheError};
 
@@ -1242,6 +1266,7 @@ mod rfc002_index_hints {
     // ------------------------------------------------------------------
     // index_hint with valid index — query returns correct results
     // ------------------------------------------------------------------
+    #[allow(deprecated)]
     #[test]
     fn index_hint_valid_index_returns_results() {
         let dir = TempDir::new().unwrap();
@@ -1264,6 +1289,7 @@ mod rfc002_index_hints {
     // ------------------------------------------------------------------
     // index_hint with invalid index — run() returns a Database error
     // ------------------------------------------------------------------
+    #[allow(deprecated)]
     #[test]
     fn index_hint_invalid_index_returns_error() {
         let dir = TempDir::new().unwrap();
@@ -1280,6 +1306,7 @@ mod rfc002_index_hints {
     // ------------------------------------------------------------------
     // dry_run with index_hint — plan mentions the index
     // ------------------------------------------------------------------
+    #[allow(deprecated)]
     #[test]
     fn dry_run_with_index_hint_mentions_index() {
         let dir = TempDir::new().unwrap();

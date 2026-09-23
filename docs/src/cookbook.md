@@ -37,14 +37,14 @@ fn run(corpus: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
 
 ## Recipe 2 — Multi-threaded web server
 
-Share a cache pool across Actix-web request handlers:
+Share one cache engine across Actix-web request handlers:
 
 ```rust
 use actix_web::{web, App, HttpServer};
-use localcache::{ConnectionPool, CacheOptions};
+use localcache::{SyncCacheEngine, CacheOptions};
 use std::sync::Arc;
 
-type Pool = Arc<ConnectionPool<Vec<f32>>>;
+type Pool = Arc<SyncCacheEngine<Vec<f32>>>;
 
 async fn handle(pool: web::Data<Pool>, path: web::Path<String>)
     -> impl actix_web::Responder
@@ -56,7 +56,7 @@ async fn handle(pool: web::Data<Pool>, path: web::Path<String>)
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let pool = Arc::new(
-        ConnectionPool::<Vec<f32>>::open(CacheOptions {
+        SyncCacheEngine::<Vec<f32>>::open(CacheOptions {
             database_path: "cache.sqlite3".into(),
             ..Default::default()
         }).unwrap()
@@ -153,7 +153,7 @@ println!("rotated {rotated} entries");
 ```
 
 Rotation covers only **this engine's namespace, on this engine**. Every other open engine on the
-same database and namespace — another `ConnectionPool`, `ReadPool` slot, or process — keeps the
+same database and namespace — another `SyncCacheEngine`, `ReadPool` slot, or process — keeps the
 old key and returns `EncryptionError` on rotated entries until it is reopened with `new_key`.
 Engines on other namespaces are unaffected.
 
@@ -195,7 +195,7 @@ let src = CacheEngine::<Doc>::builder()
 // Find entries matching criteria.
 let results = src.query()
     .field_gt("score", 0.9)
-    .order_by_field("score", false)
+    .order_by(SortKey::Field("score".into()), SortOrder::Desc)
     .run()?;
 let matched: HashSet<String> = results.iter()
     .map(|e| e.path.display().to_string())

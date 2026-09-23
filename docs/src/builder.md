@@ -92,8 +92,8 @@ stores everything it reports as succeeded, and the bound is restored by the
 only the most recently written entry. **From v0.22.0**, `max_entries(0)` and
 a `batch_set` larger than `max_entries` will be rejected with an error
 instead of silently accepted as they are today. The bound is enforced only
-by `set`/`batch_set` — it is **not** enforced by `import_entries`,
-`import_from`, or `namespace_copy`.
+by `set`/`batch_set` — it is **not** enforced by `import_entries`
+or `import_from`.
 
 ### `payload_version(v)`
 

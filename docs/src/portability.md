@@ -70,12 +70,6 @@ let copied = dst.import_from(&src)?;
 println!("copied {copied} entries");
 ```
 
-`namespace_copy` is an alias with a more descriptive name:
-
-```rust
-let copied = dst.namespace_copy(&src)?;
-```
-
 ## CLI copy and migrate
 
 ```sh

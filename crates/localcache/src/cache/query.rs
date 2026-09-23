@@ -63,14 +63,38 @@ thread_local! {
 // SortOrder (always available)
 // ---------------------------------------------------------------------------
 
-/// Sort direction for [`QueryBuilder::order_by_updated_at`] and
-/// [`QueryBuilder::order_by_path`].
+/// Sort direction for [`QueryBuilder::order_by`] and [`QueryBuilder::then_by`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SortOrder {
     /// Ascending (smallest first).
     Asc,
     /// Descending (largest first).
     Desc,
+}
+
+/// What [`QueryBuilder::order_by`] and [`QueryBuilder::then_by`] sort by.
+///
+/// There is deliberately no variant for the `updated_at` column: nothing has
+/// asked to sort by it, and the old `order_by_updated_at` sorted by the source
+/// file's modification time, not by `updated_at`. `#[non_exhaustive]` leaves
+/// room for a distinctly named key later.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SortKey {
+    /// A dot-separated field of the JSON payload (requires the `json` feature).
+    #[cfg(feature = "json")]
+    Field(String),
+    /// The source file's modification time (`mtime`) as recorded when the
+    /// entry was stored — not when the entry was written to the cache.
+    Mtime,
+    /// The `last_accessed_at` timestamp: the last **read** (`get`,
+    /// `get_if_fresh`, or `touch`). Entries never read since being written
+    /// have `last_accessed_at == 0` and sort as oldest under
+    /// [`SortOrder::Asc`]. This is the same ordering `max_entries` eviction
+    /// uses.
+    LastAccessed,
+    /// The stored path string.
+    Path,
 }
 
 // ---------------------------------------------------------------------------
@@ -82,12 +106,35 @@ pub(crate) enum OrderBy {
     /// Sort by a JSON payload field (requires `json` feature).
     #[cfg(feature = "json")]
     Field { path: String, order: SortOrder },
-    /// Sort by `mtime` timestamp proxy.
-    UpdatedAt(SortOrder),
+    /// Sort by the source file's `mtime`, as recorded when the entry was stored.
+    Mtime(SortOrder),
     /// Sort by `last_accessed_at` timestamp.
     LastAccessed(SortOrder),
     /// Sort by stored path string.
     Path(SortOrder),
+}
+
+impl OrderBy {
+    fn from_key(key: SortKey, order: SortOrder) -> Self {
+        match key {
+            #[cfg(feature = "json")]
+            SortKey::Field(path) => OrderBy::Field { path, order },
+            SortKey::Mtime => OrderBy::Mtime(order),
+            SortKey::LastAccessed => OrderBy::LastAccessed(order),
+            SortKey::Path => OrderBy::Path(order),
+        }
+    }
+}
+
+impl SortOrder {
+    /// Maps the deprecated `ascending: bool` spelling onto a direction.
+    fn from_ascending(ascending: bool) -> Self {
+        if ascending {
+            SortOrder::Asc
+        } else {
+            SortOrder::Desc
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -297,6 +344,10 @@ where
     ///     .run()?;
     /// # Ok::<(), localcache::LocalFileCacheError>(())
     /// ```
+    #[deprecated(
+        since = "0.21.5",
+        note = "the index duplicates the built-in unique index on (namespace, path) and cannot speed up a query"
+    )]
     pub fn index_hint(mut self, index_name: impl Into<String>) -> Self {
         self.index_hint = Some(index_name.into());
         self
@@ -401,102 +452,114 @@ where
     // Sorting (always available)
     // ------------------------------------------------------------------
 
+    /// Sort results by `key`, in `order`, as the primary key.
+    ///
+    /// Clears any previous sort keys. Chain with [`then_by`](Self::then_by)
+    /// for secondary sorting.
+    ///
+    /// ```no_run
+    /// # use localcache::{CacheEngine, SortKey, SortOrder};
+    /// # let engine = CacheEngine::<Vec<f32>>::builder().database(":memory:").build()?;
+    /// let newest_first = engine
+    ///     .query()
+    ///     .order_by(SortKey::Mtime, SortOrder::Desc)
+    ///     .then_by(SortKey::Path, SortOrder::Asc)
+    ///     .run()?;
+    /// # Ok::<(), localcache::LocalFileCacheError>(())
+    /// ```
+    pub fn order_by(mut self, key: SortKey, order: SortOrder) -> Self {
+        self.order_by = vec![OrderBy::from_key(key, order)];
+        self
+    }
+
+    /// Add a secondary sort by `key`, in `order`.
+    ///
+    /// Call after [`order_by`](Self::order_by).
+    pub fn then_by(mut self, key: SortKey, order: SortOrder) -> Self {
+        self.order_by.push(OrderBy::from_key(key, order));
+        self
+    }
+
     /// Sort results by a dot-separated JSON payload field (requires `json` feature).
-    ///
-    /// Clears any previous sort keys and sets this as the primary key.
-    /// Chain with `then_by_*` for secondary sorting.
     #[cfg(feature = "json")]
-    pub fn order_by_field(mut self, field_path: impl Into<String>, ascending: bool) -> Self {
-        self.order_by = vec![OrderBy::Field {
-            path: field_path.into(),
-            order: if ascending {
-                SortOrder::Asc
-            } else {
-                SortOrder::Desc
-            },
-        }];
-        self
+    #[deprecated(
+        since = "0.21.5",
+        note = "use order_by(SortKey::Field(path), SortOrder::Asc) or SortOrder::Desc"
+    )]
+    pub fn order_by_field(self, field_path: impl Into<String>, ascending: bool) -> Self {
+        self.order_by(
+            SortKey::Field(field_path.into()),
+            SortOrder::from_ascending(ascending),
+        )
     }
 
-    /// Sort results by `updated_at` timestamp (primary key).
-    pub fn order_by_updated_at(mut self, ascending: bool) -> Self {
-        self.order_by = vec![OrderBy::UpdatedAt(if ascending {
-            SortOrder::Asc
-        } else {
-            SortOrder::Desc
-        })];
-        self
+    /// Sorts by the source file's `mtime`, **not** by the `updated_at` column
+    /// its name suggests.
+    #[deprecated(
+        since = "0.21.5",
+        note = "sorts by the source file's mtime, not updated_at; use order_by(SortKey::Mtime, SortOrder::Asc) or SortOrder::Desc"
+    )]
+    pub fn order_by_updated_at(self, ascending: bool) -> Self {
+        self.order_by(SortKey::Mtime, SortOrder::from_ascending(ascending))
     }
 
-    /// Sort results by `last_accessed_at` — the last **read** (`get`,
-    /// `get_if_fresh`, or `touch`) — timestamp (primary key).
-    ///
-    /// Entries never read since being written have `last_accessed_at == 0`
-    /// and sort as oldest under ascending order. This is the same ordering
-    /// `max_entries` eviction uses.
-    pub fn order_by_last_accessed(mut self, ascending: bool) -> Self {
-        self.order_by = vec![OrderBy::LastAccessed(if ascending {
-            SortOrder::Asc
-        } else {
-            SortOrder::Desc
-        })];
-        self
+    /// Sort results by the last **read** timestamp (primary key).
+    #[deprecated(
+        since = "0.21.5",
+        note = "use order_by(SortKey::LastAccessed, SortOrder::Asc) or SortOrder::Desc"
+    )]
+    pub fn order_by_last_accessed(self, ascending: bool) -> Self {
+        self.order_by(SortKey::LastAccessed, SortOrder::from_ascending(ascending))
     }
 
     /// Sort results by the stored path string (primary key).
-    pub fn order_by_path(mut self, ascending: bool) -> Self {
-        self.order_by = vec![OrderBy::Path(if ascending {
-            SortOrder::Asc
-        } else {
-            SortOrder::Desc
-        })];
-        self
+    #[deprecated(
+        since = "0.21.5",
+        note = "use order_by(SortKey::Path, SortOrder::Asc) or SortOrder::Desc"
+    )]
+    pub fn order_by_path(self, ascending: bool) -> Self {
+        self.order_by(SortKey::Path, SortOrder::from_ascending(ascending))
     }
 
     /// Add a secondary sort by a JSON payload field (requires `json` feature).
-    ///
-    /// Call after one of the `order_by_*` methods.
     #[cfg(feature = "json")]
-    pub fn then_by_field(mut self, field_path: impl Into<String>, ascending: bool) -> Self {
-        self.order_by.push(OrderBy::Field {
-            path: field_path.into(),
-            order: if ascending {
-                SortOrder::Asc
-            } else {
-                SortOrder::Desc
-            },
-        });
-        self
+    #[deprecated(
+        since = "0.21.5",
+        note = "use then_by(SortKey::Field(path), SortOrder::Asc) or SortOrder::Desc"
+    )]
+    pub fn then_by_field(self, field_path: impl Into<String>, ascending: bool) -> Self {
+        self.then_by(
+            SortKey::Field(field_path.into()),
+            SortOrder::from_ascending(ascending),
+        )
     }
 
-    /// Add a secondary sort by `updated_at`.
-    pub fn then_by_updated_at(mut self, ascending: bool) -> Self {
-        self.order_by.push(OrderBy::UpdatedAt(if ascending {
-            SortOrder::Asc
-        } else {
-            SortOrder::Desc
-        }));
-        self
+    /// Adds a secondary sort by the source file's `mtime`, **not** by the
+    /// `updated_at` column its name suggests.
+    #[deprecated(
+        since = "0.21.5",
+        note = "sorts by the source file's mtime, not updated_at; use then_by(SortKey::Mtime, SortOrder::Asc) or SortOrder::Desc"
+    )]
+    pub fn then_by_updated_at(self, ascending: bool) -> Self {
+        self.then_by(SortKey::Mtime, SortOrder::from_ascending(ascending))
     }
 
-    /// Add a secondary sort by `last_accessed_at`.
-    pub fn then_by_last_accessed(mut self, ascending: bool) -> Self {
-        self.order_by.push(OrderBy::LastAccessed(if ascending {
-            SortOrder::Asc
-        } else {
-            SortOrder::Desc
-        }));
-        self
+    /// Add a secondary sort by the last **read** timestamp.
+    #[deprecated(
+        since = "0.21.5",
+        note = "use then_by(SortKey::LastAccessed, SortOrder::Asc) or SortOrder::Desc"
+    )]
+    pub fn then_by_last_accessed(self, ascending: bool) -> Self {
+        self.then_by(SortKey::LastAccessed, SortOrder::from_ascending(ascending))
     }
 
     /// Add a secondary sort by path.
-    pub fn then_by_path(mut self, ascending: bool) -> Self {
-        self.order_by.push(OrderBy::Path(if ascending {
-            SortOrder::Asc
-        } else {
-            SortOrder::Desc
-        }));
-        self
+    #[deprecated(
+        since = "0.21.5",
+        note = "use then_by(SortKey::Path, SortOrder::Asc) or SortOrder::Desc"
+    )]
+    pub fn then_by_path(self, ascending: bool) -> Self {
+        self.then_by(SortKey::Path, SortOrder::from_ascending(ascending))
     }
 
     // ------------------------------------------------------------------
@@ -996,7 +1059,7 @@ fn cmp_candidate_basic(a: &CandidateRow, b: &CandidateRow, key: &OrderBy) -> std
     match key {
         #[cfg(feature = "json")]
         OrderBy::Field { .. } => unreachable!("tier 1 never carries a field order_by key"),
-        OrderBy::UpdatedAt(ord) => ord_dir(a.mtime.cmp(&b.mtime), *ord),
+        OrderBy::Mtime(ord) => ord_dir(a.mtime.cmp(&b.mtime), *ord),
         OrderBy::LastAccessed(ord) => ord_dir(a.last_accessed_at.cmp(&b.last_accessed_at), *ord),
         OrderBy::Path(ord) => ord_dir(
             std::path::Path::new(&a.path).cmp(std::path::Path::new(&b.path)),
@@ -1025,7 +1088,7 @@ fn cmp_candidate_json(
                 .unwrap_or(std::cmp::Ordering::Equal);
             ord_dir(c, *order)
         }
-        OrderBy::UpdatedAt(ord) => ord_dir(a.mtime.cmp(&b.mtime), *ord),
+        OrderBy::Mtime(ord) => ord_dir(a.mtime.cmp(&b.mtime), *ord),
         OrderBy::LastAccessed(ord) => ord_dir(a.last_accessed_at.cmp(&b.last_accessed_at), *ord),
         OrderBy::Path(ord) => ord_dir(
             std::path::Path::new(&a.path).cmp(std::path::Path::new(&b.path)),
@@ -1057,7 +1120,7 @@ fn cmp_key_json<T>(
                 c
             }
         }
-        OrderBy::UpdatedAt(ord) => ord_dir(ea.metadata.mtime.cmp(&eb.metadata.mtime), *ord),
+        OrderBy::Mtime(ord) => ord_dir(ea.metadata.mtime.cmp(&eb.metadata.mtime), *ord),
         OrderBy::LastAccessed(ord) => ord_dir(la_a.cmp(&la_b), *ord),
         OrderBy::Path(ord) => ord_dir(ea.path.cmp(&eb.path), *ord),
     }

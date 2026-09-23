@@ -58,7 +58,7 @@ where
     /// Lock the shared engine, mapping mutex poisoning to a recoverable
     /// error instead of propagating the panic to every subsequent caller.
     ///
-    /// Mirrors [`crate::pool::ConnectionPool`]'s poison-handling contract: a
+    /// Mirrors [`crate::pool::SyncCacheEngine`]'s poison-handling contract: a
     /// poisoned mutex still means the data behind it may reflect a partially
     /// completed operation, but this only stops the panic from propagating
     /// to callers who did nothing wrong — it does not attempt to repair
@@ -301,7 +301,7 @@ where
     /// they all continue with `new_key` together. Rotation covers **only
     /// this engine's namespace**. Every other open engine on the same
     /// database **and namespace** — in this or another process, including a
-    /// [`ConnectionPool`](crate::ConnectionPool) or a `ReadPool` slot —
+    /// [`SyncCacheEngine`](crate::SyncCacheEngine) or a `ReadPool` slot —
     /// keeps its old key and must be reopened with `new_key`; until then it
     /// returns [`LocalFileCacheError::EncryptionError`] on rotated entries.
     /// Engines on other namespaces are unaffected. A watcher needs no
@@ -459,18 +459,36 @@ where
     }
 
     /// Async version of [`CacheEngine::create_path_index`].
+    #[deprecated(
+        since = "0.21.5",
+        note = "the index duplicates the built-in unique index on (namespace, path) and cannot speed up a query"
+    )]
+    // A deprecated wrapper over a deprecated method: it delegates on purpose.
+    #[allow(deprecated)]
     pub async fn create_path_index(&self, name: String) -> Result<String, LocalFileCacheError> {
         let inner = Arc::clone(&self.inner);
         spawn(move || Self::lock(&inner)?.create_path_index(&name)).await
     }
 
     /// Async version of [`CacheEngine::drop_path_index`].
+    #[deprecated(
+        since = "0.21.5",
+        note = "the index duplicates the built-in unique index on (namespace, path) and cannot speed up a query; kept to remove indexes created earlier"
+    )]
+    // A deprecated wrapper over a deprecated method: it delegates on purpose.
+    #[allow(deprecated)]
     pub async fn drop_path_index(&self, name: String) -> Result<bool, LocalFileCacheError> {
         let inner = Arc::clone(&self.inner);
         spawn(move || Self::lock(&inner)?.drop_path_index(&name)).await
     }
 
     /// Async version of [`CacheEngine::list_path_indexes`].
+    #[deprecated(
+        since = "0.21.5",
+        note = "the index duplicates the built-in unique index on (namespace, path) and cannot speed up a query; kept to find indexes created earlier"
+    )]
+    // A deprecated wrapper over a deprecated method: it delegates on purpose.
+    #[allow(deprecated)]
     pub async fn list_path_indexes(&self) -> Result<Vec<String>, LocalFileCacheError> {
         let inner = Arc::clone(&self.inner);
         spawn(move || Self::lock(&inner)?.list_path_indexes()).await

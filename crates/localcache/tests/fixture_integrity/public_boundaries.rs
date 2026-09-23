@@ -1,5 +1,6 @@
 use super::*;
 
+#[allow(deprecated)]
 #[test]
 fn released_public_legacy_user_indexes_reopen_and_remain_usable() {
     let directory = TempDir::new().unwrap();

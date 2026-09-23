@@ -8,14 +8,14 @@ use std::time::Duration;
 
 use tempfile::TempDir;
 
-use localcache::{CacheEngine, CacheOptions, CacheStatus, ChangeDetectionMode};
+use localcache::{CacheEngine, CacheOptions, CacheStatus, ChangeDetectionMode, SortKey, SortOrder};
 
 // ====================================================================
 
 #[test]
 fn pool_basic_set_and_get() {
     let dir = TempDir::new().unwrap();
-    let pool = localcache::ConnectionPool::<Vec<f32>>::open(CacheOptions {
+    let pool = localcache::SyncCacheEngine::<Vec<f32>>::open(CacheOptions {
         database_path: ":memory:".into(),
         ..CacheOptions::default()
     })
@@ -30,7 +30,7 @@ fn pool_basic_set_and_get() {
 #[test]
 fn pool_clone_shares_engine() {
     let dir = TempDir::new().unwrap();
-    let pool = localcache::ConnectionPool::<Vec<f32>>::open(CacheOptions {
+    let pool = localcache::SyncCacheEngine::<Vec<f32>>::open(CacheOptions {
         database_path: ":memory:".into(),
         ..CacheOptions::default()
     })
@@ -51,7 +51,7 @@ fn pool_multithreaded_access() {
 
     let dir = Arc::new(TempDir::new().unwrap());
     let pool = Arc::new(
-        localcache::ConnectionPool::<Vec<f32>>::open(CacheOptions {
+        localcache::SyncCacheEngine::<Vec<f32>>::open(CacheOptions {
             database_path: ":memory:".into(),
             ..CacheOptions::default()
         })
@@ -80,7 +80,7 @@ fn pool_multithreaded_access() {
 #[test]
 fn pool_get_if_fresh_and_check_status() {
     let dir = TempDir::new().unwrap();
-    let pool = localcache::ConnectionPool::<Vec<f32>>::open(CacheOptions {
+    let pool = localcache::SyncCacheEngine::<Vec<f32>>::open(CacheOptions {
         database_path: ":memory:".into(),
         ..CacheOptions::default()
     })
@@ -96,7 +96,7 @@ fn pool_get_if_fresh_and_check_status() {
 #[test]
 fn pool_entry_count_and_stats() {
     let dir = TempDir::new().unwrap();
-    let pool = localcache::ConnectionPool::<Vec<f32>>::open(CacheOptions {
+    let pool = localcache::SyncCacheEngine::<Vec<f32>>::open(CacheOptions {
         database_path: ":memory:".into(),
         ..CacheOptions::default()
     })
@@ -116,7 +116,7 @@ fn pool_entry_count_and_stats() {
 #[test]
 fn pool_remove() {
     let dir = TempDir::new().unwrap();
-    let pool = localcache::ConnectionPool::<Vec<f32>>::open(CacheOptions {
+    let pool = localcache::SyncCacheEngine::<Vec<f32>>::open(CacheOptions {
         database_path: ":memory:".into(),
         ..CacheOptions::default()
     })
@@ -131,7 +131,7 @@ fn pool_remove() {
 #[test]
 fn pool_query_run() {
     let dir = TempDir::new().unwrap();
-    let pool = localcache::ConnectionPool::<Vec<f32>>::open(CacheOptions {
+    let pool = localcache::SyncCacheEngine::<Vec<f32>>::open(CacheOptions {
         database_path: ":memory:".into(),
         ..CacheOptions::default()
     })
@@ -149,10 +149,10 @@ fn pool_query_run() {
 
 // RFC 018 R2 — poisoning is reported, not silently recovered from.
 #[test]
-fn connection_pool_poisoned_mutex_yields_poisoned_error() {
+fn sync_cache_engine_poisoned_mutex_yields_poisoned_error() {
     use localcache::LocalFileCacheError;
 
-    let pool = localcache::ConnectionPool::<Vec<f32>>::open(CacheOptions {
+    let pool = localcache::SyncCacheEngine::<Vec<f32>>::open(CacheOptions {
         database_path: ":memory:".into(),
         ..CacheOptions::default()
     })
@@ -182,10 +182,10 @@ fn connection_pool_poisoned_mutex_yields_poisoned_error() {
 // result per requested path, not a single collapsed element: a caller
 // zipping `paths.iter().zip(results)` must not silently drop the rest.
 #[test]
-fn connection_pool_poisoned_mutex_batch_methods_return_one_result_per_path() {
+fn sync_cache_engine_poisoned_mutex_batch_methods_return_one_result_per_path() {
     use localcache::LocalFileCacheError;
 
-    let pool = localcache::ConnectionPool::<Vec<f32>>::open(CacheOptions {
+    let pool = localcache::SyncCacheEngine::<Vec<f32>>::open(CacheOptions {
         database_path: ":memory:".into(),
         ..CacheOptions::default()
     })
@@ -248,6 +248,8 @@ fn cache_options_ext_ttl_helpers() {
     assert_eq!(opts_hours.ttl, Some(Duration::from_secs(7200)));
 }
 
+// Subject: the deprecated `shared_engine` helper.
+#[allow(deprecated)]
 #[test]
 fn shared_engine_helper() {
     let shared = localcache::shared_engine::<Vec<f32>>(CacheOptions {
@@ -260,6 +262,23 @@ fn shared_engine_helper() {
     let p = write_file(&dir, "se.txt", b"x");
     let _ = shared.lock().unwrap().set(&p, &vec![1.0_f32]);
     assert!(shared.lock().unwrap().get(&p).unwrap().is_some());
+}
+
+// Subject: the deprecated `ConnectionPool` alias of `SyncCacheEngine`.
+#[allow(deprecated)]
+#[test]
+fn connection_pool_alias_is_the_sync_cache_engine() {
+    let engine: localcache::SyncCacheEngine<Vec<f32>> =
+        localcache::ConnectionPool::<Vec<f32>>::open(CacheOptions {
+            database_path: ":memory:".into(),
+            ..CacheOptions::default()
+        })
+        .unwrap();
+
+    let dir = TempDir::new().unwrap();
+    let p = write_file(&dir, "alias.txt", b"x");
+    engine.set(&p, &vec![1.0_f32]).unwrap();
+    assert_eq!(engine.get(&p).unwrap().unwrap().payload, vec![1.0_f32]);
 }
 
 // ====================================================================
@@ -540,7 +559,11 @@ fn order_by_last_accessed_ascending() {
     engine.get(&p2).unwrap();
 
     // Ascending: never-accessed (0) → p0 (older access) → p2 (newer access)
-    let results = engine.query().order_by_last_accessed(true).run().unwrap();
+    let results = engine
+        .query()
+        .order_by(SortKey::LastAccessed, SortOrder::Asc)
+        .run()
+        .unwrap();
     assert_eq!(results.len(), 4);
 
     // Entries 1 and 3 were never read, so last_accessed_at == 0 (they come first).
@@ -579,8 +602,8 @@ fn multi_column_sort_field_then_path() {
     // Sort: group ASC, then path DESC within same group.
     let results = engine
         .query()
-        .order_by_field("group", true)
-        .then_by_path(false)
+        .order_by(SortKey::Field("group".into()), SortOrder::Asc)
+        .then_by(SortKey::Path, SortOrder::Desc)
         .run()
         .unwrap();
 
@@ -609,9 +632,9 @@ fn then_by_methods_append_sort_keys() {
     // order_by_path ASC then then_by_last_accessed DESC — just verify no panic.
     let results = engine
         .query()
-        .order_by_path(true)
-        .then_by_last_accessed(false)
-        .then_by_updated_at(true)
+        .order_by(SortKey::Path, SortOrder::Asc)
+        .then_by(SortKey::LastAccessed, SortOrder::Desc)
+        .then_by(SortKey::Mtime, SortOrder::Asc)
         .run()
         .unwrap();
 

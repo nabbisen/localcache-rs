@@ -31,13 +31,13 @@ codec failures:
 - **Add a `_` arm** to any exhaustive `match` on `LocalFileCacheError` — the
   enum is now `#[non_exhaustive]`.
 - **Lock poisoning now returns `Poisoned`**, not `UnsupportedFeature`. At
-  v0.21.0 this affected `ConnectionPool`, `AsyncCacheEngine`, `CacheWatcher`
-  construction, and `ReadPool` (a **behaviour change**: `ReadPool`'s read
-  methods were previously infallible under poisoning and silently
-  recovered; they now return `Poisoned` instead). `CacheWatcher`
-  construction no longer has a lock to poison as of v0.21.4 (RFC 022 R9):
-  the helper-connection lock that produced `Poisoned { resource:
-  "CacheWatcher" }` was removed, not merely made harder to reach.
+  v0.21.0 this affected `ConnectionPool` (renamed `SyncCacheEngine` in 0.21.5),
+  `AsyncCacheEngine`, `CacheWatcher` construction, and `ReadPool` (a
+  **behaviour change**: `ReadPool`'s read methods were previously infallible
+  under poisoning and silently recovered; they now return `Poisoned`
+  instead). `CacheWatcher` construction no longer has a lock to poison as of
+  v0.21.4 (RFC 022 R9): the helper-connection lock that produced `Poisoned {
+  resource: "CacheWatcher" }` was removed, not merely made harder to reach.
 - **JSON codec failures now return `Serialization`**, not
   `UnsupportedFeature`. Code matching `UnsupportedFeature` to catch JSON
   encode/decode errors stops matching.

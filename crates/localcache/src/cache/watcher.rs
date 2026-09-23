@@ -330,13 +330,35 @@ where
         })
     }
 
-    /// Number of entries currently cached in the watcher's engine snapshot.
-    pub fn watched_count(&self) -> usize {
+    /// Number of entries in the namespace of the watcher's own engine.
+    ///
+    /// This counts cache entries, **not** the paths the OS watcher is
+    /// registered on: with `watch_dirs(true)` a directory is one registration
+    /// however many entries it holds, and a watched path with no cache entry
+    /// is not counted.
+    ///
+    /// # Errors
+    ///
+    /// * [`LocalFileCacheError::Poisoned`] (`resource: "CacheWatcher"`) if
+    ///   the watcher's engine lock was poisoned by a panic in another thread.
+    /// * The query's own error if reading the count fails.
+    pub fn entry_count(&self) -> Result<usize, LocalFileCacheError> {
         self.inner
             .engine
             .lock()
-            .map(|g| g.entry_count().unwrap_or(0))
-            .unwrap_or(0)
+            .map_err(|_| LocalFileCacheError::Poisoned {
+                resource: "CacheWatcher",
+            })?
+            .entry_count()
+    }
+
+    /// Number of entries currently cached in the watcher's engine snapshot.
+    #[deprecated(
+        since = "0.21.5",
+        note = "returns the entry count, not watched paths, and reports errors as 0; use entry_count"
+    )]
+    pub fn watched_count(&self) -> usize {
+        self.entry_count().unwrap_or(0)
     }
 
     /// Paths that failed OS-level watch registration at construction time.
@@ -616,3 +638,7 @@ fn unique_parent_dirs(paths: &[PathBuf]) -> Vec<PathBuf> {
     let set: std::collections::HashSet<&Path> = paths.iter().filter_map(|p| p.parent()).collect();
     set.into_iter().map(Path::to_path_buf).collect()
 }
+
+#[cfg(test)]
+#[path = "watcher/tests.rs"]
+mod tests;

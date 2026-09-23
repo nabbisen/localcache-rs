@@ -237,6 +237,7 @@ fn nested_transaction_fails_before_mutation() {
     assert!(list_path_indexes(&engine.conn).unwrap().is_empty());
 }
 
+#[allow(deprecated)]
 #[test]
 fn main_schema_wins_over_temp_and_attached_collisions() {
     let engine = engine();
@@ -511,6 +512,7 @@ fn authorization_metadata_is_read_from_one_snapshot() {
     assert!(authorize_query_index(&engine.conn, Some("lc_user_snapshot")).is_err());
 }
 
+#[allow(deprecated)]
 #[test]
 fn query_execution_stays_in_the_authorization_snapshot() {
     let directory = TempDir::new().unwrap();
@@ -575,6 +577,7 @@ fn list_uses_one_generation_and_later_operations_revalidate() {
     assert!(authorize_query_index(&engine.conn, Some("lc_user_list_race")).is_err());
 }
 
+#[allow(deprecated)]
 #[test]
 fn dry_run_stays_in_the_authorization_snapshot() {
     let directory = TempDir::new().unwrap();

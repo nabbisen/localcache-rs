@@ -18,16 +18,15 @@ CacheEngine<T>          — the main entry point
   ├── explain           → Diagnosis
   ├── scan_dir / scan_dir_filtered
   ├── query()           → QueryBuilder<T>          (path filters always; payload predicates require json)
-  ├── export_entries / import_entries / import_from / namespace_copy
+  ├── export_entries / import_entries / import_from
   ├── namespace_list
   ├── touch / cleanup_missing_files / cleanup_expired / shrink_database
   ├── purge_stale_versions
-  ├── create_path_index / drop_path_index / list_path_indexes
   ├── rotate_encryption_key                        (encryption feature)
   ├── watcher()         → CacheWatcher<T>          (watching feature)
   └── debounced_watcher() → CacheDebouncedWatcher<T>  (watching feature)
 
-ConnectionPool<T>       — single shared connection; Clone + Send + Sync
+SyncCacheEngine<T>      — one engine behind a mutex; Clone + Send + Sync
   ├── open(opts) / with(|engine| …) / with_mut(|engine| …)   (escape hatch to the inner CacheEngine)
   ├── get / get_if_fresh / set / remove / batch_get / batch_get_fresh / batch_set
   ├── check_status / check_status_batch / contains / explain
@@ -47,7 +46,7 @@ ReadPool<T>             — N read-only connections; Clone + Send + Sync
 CacheWatcher<T>         (watching feature; via CacheEngine::watcher())
   ├── watch(path) / unwatch(path) / watch_dir(dir) / unwatch_dir(dir)
   ├── events()          → &Receiver<WatchEvent>
-  ├── watched_count()   — entries currently cached in the watcher's engine snapshot
+  ├── entry_count()     — entries currently cached in the watcher's engine; errors if its lock is poisoned
   ├── registration_errors() → &[PathRegistrationError]
   └── dropped_event_count() / failed_invalidation_count()
 
@@ -56,24 +55,15 @@ CacheDebouncedWatcher<T>   (watching feature; via CacheEngine::debounced_watcher
   ├── events()          → &Receiver<WatchEvent>
   ├── registration_errors() → &[PathRegistrationError]
   └── dropped_event_count() / failed_invalidation_count()
-
-shared_engine(opts) → SharedEngine<T>   — SharedEngine<T> = Arc<Mutex<CacheEngine<T>>>;
-                                           the escape hatch behind ConnectionPool
 ```
 
-### Path-index identifier boundary
+### Path indexes
 
-`CacheEngine::create_path_index` accepts a 1–64 byte ASCII
-alphanumeric/underscore suffix and returns the full `lc_user_…` name.
-`drop_path_index` takes the suffix; `QueryBuilder::index_hint` takes a full
-name and validates it at both `run()` and `dry_run()`. Discover public names
-with `list_path_indexes()`. All operations authorize structurally valid
-indexes in SQLite's `main` schema only; identifier-policy failures return
-`LocalFileCacheError::UnsupportedFeature` without echoing caller input.
-
-Valid legacy public indexes remain listable, usable, and removable even when
-their names no longer satisfy the creation grammar. A removed legacy spelling
-cannot necessarily be recreated.
+Earlier releases could create extra `lc_user_…` indexes on `(namespace, path)`.
+They duplicate the built-in unique index on that pair, so they cannot make any
+query faster, and creating them is deprecated. An index created by an earlier
+release keeps working and can be removed; the migration table below names the
+method that does it.
 
 ### `ReadPool` poisoning (v0.21.0)
 
@@ -90,7 +80,7 @@ the batch methods, one such error per requested path. See
 | Type | Feature | Description |
 |---|---|---|
 | `AsyncCacheEngine<T>` | `async` / `async-std` / `smol` | Async wrapper (runtime-selectable) |
-| `ConnectionPool<T>` | *(none)* | Thread-safe sync pool (single connection) |
+| `SyncCacheEngine<T>` | *(none)* | Thread-safe sync engine (one engine behind a mutex) |
 | `ReadPool<T>` | *(none)* | Thread-safe sync pool of N read-only connections |
 | `CacheWatcher<T>` | `watching` | OS-native file-system watcher |
 | `CacheDebouncedWatcher<T>` | `watching` | Debounced watcher |
@@ -123,6 +113,7 @@ the batch methods, one such error per requested path. See
 | `JournalMode` | `Wal`, `Delete`, `Memory` |
 | `SynchronousMode` | `Off`, `Normal`, `Full`, `Extra` |
 | `InvalidationReason` | `FileModified`, `FileRemoved`, `FileRenamed` |
+| `SortKey` | `Field(String)` *(json)*, `Mtime`, `LastAccessed`, `Path` — `#[non_exhaustive]` |
 | `SortOrder` | `Asc`, `Desc` |
 | `LocalFileCacheError` | *see [Error Handling](./errors.md)* |
 
@@ -221,3 +212,30 @@ On case-insensitive filesystems, a file renamed only by case still satisfies
 `exists()` — its entry is therefore **preserved**, which is the correct
 outcome (the original canonical path still resolves to the file).  Use
 `check_status()` per entry if you need to detect case-only renames explicitly.
+
+## Migrating from deprecated names
+
+v0.21.5 deprecates the items below. Each still works and behaves as before;
+each is removed in v0.22.0 unless the last column says otherwise. The compiler
+warning names the replacement.
+
+| Deprecated | Use instead | Removal |
+|---|---|---|
+| `QueryBuilder::order_by_field(path, asc)` | `order_by(SortKey::Field(path.into()), SortOrder::…)` | removed in 0.22.0 |
+| `QueryBuilder::order_by_updated_at(asc)` | `order_by(SortKey::Mtime, SortOrder::…)` — it sorts by the source file's mtime, not by `updated_at` | removed in 0.22.0 |
+| `QueryBuilder::order_by_last_accessed(asc)` | `order_by(SortKey::LastAccessed, SortOrder::…)` | removed in 0.22.0 |
+| `QueryBuilder::order_by_path(asc)` | `order_by(SortKey::Path, SortOrder::…)` | removed in 0.22.0 |
+| `QueryBuilder::then_by_field(path, asc)` | `then_by(SortKey::Field(path.into()), SortOrder::…)` | removed in 0.22.0 |
+| `QueryBuilder::then_by_updated_at(asc)` | `then_by(SortKey::Mtime, SortOrder::…)` | removed in 0.22.0 |
+| `QueryBuilder::then_by_last_accessed(asc)` | `then_by(SortKey::LastAccessed, SortOrder::…)` | removed in 0.22.0 |
+| `QueryBuilder::then_by_path(asc)` | `then_by(SortKey::Path, SortOrder::…)` | removed in 0.22.0 |
+| `ConnectionPool<T>` | `SyncCacheEngine<T>` — same type, new name; `Poisoned { resource }` still reads `"ConnectionPool"` until 0.22.0 | removed in 0.22.0 |
+| `SharedEngine<T>` | `SyncCacheEngine<T>` | removed in 0.22.0 |
+| `shared_engine(opts)` | `SyncCacheEngine::open(opts)`; `with` / `with_mut` reach the inner `CacheEngine` | removed in 0.22.0 |
+| `CacheEngine::namespace_copy(src)` | `import_from(src)` — identical | removed in 0.22.0 |
+| `CacheWatcher::watched_count()` | `entry_count()` — returns the engine's entry count, not a count of watched paths, and reports a poisoned lock as an error instead of `0` | removed in 0.22.0 |
+| `CacheEngine::create_path_index(suffix)` | nothing — the index cannot speed up a query | removed in 0.22.0 |
+| `QueryBuilder::index_hint(name)` | nothing — drop the call | removed in 0.22.0 |
+| `CacheEngine::drop_path_index(suffix)` | keep using it to remove an index created by an earlier release | kept until a later release decides what happens to existing indexes |
+| `CacheEngine::list_path_indexes()` | keep using it to find indexes created by an earlier release | kept until a later release decides what happens to existing indexes |
+| `AsyncCacheEngine::create_path_index` / `drop_path_index` / `list_path_indexes` | same as the synchronous methods above | as the synchronous method |

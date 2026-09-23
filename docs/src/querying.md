@@ -50,7 +50,7 @@ println!("bytes:   {}", stats.total_payload_bytes);
 `QueryBuilder` filters and sorts entries. Path filters, pagination, and
 non-field sorting (by path, `updated_at`, or `last_accessed_at`) are always
 available. Only payload predicates and sorting by a payload field
-(`order_by_field`) require the `json` feature — see the tables below.
+(`SortKey::Field`) require the `json` feature — see the tables below.
 Payloads are evaluated as `serde_json::Value`, so any codec works.
 
 ```rust
@@ -65,7 +65,7 @@ let engine = CacheEngine::<Article>::builder()
 let results = engine.query()
     .field_gt("score", 0.8)
     .field_contains("title", "Rust")
-    .order_by_field("score", false)  // descending
+    .order_by(SortKey::Field("score".into()), SortOrder::Desc)  // descending
     .limit(10)
     .offset(0)
     .run()?;
@@ -78,7 +78,6 @@ let results = engine.query()
 | `.path_like(pattern)` | SQL `LIKE` pattern on stored path (`%` = any sequence, `_` = one char) |
 | `.path_in_dir(dir, recursive)` | Exact directory scoping — no over-fetch, metacharacter-safe |
 | `.path_glob(pattern)` | Case-sensitive Unicode-scalar glob on stored path: `*`, `?`, nested/multiple `{a,b}` alternatives |
-| `.index_hint(name)` | Nominate a SQLite index for the path-listing scan |
 | `.dry_run()` | Return `EXPLAIN QUERY PLAN` output, plus which execution path `run()` would take, without loading payloads |
 
 `path_like`'s pattern uses `\` as its `LIKE` escape character. A literal `%`, `_`, or `\` must be
@@ -96,16 +95,16 @@ written as `\%`, `\_`, or `\\`. This matters for Windows paths, whose separator 
 
 ```rust
 // Single sort key.
-engine.query().order_by_field("score", false).run()?;
-engine.query().order_by_path(true).run()?;
-engine.query().order_by_updated_at(false).run()?;
-engine.query().order_by_last_accessed(false).run()?;
+engine.query().order_by(SortKey::Field("score".into()), SortOrder::Desc).run()?;
+engine.query().order_by(SortKey::Path, SortOrder::Asc).run()?;
+engine.query().order_by(SortKey::Mtime, SortOrder::Desc).run()?;
+engine.query().order_by(SortKey::LastAccessed, SortOrder::Desc).run()?;
 
 // Multi-column sort (primary + secondary).
 engine.query()
-    .order_by_field("category", true)
-    .then_by_field("score", false)
-    .then_by_path(true)
+    .order_by(SortKey::Field("category".into()), SortOrder::Asc)
+    .then_by(SortKey::Field("score".into()), SortOrder::Desc)
+    .then_by(SortKey::Path, SortOrder::Asc)
     .run()?;
 ```
 
@@ -119,7 +118,7 @@ let page_size = 20;
 let page = 3;
 
 let results = engine.query()
-    .order_by_path(true)
+    .order_by(SortKey::Path, SortOrder::Asc)
     .offset(page * page_size)
     .limit(page_size)
     .run()?;
@@ -150,53 +149,21 @@ if let Some(ttl_rem) = diag.ttl_remaining_secs {
 // List all namespaces in this database.
 let namespaces: Vec<String> = engine.namespace_list()?;
 
-// Copy all entries from one namespace into another.
+// Copy all entries from one namespace (or database) into another.
 let dst_engine = CacheEngine::<T>::builder()
     .database("cache.sqlite3")
     .namespace("v2")
     .build()?;
-let copied = dst_engine.namespace_copy(&src_engine)?;
+let copied = dst_engine.import_from(&src_engine)?;
 ```
 
-## Path indexes and index requirements
+## Path indexes
 
-For large namespaces, create an additional index on `(namespace, path)` and
-require a query to use it:
-
-```rust
-// Create a user index once:
-let idx = engine.create_path_index("docs_idx")?;  // → "lc_user_docs_idx"
-
-// Use it in a query:
-let results = engine.query()
-    .path_like("%/docs/%")
-    .index_hint(&idx)     // SQLite: INDEXED BY "lc_user_docs_idx"
-    .run()?;
-```
-
-`create_path_index` takes only a suffix. New suffixes must contain 1–64 ASCII
-letters, digits, or underscores; the method adds `lc_user_` and returns the
-full catalog name. Treat this input as untrusted. `drop_path_index` also takes
-a suffix, while `index_hint` takes the full name. Use
-`list_path_indexes()` to discover valid public names.
-
-Despite the historical “hint” API name, SQLite `INDEXED BY` is a requirement:
-there is no silent planner fallback. Both `run()` and `dry_run()` validate the
-complete main-schema index shape immediately before preparing SQL. Missing,
-malformed, non-localcache, TEMP, and attached-database indexes return
-`LocalFileCacheError::UnsupportedFeature` with a non-echoing safety message.
-The built-in names `idx_files_namespace_path` and `idx_files_lru` may also be
-used when their expected schema-v5 shapes are intact. They are stable for the
-v0.20.1 schema but are implementation indexes, so prefer names returned by
-`list_path_indexes()` for application-controlled planning.
-
-Databases created by earlier releases may contain structurally valid
-`lc_user_` names outside the new creation grammar. Such legacy indexes remain
-listable, usable as full-name requirements, idempotently discoverable through
-`create_path_index`, and removable through `drop_path_index`. Once removed,
-an out-of-grammar legacy spelling cannot be recreated through the public API.
-Dropping a name absent from `main` returns `false`; same-named TEMP or attached
-objects are never dropped.
+Earlier releases could create extra `lc_user_…` indexes on `(namespace, path)`.
+They duplicate the built-in unique index on that pair, so they cannot make any
+query faster, and creating them is deprecated. Nothing in a normal workflow
+needs one. An index created by an earlier release keeps working and can be
+removed; see the migration table in [API Overview](./api.md#migrating-from-deprecated-names).
 
 ## Explain plan / dry_run (v0.17.0)
 
@@ -206,9 +173,8 @@ performance diagnostics and test assertions:
 ```rust
 let plan = engine.query()
     .path_like("%/docs/%")
-    .index_hint("lc_user_docs_idx")
     .dry_run()?;
-// → "SEARCH files USING INDEX lc_user_docs_idx ..."
+// → the EXPLAIN QUERY PLAN rows for the path-listing scan
 println!("{plan}");
 ```
 
@@ -287,4 +253,4 @@ let results = engine.query()
     .run()?;
 ```
 
-Both predicates compose with `index_hint` and `dry_run`.
+Both predicates compose with each other and with `dry_run`.

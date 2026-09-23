@@ -751,7 +751,7 @@ where
     /// call — even when no entry needed re-encryption. Rotation covers
     /// **only this engine's namespace**. Every other open engine on the
     /// same database **and namespace** — in this or another process,
-    /// including other [`ConnectionPool`](crate::ConnectionPool)s and
+    /// including other [`SyncCacheEngine`](crate::SyncCacheEngine)s and
     /// [`ReadPool`](crate::ReadPool) slots — keeps its old key and must be
     /// reopened with `new_key`; until then it returns
     /// [`LocalFileCacheError::EncryptionError`] on rotated entries. Engines

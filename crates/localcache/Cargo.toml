@@ -105,7 +105,3 @@ required-features = ["json"]
 [[example]]
 name              = "gen_compat_fixture"
 required-features = ["compression"]
-
-[[example]]
-name              = "connection_pool"
-required-features = ["async"]
