@@ -46,8 +46,9 @@ pub struct EntryInfo {
     pub encoding: String,
     /// Unix timestamp (seconds) when this entry was last written via `set`.
     pub updated_at: i64,
-    /// Unix timestamp (seconds) when this entry was last read.
-    /// `0` means the entry has never been read after being written.
+    /// Unix timestamp (seconds) of the last **read** (`get`, `get_if_fresh`,
+    /// or `touch`). `0` means the entry has never been read; writes,
+    /// including overwrites, never change this value.
     pub last_accessed_at: i64,
 }
 
@@ -103,7 +104,10 @@ pub struct ExportRecord {
     /// Unix timestamp (seconds) of the last write.
     pub updated_at: i64,
 
-    /// Unix timestamp (seconds) of the last read (`0` = never read).
+    /// Unix timestamp (seconds) of the last **read** (`get`, `get_if_fresh`,
+    /// or `touch`). `0` means the entry has never been read; writes,
+    /// including overwrites, never change this value. Importing this
+    /// record keeps this exact value rather than resetting it.
     pub last_accessed_at: i64,
 }
 

@@ -423,10 +423,12 @@ where
         self
     }
 
-    /// Sort results by `last_accessed_at` timestamp (primary key).
+    /// Sort results by `last_accessed_at` — the last **read** (`get`,
+    /// `get_if_fresh`, or `touch`) — timestamp (primary key).
     ///
     /// Entries never read since being written have `last_accessed_at == 0`
-    /// and sort as oldest under ascending order.
+    /// and sort as oldest under ascending order. This is the same ordering
+    /// `max_entries` eviction uses.
     pub fn order_by_last_accessed(mut self, ascending: bool) -> Self {
         self.order_by = vec![OrderBy::LastAccessed(if ascending {
             SortOrder::Asc
@@ -787,11 +789,6 @@ where
 {
     use std::collections::HashMap;
 
-    // Matches `payloads_for_ids`' own internal chunk size — not required
-    // for correctness (it chunks internally regardless), but keeps each
-    // window's SQL query the same granularity as the rest of the pipeline.
-    const WINDOW_CHUNK: usize = 500;
-
     let mut to_skip = q.offset;
     let target = q.limit;
     let mut out = Vec::new();
@@ -801,7 +798,10 @@ where
             Some(t) => to_skip.saturating_add(t - out.len()),
             None => order.len() - idx,
         };
-        let window_end = (idx + want.min(WINDOW_CHUNK)).min(order.len());
+        // `repository::ID_LIST_CHUNK`: the same chunk size `payloads_for_ids`
+        // and `evict_lru` use, so all three id-list SQL statements in this
+        // codebase stay equal by construction (RFC 022 R6).
+        let window_end = (idx + want.min(repository::ID_LIST_CHUNK)).min(order.len());
         let window = &order[idx..window_end];
         let ids: Vec<i64> = window.iter().map(|&i| candidates[i].id).collect();
         let payload_rows = repository::payloads_for_ids(q.core.conn, &ids)?;

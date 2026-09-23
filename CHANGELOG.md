@@ -39,6 +39,27 @@ authorization, not before.
   Affected: callers paging with `offset` over a namespace that contains undecodable entries.
   A deep `offset` now decodes up to `offset + limit` entries. That is still bounded by the page
   position, not by the namespace size.
+- `CacheEngine::set` / `CacheEngine::batch_set` (`crates/localcache/src/cache/engine.rs`,
+  `crates/localcache/src/db/repository.rs`) with `max_entries` set: a write no longer evicts the
+  entries it just wrote. Previously a fresh row started at `last_accessed_at = 0`, so it was the
+  first eviction candidate for its own write — `set` could return `Ok` and then evict the entry it
+  had just stored. Under `max_entries(0)`, this meant every `set` stored nothing while still
+  returning `Ok`. A `batch_set` larger than `max_entries` no longer silently deletes entries it
+  reported as stored, for the same reason. Eviction order is now deterministic
+  (`last_accessed_at`, `updated_at`, `id`), and a write and its eviction now run in one
+  transaction: `Ok` from `set`/`batch_set` means the entries were stored and the bound enforced,
+  `Err` means nothing changed. A concurrent writer waits under the busy timeout; it never turns a
+  committed write into a reported failure.
+
+### Changed
+
+- `max_entries` eviction (RFC 022 R6): the policy is unchanged in shape but is now correctly
+  enforced. Eviction removes the least recently **read** entries — never-read entries first, then
+  by oldest write, then by first insertion. An oversized `batch_set` stores everything it reports
+  as succeeded, and the *next* write is what brings the namespace back within the bound.
+  `max_entries(0)` keeps only the most recently written entry. **From v0.22.0**, `max_entries(0)`,
+  a `batch_set` larger than `max_entries`, and a TTL under one second will be rejected with an
+  error instead of silently accepted as they are in this release.
 
 ## [0.21.3] — 2026-08-04
 

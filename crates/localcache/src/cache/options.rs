@@ -155,9 +155,21 @@ pub struct CacheOptions {
 
     /// Maximum number of entries to keep in the current namespace.
     ///
-    /// When exceeded after a `set`, the **least recently accessed** entries
-    /// (by `last_accessed_at`, with `updated_at` as tiebreaker) are evicted
-    /// until the count is within the limit.
+    /// When exceeded after a `set` or `batch_set`, the least recently
+    /// **read** entries are evicted until the count is within the limit:
+    /// never-read entries (`last_accessed_at == 0`) first, then by oldest
+    /// `updated_at`, then by first insertion. **A write never evicts the
+    /// entries it just wrote** — `set`'s own row, or every row a
+    /// `batch_set` call wrote, is excluded from that call's own eviction.
+    ///
+    /// Nothing here is rejected as an error in this release: `max_entries(0)`
+    /// keeps only the most recently written entry, and a `batch_set` larger
+    /// than `max_entries` stores every entry it reports as succeeded — the
+    /// *next* write is what brings the namespace back within the bound.
+    /// Rejecting these cases with an error is planned for v0.22.0.
+    ///
+    /// The bound is enforced by `set`/`batch_set` only — not by
+    /// `import_entries`, `import_from`, or `namespace_copy`.
     pub max_entries: Option<usize>,
 
     /// AES-256-GCM encryption key (exactly 32 bytes).

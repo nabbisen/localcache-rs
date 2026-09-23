@@ -100,7 +100,9 @@ where
         self
     }
 
-    /// Maximum entries in the namespace (LRU eviction).
+    /// Maximum entries in the namespace, evicted in least-recently-**read**
+    /// order. See [`CacheOptions::max_entries`] for the full eviction and
+    /// write-protection contract.
     pub fn max_entries(mut self, n: usize) -> Self {
         self.opts.max_entries = Some(n);
         self

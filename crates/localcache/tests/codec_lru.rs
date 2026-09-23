@@ -216,6 +216,12 @@ fn max_entries_does_not_evict_when_within_limit() {
     assert_eq!(engine.entry_count().unwrap(), 4);
 }
 
+// RFC 022 R6: this test's original assertion, `entry_count() <= 2`, encoded
+// the pre-R6 defect -- three of the five entries the batch reported as
+// stored were silently gone. Nothing is rejected in v0.21.4 (that is
+// RFC 025, in v0.22.0): an oversized `batch_set` stores everything it
+// reports, and the *next* write is what brings the namespace back within
+// `max_entries`.
 #[test]
 fn batch_set_respects_max_entries() {
     let dir = TempDir::new().unwrap();
@@ -233,8 +239,22 @@ fn batch_set_respects_max_entries() {
         })
         .collect();
 
-    engine.batch_set(&items).unwrap();
-    assert!(engine.entry_count().unwrap() <= 2);
+    let report = engine.batch_set(&items).unwrap();
+    assert_eq!(report.succeeded, 5, "an oversized batch stores everything");
+    assert_eq!(
+        engine.entry_count().unwrap(),
+        5,
+        "nothing is silently evicted by the batch that wrote it"
+    );
+    for (p, _) in &items {
+        assert!(engine.get(p).unwrap().is_some(), "{p:?} must be present");
+    }
+
+    // The next write is what brings the namespace back within the bound.
+    let p_next = write_file(&dir, "bs_next.txt", b"x");
+    engine.set(&p_next, &vec![99.0_f32]).unwrap();
+    assert_eq!(engine.entry_count().unwrap(), 2);
+    assert!(engine.get(&p_next).unwrap().is_some());
 }
 
 // ====================================================================
@@ -764,6 +784,240 @@ fn lru_evicts_least_recently_accessed() {
     // p2 and p3 should survive; p1 should be evicted.
     assert!(engine.get(&p2).unwrap().is_some(), "p2 should survive");
     assert!(engine.get(&p3).unwrap().is_some(), "p3 should survive");
+}
+
+// ====================================================================
+// RFC 022 R6 — a write is never its own eviction candidate
+// ====================================================================
+
+/// The reproduction: `max_entries(2); set(a); set(b); get(a); get(b);
+/// set(c))` must not evict `c` -- new rows start at `last_accessed_at = 0`,
+/// so without protecting the id a write just produced, the row `set` just
+/// wrote is the first eviction candidate for its own call. Must fail on
+/// v0.21.3.
+#[test]
+fn set_never_evicts_the_row_it_just_wrote() {
+    let dir = TempDir::new().unwrap();
+    let engine: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
+        database_path: ":memory:".into(),
+        max_entries: Some(2),
+        ..CacheOptions::default()
+    })
+    .unwrap();
+
+    let pa = write_file(&dir, "wr_a.txt", b"a");
+    let pb = write_file(&dir, "wr_b.txt", b"b");
+    let pc = write_file(&dir, "wr_c.txt", b"c");
+
+    engine.set(&pa, &vec![1.0_f32]).unwrap();
+    engine.set(&pb, &vec![2.0_f32]).unwrap();
+    engine.get(&pa).unwrap();
+    engine.get(&pb).unwrap();
+    engine.set(&pc, &vec![3.0_f32]).unwrap();
+
+    assert!(
+        engine.contains(&pc).unwrap(),
+        "the row just written must not be evicted by its own write"
+    );
+}
+
+/// `batch_set` has the same defect as a single `set`: a batch within the
+/// bound can evict its own rows, because every row it just wrote starts at
+/// `last_accessed_at = 0` -- ahead of anything already read. The eviction
+/// must come from the older, already-read entries instead. Must fail on
+/// v0.21.3.
+#[test]
+fn batch_set_within_bound_never_evicts_its_own_rows() {
+    let dir = TempDir::new().unwrap();
+    let engine: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
+        database_path: ":memory:".into(),
+        max_entries: Some(3),
+        ..CacheOptions::default()
+    })
+    .unwrap();
+
+    let pa = write_file(&dir, "bnd_a.txt", b"a");
+    let pb = write_file(&dir, "bnd_b.txt", b"b");
+    engine.set(&pa, &vec![1.0_f32]).unwrap();
+    engine.set(&pb, &vec![2.0_f32]).unwrap();
+    // Both read, so both now have last_accessed_at > 0 -- older than
+    // anything the batch below writes.
+    engine.get(&pa).unwrap();
+    engine.get(&pb).unwrap();
+
+    let pc = write_file(&dir, "bnd_c.txt", b"c");
+    let pd = write_file(&dir, "bnd_d.txt", b"d");
+    let report = engine
+        .batch_set(&[(pc.clone(), vec![3.0_f32]), (pd.clone(), vec![4.0_f32])])
+        .unwrap();
+    assert_eq!(report.succeeded, 2);
+
+    // count is now 4, max_entries is 3: exactly one eviction, and it must
+    // come from the older, already-read entries -- never from the batch
+    // that just wrote c and d.
+    assert_eq!(engine.entry_count().unwrap(), 3);
+    assert!(
+        engine.contains(&pc).unwrap(),
+        "c must survive its own batch"
+    );
+    assert!(
+        engine.contains(&pd).unwrap(),
+        "d must survive its own batch"
+    );
+}
+
+/// The victim among rows tied on `(last_accessed_at, updated_at)` is fully
+/// determined by `id` (insertion order) -- no `sleep`, no reliance on wall
+/// clock granularity. Without `id ASC` as the final `ORDER BY` key, two
+/// never-read rows written in the same second would have an unspecified
+/// tie-break order.
+#[test]
+fn same_second_eviction_is_determined_by_last_accessed_updated_at_id() {
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("same_second.sqlite3");
+    let engine: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
+        database_path: db.clone(),
+        max_entries: Some(3),
+        ..CacheOptions::default()
+    })
+    .unwrap();
+
+    let pa = write_file(&dir, "ss_a.txt", b"a");
+    let pb = write_file(&dir, "ss_b.txt", b"b");
+    let pc = write_file(&dir, "ss_c.txt", b"c");
+    engine.set(&pa, &vec![1.0_f32]).unwrap();
+    engine.set(&pb, &vec![2.0_f32]).unwrap();
+    engine.set(&pc, &vec![3.0_f32]).unwrap();
+
+    // Force a genuine tie between a and b: identical last_accessed_at (0,
+    // never read) and identical updated_at -- only `id` (insertion order,
+    // a before b) can break the tie. c gets a distinct, later updated_at
+    // so it is never a candidate ahead of the tied pair.
+    let stored = engine.keys(None).unwrap();
+    let path_of = |name: &str| -> String {
+        stored
+            .iter()
+            .find(|p| p.to_str().unwrap().contains(name))
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned()
+    };
+    let (path_a, path_b, path_c) = (
+        path_of("ss_a.txt"),
+        path_of("ss_b.txt"),
+        path_of("ss_c.txt"),
+    );
+
+    let conn = rusqlite::Connection::open(&db).unwrap();
+    conn.execute(
+        "UPDATE files SET updated_at = 1000 WHERE path IN (?1, ?2)",
+        rusqlite::params![path_a, path_b],
+    )
+    .unwrap();
+    conn.execute(
+        "UPDATE files SET updated_at = 2000 WHERE path = ?1",
+        rusqlite::params![path_c],
+    )
+    .unwrap();
+    drop(conn);
+
+    // No sleep: `set(d)` triggers exactly one eviction (count would be 4,
+    // max_entries is 3).
+    let pd = write_file(&dir, "ss_d.txt", b"d");
+    engine.set(&pd, &vec![4.0_f32]).unwrap();
+
+    assert_eq!(engine.entry_count().unwrap(), 3);
+    // `a` has the smaller id of the tied pair (inserted first), so it is
+    // the deterministic victim; `b`, `c`, and `d` (protected) survive.
+    assert!(engine.get(&pa).unwrap().is_none(), "a must be evicted");
+    assert!(engine.get(&pb).unwrap().is_some(), "b must survive");
+    assert!(engine.get(&pc).unwrap().is_some(), "c must survive");
+    assert!(engine.get(&pd).unwrap().is_some(), "d must survive");
+}
+
+#[test]
+fn on_evict_receives_exactly_the_deleted_paths() {
+    use std::sync::{Arc, Mutex};
+    let dir = TempDir::new().unwrap();
+
+    let evicted: Arc<Mutex<Vec<std::path::PathBuf>>> = Arc::new(Mutex::new(Vec::new()));
+    let evicted_clone = Arc::clone(&evicted);
+
+    let engine: CacheEngine<Vec<f32>> = CacheEngine::builder()
+        .database(":memory:")
+        .max_entries(2)
+        .on_evict(move |p| evicted_clone.lock().unwrap().push(p.to_path_buf()))
+        .build()
+        .unwrap();
+
+    let pa = write_file(&dir, "oe_a.txt", b"a");
+    let pb = write_file(&dir, "oe_b.txt", b"b");
+    let pc = write_file(&dir, "oe_c.txt", b"c");
+
+    engine.set(&pa, &vec![1.0_f32]).unwrap();
+    engine.set(&pb, &vec![2.0_f32]).unwrap();
+    engine.set(&pc, &vec![3.0_f32]).unwrap(); // evicts exactly {pa}
+
+    let evicted_list = evicted.lock().unwrap().clone();
+    assert_eq!(
+        evicted_list,
+        vec![pa.clone()],
+        "on_evict must report exactly the deleted set"
+    );
+    assert!(!engine.contains(&pa).unwrap());
+    assert!(engine.contains(&pb).unwrap());
+    assert!(engine.contains(&pc).unwrap());
+}
+
+#[test]
+fn max_entries_zero_keeps_only_the_latest_write() {
+    let dir = TempDir::new().unwrap();
+    let engine: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
+        database_path: ":memory:".into(),
+        max_entries: Some(0),
+        ..CacheOptions::default()
+    })
+    .unwrap();
+
+    let pa = write_file(&dir, "z_a.txt", b"a");
+    let pb = write_file(&dir, "z_b.txt", b"b");
+    engine.set(&pa, &vec![1.0_f32]).unwrap();
+    engine.set(&pb, &vec![2.0_f32]).unwrap();
+
+    assert_eq!(engine.entry_count().unwrap(), 1);
+    assert!(engine.get(&pa).unwrap().is_none());
+    assert!(engine.get(&pb).unwrap().is_some());
+}
+
+#[test]
+fn imported_export_record_keeps_its_last_accessed_at() {
+    let dir = TempDir::new().unwrap();
+    let src: CacheEngine<Vec<f32>> = CacheEngine::builder().database(":memory:").build().unwrap();
+
+    let p = write_file(&dir, "imp_la.txt", b"x");
+    src.set(&p, &vec![1.0_f32]).unwrap();
+    src.get(&p).unwrap(); // give it a nonzero last_accessed_at
+
+    let mut records = src.export_entries().unwrap();
+    assert_eq!(records.len(), 1);
+    assert!(
+        records[0].last_accessed_at > 0,
+        "sanity: export carries the read timestamp"
+    );
+    // A specific, recognizable value so the assertion below can't pass by
+    // coincidence.
+    records[0].last_accessed_at = 424_242;
+
+    let dst: CacheEngine<Vec<f32>> = CacheEngine::builder().database(":memory:").build().unwrap();
+    dst.import_entries(&records).unwrap();
+
+    let imported = dst.list_entries().unwrap();
+    assert_eq!(imported.len(), 1);
+    assert_eq!(
+        imported[0].last_accessed_at, 424_242,
+        "import must keep the exported last_accessed_at, not reset it"
+    );
 }
 
 // ====================================================================

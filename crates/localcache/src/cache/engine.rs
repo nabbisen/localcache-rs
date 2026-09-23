@@ -28,28 +28,35 @@ use crate::serialization::{decode_payload, encode_payload};
 pub(crate) type EvictCallback = Arc<dyn Fn(&Path) + Send + Sync>;
 
 // ---------------------------------------------------------------------------
-// Test-only interleaving hook (RFC 022 R1 Amendment 2 / C2), mirrors the
-// TEST_HOOK pattern in `crate::db::indexes`.
+// Test-only interleaving hook (RFC 022 R1 Amendment 2 / C2; widened for R6
+// item 3 / Q0c review C1), mirrors the TEST_HOOK pattern in
+// `crate::db::indexes`. Not gated on any Cargo feature, so it is available
+// to every test regardless of feature configuration.
 // ---------------------------------------------------------------------------
 
-#[cfg(all(test, feature = "encryption"))]
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TestPoint {
     /// Immediately after `rotate_encryption_key` loads the encrypted rows,
     /// still inside the `IMMEDIATE` transaction.
+    #[cfg(feature = "encryption")]
     AfterLoad,
+    /// Inside `enforce_max_entries`, after the write it protects and the
+    /// count, before eviction selects its victims. Still inside the
+    /// write's own `IMMEDIATE` transaction.
+    BeforeEviction,
 }
 
-#[cfg(all(test, feature = "encryption"))]
+#[cfg(test)]
 type TestHook = Box<dyn FnMut(TestPoint) -> Result<(), LocalFileCacheError>>;
 
-#[cfg(all(test, feature = "encryption"))]
+#[cfg(test)]
 thread_local! {
     static TEST_HOOK: std::cell::RefCell<Option<TestHook>> =
         const { std::cell::RefCell::new(None) };
 }
 
-#[cfg(all(test, feature = "encryption"))]
+#[cfg(test)]
 #[inline]
 fn test_hook(point: TestPoint) -> Result<(), LocalFileCacheError> {
     TEST_HOOK.with(|slot| {
@@ -377,6 +384,34 @@ where
     // Writes
     // ------------------------------------------------------------------
 
+    /// Store `payload` for the file at `path`, replacing any existing entry
+    /// for its canonical path.
+    ///
+    /// The file at `path` must exist. Its metadata, and its hash when the
+    /// change-detection mode uses one, are recorded as the freshness
+    /// baseline for later `get_if_fresh`/`check_status` calls.
+    ///
+    /// With [`max_entries`](CacheOptions::max_entries) set, the write and
+    /// the eviction it triggers are **one transaction**, and this call
+    /// never evicts the entry it just wrote — see `max_entries` for the
+    /// full eviction policy. **`Ok` means the entry was stored and the
+    /// bound enforced. `Err` means nothing changed.**
+    ///
+    /// # Errors
+    ///
+    /// * [`LocalFileCacheError::ReadOnly`] — engine is in read-only mode.
+    /// * [`LocalFileCacheError::FileNotFound`] — the source file does not
+    ///   exist.
+    /// * [`LocalFileCacheError::InvalidPath`] — the path is not valid
+    ///   UTF-8.
+    /// * [`LocalFileCacheError::Io`] — reading the source's metadata or
+    ///   hashing it failed.
+    /// * [`LocalFileCacheError::Serialization`] — encoding `payload`
+    ///   failed.
+    /// * [`LocalFileCacheError::EncryptionError`] — encrypting the payload
+    ///   failed (`encryption` feature).
+    /// * [`LocalFileCacheError::Database`] — including a busy database
+    ///   after the busy timeout.
     pub fn set<P>(&self, path: P, payload: &T) -> Result<(), LocalFileCacheError>
     where
         P: AsRef<Path>,
@@ -391,8 +426,18 @@ where
         let mut metadata = collect_metadata(&canonical)?;
         metadata.hash = compute_hash_for_mode(&canonical, self.mode)?;
         let (bytes, encoding) = self.encode(payload)?;
-        repository::upsert(
+
+        // RFC 022 R6 item 3 / Q0c review C1: the write and its eviction
+        // share one IMMEDIATE transaction. `Ok` means stored and bounded;
+        // `Err` means nothing changed. A concurrent writer waits under the
+        // busy timeout, rather than racing a deferred read-then-write here
+        // and failing with `SQLITE_BUSY_SNAPSHOT`.
+        let tx = rusqlite::Transaction::new_unchecked(
             &self.conn,
+            rusqlite::TransactionBehavior::Immediate,
+        )?;
+        let file_id = repository::upsert_in_tx(
+            &tx,
             &self.namespace,
             path_str,
             &metadata,
@@ -400,7 +445,15 @@ where
             encoding,
             self.payload_version,
         )?;
-        self.enforce_max_entries()?;
+        // RFC 022 R6: a write is never its own eviction candidate.
+        let evicted = self.enforce_max_entries(&tx, &[file_id])?;
+        tx.commit()?;
+        if let Some(cb) = &self.evict_callback {
+            for p in &evicted {
+                cb(p);
+            }
+        }
+
         #[cfg(feature = "tracing")]
         tracing::debug!(bytes = bytes.len(), encoding, "stored");
         #[cfg(feature = "metrics")]
@@ -415,6 +468,27 @@ where
         Ok(())
     }
 
+    /// Store every item in `items` in one transaction, with the eviction
+    /// it triggers.
+    ///
+    /// Items that fail **preparation** (missing file, invalid path,
+    /// encoding failure) are reported in
+    /// [`BatchSetReport::failed`](BatchSetReport) and not written; the
+    /// rest are counted in [`BatchSetReport::succeeded`](BatchSetReport).
+    ///
+    /// With [`max_entries`](CacheOptions::max_entries) set, this call
+    /// never evicts any entry it wrote, even when the batch itself is
+    /// larger than `max_entries` — see `max_entries` for the full
+    /// eviction policy. **`Err` means nothing was written, including the
+    /// items that prepared successfully.**
+    ///
+    /// # Errors
+    ///
+    /// * [`LocalFileCacheError::ReadOnly`] — engine is in read-only mode.
+    /// * [`LocalFileCacheError::Database`] — including a busy database
+    ///   after the busy timeout. Per-item preparation failures are
+    ///   reported in [`BatchSetReport::failed`](BatchSetReport), not
+    ///   returned as an error of the call.
     pub fn batch_set<P>(&self, items: &[(P, T)]) -> Result<BatchSetReport, LocalFileCacheError>
     where
         P: AsRef<Path>,
@@ -468,9 +542,15 @@ where
             prepared.push((path_str, metadata, bytes, encoding));
         }
 
-        let tx = self.conn.unchecked_transaction()?;
+        // Same rule as `set` (RFC 022 R6 item 3 / Q0c review C1): the whole
+        // batch and its eviction share one IMMEDIATE transaction.
+        let tx = rusqlite::Transaction::new_unchecked(
+            &self.conn,
+            rusqlite::TransactionBehavior::Immediate,
+        )?;
+        let mut written_ids: Vec<i64> = Vec::with_capacity(prepared.len());
         for (path_str, metadata, bytes, encoding) in &prepared {
-            repository::upsert_in_tx(
+            let id = repository::upsert_in_tx(
                 &tx,
                 &self.namespace,
                 path_str,
@@ -479,10 +559,17 @@ where
                 encoding,
                 self.payload_version,
             )?;
+            written_ids.push(id);
             report.succeeded += 1;
         }
+        // RFC 022 R6: a batch write never evicts any row it just wrote.
+        let evicted = self.enforce_max_entries(&tx, &written_ids)?;
         tx.commit()?;
-        self.enforce_max_entries()?;
+        if let Some(cb) = &self.evict_callback {
+            for p in &evicted {
+                cb(p);
+            }
+        }
         Ok(report)
     }
 
@@ -1059,26 +1146,36 @@ where
         }
     }
 
-    fn enforce_max_entries(&self) -> Result<(), LocalFileCacheError> {
+    /// `protected` holds the ids this call's own write(s) produced — they
+    /// are never evicted by the write that just created or updated them
+    /// (RFC 022 R6).
+    /// Runs inside `tx` — the same `IMMEDIATE` transaction as the write
+    /// that produced `protected` — so the count that decides `excess` and
+    /// the selection `evict_lru` makes see that write and nothing racing
+    /// past it. Returns the evicted paths; does **not** call `on_evict`
+    /// itself. The caller does, after `tx` commits, with exactly these
+    /// paths (RFC 022 R6 item 3 / Q0c review C1).
+    fn enforce_max_entries(
+        &self,
+        tx: &rusqlite::Transaction,
+        protected: &[i64],
+    ) -> Result<Vec<PathBuf>, LocalFileCacheError> {
         let Some(max) = self.max_entries else {
-            return Ok(());
+            return Ok(Vec::new());
         };
-        let count = repository::count_in_namespace(&self.conn, &self.namespace)?;
+        let count = repository::count_in_namespace(tx, &self.namespace)?;
         if count <= max {
-            return Ok(());
+            return Ok(Vec::new());
         }
         let excess = count - max;
-        // If there's a callback, collect the paths before deleting.
-        if let Some(cb) = &self.evict_callback {
-            let paths = repository::list_lru_n_paths(&self.conn, &self.namespace, excess)?;
-            repository::delete_lru_n(&self.conn, &self.namespace, excess)?;
-            for p in &paths {
-                cb(p);
-            }
-        } else {
-            repository::delete_lru_n(&self.conn, &self.namespace, excess)?;
-        }
-        Ok(())
+
+        #[cfg(test)]
+        test_hook(TestPoint::BeforeEviction)?;
+
+        // Selection and deletion happen in one transaction — the caller's
+        // `tx` — so the returned paths are exactly what was deleted, by
+        // construction.
+        repository::evict_lru(tx, &self.namespace, excess, protected)
     }
 
     fn encode(&self, payload: &T) -> Result<(Vec<u8>, &'static str), LocalFileCacheError> {
@@ -1265,5 +1362,5 @@ fn walk_dir_filtered(
     Ok(files)
 }
 
-#[cfg(all(test, feature = "encryption"))]
+#[cfg(test)]
 mod tests;

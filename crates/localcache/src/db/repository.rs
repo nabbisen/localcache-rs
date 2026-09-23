@@ -10,6 +10,15 @@ use crate::db::indexes::{self, QuotedIdentifier};
 use crate::detection::metadata::FileMetadata;
 use crate::error::LocalFileCacheError;
 
+/// Shared chunk size for every `id`-list SQL statement in this module
+/// (`payloads_for_ids`, `evict_lru`) and in `cache::query::materialize`.
+/// Kept below SQLite's historical `SQLITE_MAX_VARIABLE_NUMBER` (999 on
+/// older builds), so a large `limit`, eviction count, or query result
+/// cannot produce a malformed statement. RFC 022 R6: one definition,
+/// three uses, so the three stay equal by construction rather than by
+/// a comment.
+pub(crate) const ID_LIST_CHUNK: usize = 500;
+
 // ---------------------------------------------------------------------------
 // Row types
 // ---------------------------------------------------------------------------
@@ -125,29 +134,8 @@ pub(crate) fn touch_last_accessed(
 // Writes
 // ---------------------------------------------------------------------------
 
-pub(crate) fn upsert(
-    conn: &Connection,
-    namespace: &str,
-    path: &str,
-    metadata: &FileMetadata,
-    payload_bytes: &[u8],
-    encoding: &str,
-    payload_version: u32,
-) -> Result<(), LocalFileCacheError> {
-    let tx = conn.unchecked_transaction()?;
-    upsert_in_tx(
-        &tx,
-        namespace,
-        path,
-        metadata,
-        payload_bytes,
-        encoding,
-        payload_version,
-    )?;
-    tx.commit()?;
-    Ok(())
-}
-
+/// Insert or update one entry within `tx`, returning its row id so the
+/// caller can protect it from the same call's own eviction (RFC 022 R6).
 pub(crate) fn upsert_in_tx(
     tx: &Transaction,
     namespace: &str,
@@ -156,7 +144,7 @@ pub(crate) fn upsert_in_tx(
     payload_bytes: &[u8],
     encoding: &str,
     payload_version: u32,
-) -> Result<(), LocalFileCacheError> {
+) -> Result<i64, LocalFileCacheError> {
     let updated_at = now_secs();
 
     tx.execute(
@@ -178,7 +166,11 @@ pub(crate) fn upsert_in_tx(
             metadata.hash,
             updated_at,
             payload_version as i64,
-            0i64, // last_accessed_at reset to 0 on write (entry is "fresh from write")
+            // `last_accessed_at` on INSERT only: 0 means "never read since
+            // written". The ON CONFLICT branch above deliberately omits
+            // this column, so an overwrite keeps the existing last-read
+            // time rather than resetting it (RFC 022 R6).
+            0i64,
         ],
     )?;
 
@@ -197,7 +189,7 @@ pub(crate) fn upsert_in_tx(
         params![file_id, payload_bytes, encoding],
     )?;
 
-    Ok(())
+    Ok(file_id)
 }
 
 // ---------------------------------------------------------------------------
@@ -259,28 +251,72 @@ pub(crate) fn delete_by_other_version(
     Ok(n)
 }
 
-/// Delete the `n` **least recently accessed** entries in `namespace`.
+/// RFC 022 R6: evict up to `n` rows of `namespace` in least-recently-read
+/// order (`last_accessed_at` ascending, `updated_at` ascending, `id`
+/// ascending — never-read entries, `last_accessed_at = 0`, sort first),
+/// never touching `protected` ids. Returns the paths of the rows actually
+/// deleted; if fewer than `n` unprotected rows exist, that is not an
+/// error — every one of them is deleted.
 ///
-/// Entries with `last_accessed_at = 0` (never read since last write) are
-/// evicted first, then by ascending `last_accessed_at`, using `updated_at`
-/// as a tiebreaker.
-pub(crate) fn delete_lru_n(
-    conn: &Connection,
+/// Takes the caller's `&Transaction` and opens none of its own (RFC 022 R6
+/// item 3, Q0c review C1): the write that produced `protected`, the count
+/// that produced `n`, and this selection-and-deletion must all run in the
+/// **same** `IMMEDIATE` transaction, so a concurrent writer waits under the
+/// busy timeout rather than a deferred read-then-write here racing it and
+/// failing with `SQLITE_BUSY_SNAPSHOT`.
+///
+/// `protected` is excluded in Rust after one ordered `SELECT`, not via a
+/// SQL `NOT IN (...)` list: `batch_set` can protect an arbitrarily large
+/// number of ids (every row it just wrote in one call), and a
+/// parameter-bound `NOT IN` risks SQLite's historical
+/// `SQLITE_MAX_VARIABLE_NUMBER` on a large batch. Over-selecting by
+/// `protected.len()` before filtering is equivalent to a `NOT IN` clause:
+/// at most `protected.len()` of the fetched rows can be excluded, so at
+/// least `n` unprotected candidates are considered whenever that many
+/// exist in the namespace.
+pub(crate) fn evict_lru(
+    tx: &Transaction,
     namespace: &str,
     n: usize,
-) -> Result<usize, LocalFileCacheError> {
-    let deleted = conn.execute(
-        "DELETE FROM files
-         WHERE namespace = ?1
-           AND id IN (
-               SELECT id FROM files
-               WHERE namespace = ?1
-               ORDER BY last_accessed_at ASC, updated_at ASC
-               LIMIT ?2
-           )",
-        params![namespace, n as i64],
-    )?;
-    Ok(deleted)
+    protected: &[i64],
+) -> Result<Vec<PathBuf>, LocalFileCacheError> {
+    use std::collections::HashSet;
+
+    let protected: HashSet<i64> = protected.iter().copied().collect();
+
+    let fetch = n.saturating_add(protected.len());
+    let candidates: Vec<(i64, String)> = {
+        let mut stmt = tx.prepare_cached(
+            "SELECT id, path FROM files
+             WHERE namespace = ?1
+             ORDER BY last_accessed_at ASC, updated_at ASC, id ASC
+             LIMIT ?2",
+        )?;
+        let rows: Result<Vec<_>, _> = stmt
+            .query_map(params![namespace, fetch as i64], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+            })?
+            .collect();
+        rows?
+    };
+
+    let selected: Vec<(i64, String)> = candidates
+        .into_iter()
+        .filter(|(id, _)| !protected.contains(id))
+        .take(n)
+        .collect();
+
+    let ids: Vec<i64> = selected.iter().map(|(id, _)| *id).collect();
+    for chunk in ids.chunks(ID_LIST_CHUNK) {
+        let placeholders = vec!["?"; chunk.len()].join(",");
+        let sql = format!("DELETE FROM files WHERE id IN ({placeholders})");
+        tx.execute(&sql, rusqlite::params_from_iter(chunk.iter()))?;
+    }
+
+    Ok(selected
+        .into_iter()
+        .map(|(_, path)| PathBuf::from(path))
+        .collect())
 }
 
 // ---------------------------------------------------------------------------
@@ -514,32 +550,6 @@ pub(crate) fn update_payload_content(
         params![new_content, file_id],
     )?;
     Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// on_evict support
-// ---------------------------------------------------------------------------
-
-/// Return the paths of the `n` least recently accessed entries in `namespace`
-/// **without** deleting them.  Used to call `on_evict` callbacks before
-/// the actual deletion.
-pub(crate) fn list_lru_n_paths(
-    conn: &Connection,
-    namespace: &str,
-    n: usize,
-) -> Result<Vec<std::path::PathBuf>, LocalFileCacheError> {
-    let mut stmt = conn.prepare_cached(
-        "SELECT path FROM files
-         WHERE namespace = ?1
-         ORDER BY last_accessed_at ASC, updated_at ASC
-         LIMIT ?2",
-    )?;
-    let paths: Result<Vec<std::path::PathBuf>, _> = stmt
-        .query_map(params![namespace, n as i64], |r| {
-            Ok(std::path::PathBuf::from(r.get::<_, String>(0)?))
-        })?
-        .collect();
-    Ok(paths?)
 }
 
 // ---------------------------------------------------------------------------
@@ -1016,17 +1026,16 @@ pub(crate) fn query_candidates_json_pushdown(
 }
 
 /// RFC 021 pass 2: payloads for an explicit id set, one statement per
-/// chunk. Chunked at 500 so a `limit` above SQLite's default
-/// `SQLITE_MAX_VARIABLE_NUMBER` (999 on older builds) cannot produce a
-/// malformed statement. Returned rows are not guaranteed to preserve `ids`'
-/// order; callers reassemble by id.
+/// [`ID_LIST_CHUNK`]-sized chunk, so a `limit` above SQLite's historical
+/// `SQLITE_MAX_VARIABLE_NUMBER` cannot produce a malformed statement.
+/// Returned rows are not guaranteed to preserve `ids`' order; callers
+/// reassemble by id.
 pub(crate) fn payloads_for_ids(
     conn: &Connection,
     ids: &[i64],
 ) -> Result<Vec<(i64, Vec<u8>, String)>, LocalFileCacheError> {
-    const CHUNK: usize = 500;
     let mut out = Vec::with_capacity(ids.len());
-    for chunk in ids.chunks(CHUNK) {
+    for chunk in ids.chunks(ID_LIST_CHUNK) {
         let placeholders = vec!["?"; chunk.len()].join(",");
         let sql = format!(
             "SELECT file_id, content, encoding FROM main.payloads WHERE file_id IN ({placeholders})"

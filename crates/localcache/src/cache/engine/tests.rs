@@ -1,15 +1,11 @@
-//! RFC 022 R1 Amendment 2 (C2) — `rotate_encryption_key` must hold the
-//! database write lock from its first read to its commit, so a concurrent
-//! write cannot land between the load and the `UPDATE`s and then be
-//! silently overwritten with a stale re-encrypted payload. This needs an
-//! interleaving hook the public API cannot reach, hence a unit test here
-//! rather than an integration test in `tests/`.
+//! Unit tests needing an interleaving hook the public API cannot reach:
+//! RFC 022 R1 Amendment 2 (C2) key-rotation locking, and RFC 022 R6 item 3
+//! (Q0c review C1) failed-eviction atomicity. `TestPoint`/`TEST_HOOK` are
+//! declared in `super` (`cache::engine`), not gated on any Cargo feature,
+//! so both tests below can share the same hook plumbing.
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
-use rusqlite::Connection;
 use tempfile::TempDir;
 
 use super::*;
@@ -28,18 +24,29 @@ fn set_hook(hook: impl FnMut(TestPoint) -> Result<(), LocalFileCacheError> + 'st
     HookGuard
 }
 
-fn key(seed: u8) -> Vec<u8> {
-    vec![seed; 32]
-}
-
 fn write_file(dir: &TempDir, name: &str) -> PathBuf {
     let path = dir.path().join(name);
     std::fs::write(&path, b"x").unwrap();
     path
 }
 
+/// RFC 022 R1 Amendment 2 (C2) — `rotate_encryption_key` must hold the
+/// database write lock from its first read to its commit, so a concurrent
+/// write cannot land between the load and the `UPDATE`s and then be
+/// silently overwritten with a stale re-encrypted payload.
+#[cfg(feature = "encryption")]
+fn key(seed: u8) -> Vec<u8> {
+    vec![seed; 32]
+}
+
+#[cfg(feature = "encryption")]
 #[test]
 fn rotation_holds_the_write_lock_so_a_concurrent_write_is_refused_with_busy() {
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    use rusqlite::Connection;
+
     let dir = TempDir::new().unwrap();
     let db = dir.path().join("rot_race.sqlite3");
 
@@ -113,4 +120,47 @@ fn rotation_holds_the_write_lock_so_a_concurrent_write_is_refused_with_busy() {
         .unwrap_or_else(|err| panic!("entry must decode through the rotating engine: {err}"))
         .expect("entry must still exist");
     assert_eq!(entry.payload, vec![1.0_f32]);
+}
+
+/// RFC 022 R6 item 3 (Q0c review C1) — a write and its eviction share one
+/// `IMMEDIATE` transaction, so a failed eviction leaves nothing changed:
+/// `Err` from `set` means the entry was never stored, not "stored, then a
+/// separate eviction step failed afterwards".
+#[test]
+fn failed_eviction_during_set_leaves_nothing_changed() {
+    let dir = TempDir::new().unwrap();
+    let engine: CacheEngine<Vec<f32>> = CacheEngine::builder()
+        .database(":memory:")
+        .max_entries(1)
+        .build()
+        .unwrap();
+
+    let pa = write_file(&dir, "a.txt");
+    engine.set(&pa, &vec![1.0_f32]).unwrap();
+
+    let hook = set_hook(|point| {
+        if point == TestPoint::BeforeEviction {
+            return Err(LocalFileCacheError::UnsupportedFeature(
+                "forced eviction failure for the test".into(),
+            ));
+        }
+        Ok(())
+    });
+
+    let pb = write_file(&dir, "b.txt");
+    let result = engine.set(&pb, &vec![2.0_f32]);
+    drop(hook);
+
+    assert!(
+        result.is_err(),
+        "set must fail when eviction fails, got {result:?}"
+    );
+    assert!(
+        !engine.contains(&pb).unwrap(),
+        "b must not be stored when set returns Err"
+    );
+    assert!(
+        engine.contains(&pa).unwrap(),
+        "the original entry must be untouched"
+    );
 }
