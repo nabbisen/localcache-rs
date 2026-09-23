@@ -111,6 +111,13 @@ pub struct CacheEngine<T> {
     pub(crate) database_path: std::path::PathBuf,
     #[cfg(feature = "watching")]
     pub(crate) watch_dirs: bool,
+    /// RFC 022 R9: carried so a watcher helper connection can be opened
+    /// with the same journal mode and synchronous setting as this engine,
+    /// instead of silently reverting to `CacheOptions::default()`'s.
+    #[cfg(feature = "watching")]
+    pub(crate) journal_mode: crate::cache::options::JournalMode,
+    #[cfg(feature = "watching")]
+    pub(crate) synchronous: crate::cache::options::SynchronousMode,
     pub(crate) mode: ChangeDetectionMode,
     pub(crate) codec: Codec,
     pub(crate) namespace: String,
@@ -236,6 +243,10 @@ where
             database_path: options.database_path.clone(),
             #[cfg(feature = "watching")]
             watch_dirs: options.watch_dirs,
+            #[cfg(feature = "watching")]
+            journal_mode: options.journal_mode,
+            #[cfg(feature = "watching")]
+            synchronous: options.synchronous,
             mode: options.change_detection_mode,
             codec: options.codec,
             namespace: options.namespace,
@@ -885,31 +896,13 @@ where
         T: Send + 'static,
     {
         self.guard_write()?;
-        use std::sync::{Arc, Mutex};
-        // Build a minimal shared state for the watcher: it only needs to open
-        // its own DB connection to delete stale entries.  We pass an
-        // Arc<Mutex<CacheEngine<T>>> that wraps a *new* connection so the
-        // watcher callback (which runs on another thread) does not share
-        // SQLite connection with the caller.
-        let inner = Arc::new(Mutex::new(CacheEngine::open(
-            crate::cache::options::CacheOptions {
-                database_path: self.database_path.clone(),
-                change_detection_mode: self.mode,
-                codec: self.codec,
-                namespace: self.namespace.clone(),
-                ttl: self.ttl,
-                read_only: false,
-                payload_version: self.payload_version,
-                #[cfg(feature = "compression")]
-                compress_payloads: self.compress,
-                #[cfg(feature = "encryption")]
-                encryption_key: self.encryption_key.get().map(|k| k.to_vec()),
-                ..crate::cache::options::CacheOptions::default()
-            },
-        )?));
         // Pre-load paths from *this* engine so the watcher knows what to watch.
         let paths = self.keys(None)?;
-        crate::cache::watcher::CacheWatcher::new_with_paths(inner, paths, self.watch_dirs)
+        crate::cache::watcher::CacheWatcher::new_with_paths(
+            self.watcher_helper_options(),
+            paths,
+            self.watch_dirs,
+        )
     }
 
     // ------------------------------------------------------------------
@@ -1027,16 +1020,37 @@ where
         self.guard_write()?;
         let paths = self.keys(None)?;
         crate::cache::watcher::CacheDebouncedWatcher::new_with_paths(
-            self.database_path.clone(),
-            self.mode,
-            self.codec,
-            self.namespace.clone(),
-            self.ttl,
-            self.payload_version,
+            self.watcher_helper_options(),
             paths,
             window,
             self.watch_dirs,
         )
+    }
+
+    /// RFC 022 R9: the `CacheOptions` for a watcher helper connection
+    /// (used by both [`watcher()`](Self::watcher) and
+    /// [`debounced_watcher()`](Self::debounced_watcher)), inheriting this
+    /// engine's journal mode and synchronous setting so opening the helper
+    /// does not silently change the database's on-disk journal mode.
+    /// Everything else that is not read from `self` stays at its default —
+    /// in particular, no encryption key, no compression, and no
+    /// `max_entries`: the helper only ever calls `contains`/`remove`
+    /// (never decodes a payload) and must not itself become an eviction
+    /// actor.
+    #[cfg(feature = "watching")]
+    fn watcher_helper_options(&self) -> CacheOptions {
+        CacheOptions {
+            database_path: self.database_path.clone(),
+            namespace: self.namespace.clone(),
+            change_detection_mode: self.mode,
+            codec: self.codec,
+            ttl: self.ttl,
+            payload_version: self.payload_version,
+            journal_mode: self.journal_mode,
+            synchronous: self.synchronous,
+            read_only: false,
+            ..CacheOptions::default()
+        }
     }
 
     // ------------------------------------------------------------------

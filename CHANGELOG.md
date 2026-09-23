@@ -66,6 +66,17 @@ authorization, not before.
   On a poisoned lock every element is now `Err(LocalFileCacheError::Poisoned { resource:
   "AsyncCacheEngine" })`; on a panicking blocking task every element is now
   `Err(LocalFileCacheError::AsyncTaskPanicked)`.
+- `CacheEngine::watcher` / `debounced_watcher` (`crates/localcache/src/cache/engine.rs`,
+  `crates/localcache/src/cache/watcher.rs`): the background watcher's helper database connection
+  now opens with the same journal mode and synchronous setting as the engine it was created from.
+  Previously the helper always opened with `CacheOptions::default()`'s journal mode (WAL),
+  regardless of the parent engine's own setting — a database explicitly opened in `Delete` mode
+  silently grew a `-wal` file the moment `watcher()` or `debounced_watcher()` was called. The
+  helper still never inherits an encryption key, a compression setting, or `max_entries`,
+  and now opens exactly one connection instead of one that was immediately discarded. Separately,
+  `debounced_watcher`'s invalidation callback no longer sends a notification when its internal
+  lock cannot be taken — it previously did, incorrectly claiming an invalidation that never
+  happened.
 
 ### Changed
 

@@ -451,6 +451,86 @@ fn metrics_instrumentation_no_panic() {
 }
 
 // ====================================================================
+// RFC 022 R9 — watcher helpers inherit the engine's database configuration
+// ====================================================================
+
+#[cfg(feature = "watching")]
+mod journal_mode_tests {
+    use super::*;
+    use localcache::JournalMode;
+
+    fn read_journal_mode(db: &std::path::Path) -> String {
+        let conn = rusqlite::Connection::open(db).unwrap();
+        conn.query_row("PRAGMA journal_mode", [], |row| row.get::<_, String>(0))
+            .unwrap()
+    }
+
+    /// The reproduction: a `Delete`-mode database has no `-wal` file before
+    /// `watcher()`, and one appears after -- the helper connection, opened
+    /// with default options (always WAL), silently switched the file's
+    /// journal mode. Must fail on v0.21.3.
+    #[test]
+    fn watcher_does_not_change_journal_mode() {
+        let dir = TempDir::new().unwrap();
+        let db = dir.path().join("journal.sqlite3");
+
+        let engine: CacheEngine<Vec<f32>> = CacheEngine::builder()
+            .database(&db)
+            .journal_mode(JournalMode::Delete)
+            .build()
+            .unwrap();
+
+        let path = write_file(&dir, "jm.txt", b"data");
+        engine.set(&path, &vec![1.0_f32]).unwrap();
+
+        assert_eq!(
+            read_journal_mode(&db),
+            "delete",
+            "sanity: the engine itself is in delete mode"
+        );
+        assert!(
+            !dir.path().join("journal.sqlite3-wal").exists(),
+            "sanity: no -wal file before watcher()"
+        );
+
+        let watcher = engine.watcher().unwrap();
+        assert_eq!(
+            read_journal_mode(&db),
+            "delete",
+            "watcher() must not change the database's journal mode"
+        );
+        drop(watcher);
+    }
+
+    #[test]
+    fn debounced_watcher_does_not_change_journal_mode() {
+        let dir = TempDir::new().unwrap();
+        let db = dir.path().join("journal_debounced.sqlite3");
+
+        let engine: CacheEngine<Vec<f32>> = CacheEngine::builder()
+            .database(&db)
+            .journal_mode(JournalMode::Delete)
+            .build()
+            .unwrap();
+
+        let path = write_file(&dir, "jmd.txt", b"data");
+        engine.set(&path, &vec![1.0_f32]).unwrap();
+
+        assert_eq!(read_journal_mode(&db), "delete");
+
+        let watcher = engine
+            .debounced_watcher(std::time::Duration::from_millis(50))
+            .unwrap();
+        assert_eq!(
+            read_journal_mode(&db),
+            "delete",
+            "debounced_watcher() must not change the database's journal mode"
+        );
+        drop(watcher);
+    }
+}
+
+// ====================================================================
 // Phase 15 —(watching feature)
 // ====================================================================
 

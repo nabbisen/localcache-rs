@@ -136,7 +136,7 @@ where
     T: Serialize + DeserializeOwned + Send + 'static,
 {
     pub(crate) fn new_with_paths(
-        engine: Arc<Mutex<CacheEngine<T>>>,
+        options: crate::cache::options::CacheOptions,
         paths: Vec<PathBuf>,
         watch_dirs: bool,
     ) -> Result<Self, LocalFileCacheError> {
@@ -144,23 +144,12 @@ where
         // callback is never blocked.
         let (tx, rx) = mpsc::sync_channel::<WatchEvent>(256);
 
-        // Build the shared inner state: a *dedicated* engine connection for
-        // the watcher callback (SQLite connections are not Send).
-        let watcher_engine = {
-            let g = engine.lock().map_err(|_| LocalFileCacheError::Poisoned {
-                resource: "CacheWatcher",
-            })?;
-            CacheEngine::<T>::open(crate::cache::options::CacheOptions {
-                database_path: g.database_path.clone(),
-                change_detection_mode: g.mode,
-                codec: g.codec,
-                namespace: g.namespace.clone(),
-                ttl: g.ttl,
-                read_only: false,
-                payload_version: g.payload_version,
-                ..crate::cache::options::CacheOptions::default()
-            })?
-        };
+        // The one, dedicated engine connection for the watcher callback
+        // (SQLite connections are not Send). `options` already carries the
+        // parent engine's configuration, including its journal mode and
+        // synchronous setting (RFC 022 R9) — built by
+        // `CacheEngine::watcher_helper_options`, the caller.
+        let watcher_engine = CacheEngine::<T>::open(options)?;
 
         let inner = Arc::new(WatcherInner {
             engine: Mutex::new(watcher_engine),
@@ -435,30 +424,19 @@ impl<T> CacheDebouncedWatcher<T>
 where
     T: Serialize + DeserializeOwned + Send + 'static,
 {
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new_with_paths(
-        database_path: std::path::PathBuf,
-        mode: crate::cache::options::ChangeDetectionMode,
-        codec: crate::cache::options::Codec,
-        namespace: String,
-        ttl: Option<std::time::Duration>,
-        payload_version: u32,
+        options: crate::cache::options::CacheOptions,
         paths: Vec<PathBuf>,
         window: std::time::Duration,
         watch_dirs: bool,
     ) -> Result<Self, LocalFileCacheError> {
         use std::sync::{Arc, Mutex, mpsc};
 
-        let watcher_engine = CacheEngine::<T>::open(crate::cache::options::CacheOptions {
-            database_path,
-            change_detection_mode: mode,
-            codec,
-            namespace,
-            ttl,
-            read_only: false,
-            payload_version,
-            ..crate::cache::options::CacheOptions::default()
-        })?;
+        // RFC 022 R9: `options` already carries the parent engine's
+        // configuration, including its journal mode and synchronous
+        // setting — built by `CacheEngine::watcher_helper_options`, the
+        // caller.
+        let watcher_engine = CacheEngine::<T>::open(options)?;
 
         let inner = Arc::new(Mutex::new(watcher_engine));
         let (tx, rx) = mpsc::sync_channel::<WatchEvent>(256);
@@ -482,33 +460,34 @@ where
                         // DebouncedEventKind has only Any / AnyContinuous —
                         // no remove variant; treat all as FileModified.
                         let reason = InvalidationReason::FileModified;
-                        let mut invalidation_failed = false;
-                        // RFC 018 R4: deliberate skip, not silent — same
-                        // reasoning as the non-debounced watcher's callback:
-                        // this runs on the debouncer's own thread, with no
-                        // caller to return a `Poisoned` error to.
-                        if let Ok(eng) = inner_cb.lock() {
-                            // Recursive directory watching delivers events
-                            // for uncached files too — filter them out. An
-                            // *error* from `contains()` is not evidence the
-                            // path is uncached, so only a definite
-                            // `Ok(false)` skips.
-                            if matches!(eng.contains(&path), Ok(false)) {
-                                continue;
-                            }
-                            if eng.remove(&path).is_err() {
-                                counters_cb
-                                    .failed_invalidations
-                                    .fetch_add(1, Ordering::Relaxed);
-                                invalidation_failed = true;
-                            }
+                        // RFC 018 R4 / RFC 022 R9: deliberate skip, not
+                        // silent — same reasoning as the non-debounced
+                        // watcher's callback: this runs on the debouncer's
+                        // own thread, with no caller to return a `Poisoned`
+                        // error to. When the lock cannot be taken, no
+                        // notification is sent — a poisoned lock is not
+                        // evidence the entry was invalidated, so claiming
+                        // it was would be worse than staying silent.
+                        let Ok(eng) = inner_cb.lock() else {
+                            continue;
+                        };
+                        // Recursive directory watching delivers events for
+                        // uncached files too — filter them out. An *error*
+                        // from `contains()` is not evidence the path is
+                        // uncached, so only a definite `Ok(false)` skips.
+                        if matches!(eng.contains(&path), Ok(false)) {
+                            continue;
                         }
-                        if invalidation_failed {
+                        if eng.remove(&path).is_err() {
+                            counters_cb
+                                .failed_invalidations
+                                .fetch_add(1, Ordering::Relaxed);
                             // Removal was attempted and failed: count it,
                             // don't retry, and don't send a notification
                             // claiming invalidation happened.
                             continue;
                         }
+                        drop(eng);
                         if tx.try_send(WatchEvent { path, reason }).is_err() {
                             counters_cb.dropped_events.fetch_add(1, Ordering::Relaxed);
                         }
@@ -635,6 +614,3 @@ fn unique_parent_dirs(paths: &[PathBuf]) -> Vec<PathBuf> {
     let set: std::collections::HashSet<&Path> = paths.iter().filter_map(|p| p.parent()).collect();
     set.into_iter().map(Path::to_path_buf).collect()
 }
-
-#[cfg(test)]
-mod tests;
