@@ -336,6 +336,13 @@ rejections.
 In v0.22.0, `run()` returns `Err` with the first undecodable entry's error, as `get` does.
 `run_report()` (R9) is the explicit way to tolerate them.
 
+**Precise definition** *(clarified 2026-09-24, Q2d review 021)*: `run()` returns `Err` with the first
+`SkippedEntry`'s error exactly when `run_report().skipped` would be non-empty for the same query.
+Otherwise it returns what it returns today. The two share one execution path, so the rule cannot
+drift. It inherits `skipped`'s documented scope: rows passed while producing the page; every
+candidate on the decode-everything tier; never a row with no payload row, which `get` also treats
+as a miss.
+
 A query under the wrong key then fails loudly instead of returning nothing. For decoding, one rule
 then governs `get`, `batch_get` (which already returns each path's own error), and `run`: an error
 unless you ask to skip.
