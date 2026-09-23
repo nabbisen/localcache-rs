@@ -1422,7 +1422,10 @@ Q0e (hygiene, docs, records), and Q0f (release).
 could only pass once Q0e had fixed the stale install examples. **CI run 35852831761 is green on
 `00ef4c6`, 26/26 jobs.** Docs run 35852831771 is also green, and its `build` and `deploy` jobs are
 the first real verification of Q0d's per-job Pages permissions. Q0j (CI runtime hygiene, RFC 022
-Amendment 3) is approved and goes out as its own push, so its run shows only its effect.
+Amendment 3) went out as its own push at `1679271`. **CI run 35854456416 is 26/26 green, and Docs
+run 35854456460 is green,** on `ubuntu-24.04`, with **no annotation on any job**: no Node 20
+warning and no runner-image migration notice. **Every implementation slice of v0.21.4 is complete.**
+Q0f (release preparation) follows.
 
 ### Deferred register — Phase 24
 
