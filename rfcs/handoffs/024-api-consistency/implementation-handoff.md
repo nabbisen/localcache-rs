@@ -265,6 +265,8 @@ One integration test per added delegation, through the wrapper:
    entries only (RFC 022 R2, unchanged).
 4. Wrappers: add `query_run_report` to `SyncCacheEngine`, `ReadPool`, and `AsyncCacheEngine`, with
    the same closure shape as each one's `query_run`.
+   Add `query_run_report` to `WRAPPER_REQUIRED` in `crates/localcache/tests/api_surface.rs`, so the
+   parity test enforces it on all three *(added 2026-09-24, review 020 K1)*.
 5. `docs/src/querying.md`: a short section on `run_report`, and when to use it. It also announces
    the v0.22.0 change (RFC 024 B1): `run()` will return the first decode error. Use the plain
    future tense, and link the RFC.

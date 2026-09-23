@@ -42,7 +42,7 @@ holds.
 - [ ] `skipped` lists every undecodable entry passed in scan order, including within the `offset` region. `offset`/`limit` still count returned entries only
 - [ ] Wrong-key failing-before: `run()` returns `Ok(vec![])`. After: `run_report()` shows every row in `skipped`, and `run()` is unchanged
 - [ ] With mixed good and bad rows and `offset`/`limit`, `run_report().entries` equals `run()`
-- [ ] `query_run_report` is on all three wrappers
+- [ ] `query_run_report` is on all three wrappers, and in `api_surface.rs`'s `WRAPPER_REQUIRED` (review 020 K1)
 - [ ] `docs/src/querying.md` covers `run_report`, and announces B1 for v0.22.0
 
 ## D. Q2e — CLI (R10–R12)
