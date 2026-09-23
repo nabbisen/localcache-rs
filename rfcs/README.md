@@ -74,12 +74,11 @@ The "Background" section is optional in both templates.
 | RFC | Title | Target |
 |-----|-------|--------|
 | [023](./accepted/023-msrv-policy.md) | MSRV Policy: When and How the Floor May Rise | policy (Phase 24 Q1); slices Q1a (docs, on push), Q1b (v0.21.5), Q1c (v0.22.0) |
+| [024](./accepted/024-api-consistency.md) | API Consistency: One Surface, Honest Names | Part A: slices Q2c, Q2a, Q2d, Q2e (v0.21.5); Part B: Q2f (v0.22.0) |
 
 ### Proposed
 
-| RFC | Title | Target |
-|-----|-------|--------|
-| [024](./proposed/024-api-consistency.md) | API Consistency: One Surface, Honest Names | v0.21.5 (Part A), v0.22.0 (Part B) |
+*(none)*
 
 ### Archive
 

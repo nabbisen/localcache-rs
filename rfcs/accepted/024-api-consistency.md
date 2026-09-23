@@ -2,14 +2,14 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed (architect, 2026-09-24) |
+| Status | Accepted (owner, 2026-09-24), with all five requested decisions as recommended: `order_by(SortKey, SortOrder)` (R4); `ConnectionPool` → `SyncCacheEngine` (R5); B1 `run()` errors on undecodable entries; B2 `JournalMode::Preserve`; B3 imports honour `max_entries` |
 | Feature | *(core API; `encryption`, `watching`, and the async features for the wrapper delegations; the CLI crate)* |
 | Touches | `crates/localcache/src/pool.rs`, `crates/localcache/src/read_pool.rs`, `crates/localcache/src/cache/async_engine.rs`, `crates/localcache/src/cache/query.rs`, `crates/localcache/src/cache/engine/portable.rs`, `crates/localcache/src/cache/engine/maintenance.rs`, `crates/localcache/src/cache/watcher.rs`, `crates/localcache/src/cache/options.rs`, `crates/localcache/src/lib.rs`, `crates/localcache/tests/` (new `api_surface.rs`), `crates/cli/`, `docs/src/`, `README.md`, `CHANGELOG.md` |
 | Finding | Phase 24 plan, milestone Q2 (owner, 2026-09-23); the Phase 24 register entries assigned to Q2; the architect's survey of 2026-09-24 |
 | Milestone | Phase 24 Q2 |
 | Breaking | **Not in v0.21.5**: additions and deprecations only. Part B decides three behaviour changes and a removal list for **v0.22.0**, which is already breaking |
 | Authorship | High-capability model; **reviewed by the owner** (arrangement of 2026-08-01) |
-| Handoffs | Created at acceptance (RFC 000, "Companion handoffs") |
+| Handoffs | [`../handoffs/024-api-consistency/`](../handoffs/024-api-consistency/implementation-handoff.md): the Part A implementation handoff and QA checklist. Part B's handoff follows when v0.21.5 ships |
 
 ## Summary
 
@@ -189,8 +189,9 @@ which, and reports it.
   the four-space form, so the scan is deterministic. It sees `#[cfg]`-gated methods regardless of
   enabled features, which is intended: the surface is the same in every build.
 - It holds a checked-in **manifest**: for each wrapper, every engine method it deliberately
-  omits, with a one-line reason (`constructor`, `borrows the engine`, `writes`, `deprecated
-  (RFC 024)`, and so on).
+  omits, with a one-line reason (`constructor`, `borrows the engine`, `writes`, and so on).
+  Deprecated engine methods are skipped by the scan rather than listed, because R1 forbids
+  delegating them anew *(clarified at acceptance, 2026-09-24)*.
 - It **fails** when:
   - an engine method is neither delegated by a wrapper nor in that wrapper's manifest;
   - a manifest entry is **stale**, meaning it names a method the engine no longer has or the
@@ -473,6 +474,8 @@ v0.22.0, reversing B1–B3 would itself be a behaviour change.
 
 ## Decisions requested of the owner
 
+**Decided 2026-09-24: all five accepted as recommended.**
+
 1. **Sorting (R4):** `order_by(SortKey, SortOrder)` with all eight bool methods deprecated
    (recommended), or minimal renames.
 2. **`ConnectionPool` → `SyncCacheEngine` (R5)** (recommended), or keep the name.
@@ -496,4 +499,4 @@ Slice letters are identifiers. `Q2b` was already the module split.
 
 ## Open questions
 
-None beyond the five decisions above.
+None. The five decisions above are settled.
