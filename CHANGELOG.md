@@ -7,11 +7,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [0.21.4] — Unreleased
-
-*Date set at owner authorization.*
+## [0.21.4] — 2026-09-23
 
 Patch release closing Phase 24 Q0 (RFC 022, correctness and contract reconciliation).
+Release candidate `e28620f`, accepted by the v0.21.4 release decision on 2026-09-23 with a **Go**
+recommendation, and authorized by the project owner the same day.
 
 **A correctness patch. Not breaking.** No public signature, schema, wire-format, dependency, or
 MSRV change. **No input v0.21.3 accepted now returns an error.**
