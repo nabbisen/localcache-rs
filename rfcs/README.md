@@ -67,12 +67,11 @@ The "Background" section is optional in both templates.
 | [019](./done/019-standing-dispositions-for-unmaintained-dependencies.md) | Standing Dispositions for Unmaintained Dependencies | v0.21.0 |
 | [020](./done/020-batched-maintenance-deletes.md) | Batched Maintenance Deletes | v0.21.2 |
 | [021](./done/021-query-execution-one-pass-late-materialization.md) | Query Execution: One Pass, Late Materialization | v0.21.3 |
+| [022](./done/022-correctness-and-contract-reconciliation.md) | Correctness and Contract Reconciliation | v0.21.4 |
 
 ### Accepted
 
-| RFC | Title | Target |
-|-----|-------|--------|
-| [022](./accepted/022-correctness-and-contract-reconciliation.md) | Correctness and Contract Reconciliation | v0.21.4 (Phase 24 Q0) |
+*(none)*
 
 ### Proposed
 

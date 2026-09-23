@@ -1246,7 +1246,7 @@ v0.21.0. Recorded here so it is in the RFC when written, rather than appended at
 
 ## Phase 24 — Correctness, Contracts, and API Consistency (v0.21.4, v0.21.5, v0.22.0)
 
-**Status: authorized by the owner 2026-09-23.** RFC 022 was accepted the same day. Its
+**Status: authorized by the owner 2026-09-23. Q0 was released as v0.21.4 the same day; Q1 is next.** RFC 022 was accepted the same day. Its
 **Amendment 2** was authorized the same day, after the architect's re-onboarding and the Q0a
 review. It corrects R1, re-scopes R6, and adds R7–R9 (see "Amendment 2" below). The owner set two
 standing principles for this phase:
@@ -1400,7 +1400,7 @@ is discussed. The questions it must answer:
 
 The standing `rusqlite ^0.39` register entry is re-evaluated against this policy in Q1, not before.
 
-### Q0 progress — code slices complete, CI green (2026-09-23)
+### Q0 progress — complete; v0.21.4 released (2026-09-23)
 
 All six code slices of v0.21.4 are implemented, independently reviewed, and committed. Each had a
 failing-before test, reproduced by the architect on a detached worktree of the preceding commit.
@@ -1426,6 +1426,29 @@ Amendment 3) went out as its own push at `1679271`. **CI run 35854456416 is 26/2
 run 35854456460 is green,** on `ubuntu-24.04`, with **no annotation on any job**: no Node 20
 warning and no runner-image migration notice. **Every implementation slice of v0.21.4 is complete.**
 Q0f (release preparation) follows.
+
+**Q0f Parts A and B** (version bump, install examples, release summary, advisory User-Agent; the
+paired eviction re-measurement) landed as `e28620f` over the architect's `8caade8`, and the dev
+team pushed them. The extended measurement kept the published eviction row: after/before medians
+are eviction 0.879 and `batch_set` 1.012, with the controls within 3.3%. **CI run 35868146731 is
+26/26 green, and Docs run 35868146461 is green, on `e28620f`,** with no annotation on any job.
+
+**v0.21.4 was released on 2026-09-23.**
+- **Release candidate.** The RC production run on `e28620f` passed all four gates. The primary
+  archive digest `dad3e699…` reproduced across two independent runs, and the 23 MB bundle is
+  retained at `.git-exclude/release-candidate-v0.21.4/`.
+- **Decision and authorization.** The architect's release decision recommended **Go**, and the
+  owner authorized the release the same day.
+- **Release commit.** `93ec10b` (`docs: set the v0.21.4 release date`) passed the `source` gate,
+  CI run 35872805740 (26/26), and Docs run 35872805881, with no annotations.
+- **Tag and publication.** The signed tag `0.21.4` is on that commit, and both crates are on
+  crates.io. Apart from `.cargo_vcs_info.json` and the lockfile checksum that follows from it,
+  the published `.crate` contents are identical to the RC's.
+- **MSRV.** A fresh `rust-version = "1.85"` consumer, with every feature enabled, resolves
+  `libsqlite3-sys 0.37.0` and builds on 1.85.0.
+
+RFC 022 has moved to `rfcs/done/` as **Implemented (0.21.4)**. **Phase 24 Q0 is closed.** Next,
+per the authorized plan: **Q1**, the MSRV policy (RFC 023, design only).
 
 ### Deferred register — Phase 24
 

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted (owner, 2026-09-23); R6 amendment accepted the same day; **Amendment 2** (R1 items 4–6, R6 re-scoped, new R7–R9) authorized by the owner the same day; **Amendment 3** (R3 items 6–7, CI runtime) approved by the owner the same day |
+| Status | Implemented (0.21.4). Accepted by the owner on 2026-09-23, together with the R6 amendment, **Amendment 2** (R1 items 4–6, R6 re-scoped, new R7–R9), and **Amendment 3** (R3 items 6–7, CI runtime) |
 | Feature | *(core; `encryption` for R1; `json` affects R2's tiers; async features for R8; `watching` for R9)* |
 | Touches | `crates/localcache/src/cache/engine.rs`, `crates/localcache/src/cache/query.rs`, `crates/localcache/src/db/repository.rs`, `crates/localcache/src/detection/strategy.rs`, `crates/localcache/src/cache/async_engine.rs`, `crates/localcache/src/cache/watcher.rs`, `crates/localcache/src/cache/entry.rs`, `crates/localcache/src/cache/options.rs`, `crates/localcache/src/read_pool.rs`, `crates/localcache/src/error.rs`, `crates/cli/src/main.rs`, `scripts/release.py`, `scripts/check_advisories.py`, `scripts/release-tools.toml`, `Makefile.toml`, `.github/workflows/docs.yaml`, `README.md`, `CHANGELOG.md`, `docs/src/`, `rfcs/README.md`, `ROADMAP.md` |
 | Finding | Architect onboarding review, 2026-09-23; architect re-onboarding and Q0a review, 2026-09-23 (Amendment 2) |

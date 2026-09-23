@@ -35,12 +35,12 @@ on GitHub for the full backlog with implementation notes.
 ## Phase 24 — Correctness, Contracts, and API Consistency (in progress)
 
 **Authorized by the owner 2026-09-23**, immediately after Phase 23 closed. RFC 022 (accepted the
-same day, later amended) drives the first sub-phase, v0.21.4: a patch release fixing six
+same day, later amended) drove the first sub-phase, **v0.21.4, released 2026-09-23**: a patch release fixing six
 reproduced correctness defects found and reproduced during Phase 24's review — key rotation, query
 `offset`, `max_entries` eviction, partial-hash change detection, `AsyncCacheEngine` batch results,
 watcher journal-mode inheritance — plus release-tooling repair and a documentation/records
 reconciliation pass (this page included). **No MSRV change, and no behaviour newly rejected as an
-error, ships in this patch** — see [Error Handling](./errors.md) and the compatibility notes
+error, shipped in this patch** — see [Error Handling](./errors.md) and the compatibility notes
 throughout this book for what each fix actually changes.
 
 Two further sub-phases are planned, not yet started: v0.21.5 (API consistency — additive names and
