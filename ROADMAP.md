@@ -689,7 +689,7 @@ Recorded findings not scheduled into a milestone. Each is tracked, none is lost.
 | RFC 011 N-01/N-02 (quote the catalog's spelling; comment the ASCII-fold invariant) | Phase 21 | Verified safe; hardening only. **Moved from N3 to N5**, since both land in `indexes.rs`, which N5 also touches. **✅ Closed in Phase 22 N5.** |
 | `namespace_copy`'s body is byte-identical to `import_from`'s in `cache/engine/portable.rs` | N5 review §2 | Verified identical (184 chars each). Became visible once the concern was isolated in one file. Reported and deliberately **not** fixed during a move commit. **✅ Closed — fixed in P0b, shipped in v0.21.1**; `namespace_copy` delegates to `import_from`. |
 | The exhaustiveness `compile_fail,E0004` annotation is **documentation-only** | P0 review §3.1 | **Rustdoc does not verify a `compile_fail` block's error code against the actual diagnostic.** Confirmed by mutation from both sides: a block annotated `E0004` that fails with an unresolved-path error, a type mismatch, or `E0425` all still report `ok`. The guarantee that the match is genuinely non-exhaustive rests on mutation testing at review time, not on the annotation. `trybuild` or a custom `rustc --error-format=json` harness would enforce it; neither judged proportionate for one assertion. |
-| **`rusqlite` held at `^0.39`, and the conditions that would change it** | orbok/arama requests, 2026-08-01 | Not a defect to fix — a standing external constraint to **re-evaluate at each replanning**. `rusqlite 0.40` needs `libsqlite3-sys 0.38.x`, which needs **Rust 1.95** (measured: 1.94 fails, 1.95.0 passes), so adopting it would move this crate's floor from 1.85 to 1.95. Cost of holding: bundled SQLite stays at 3.51.3 rather than 3.53.2, and a consumer pinning `rusqlite 0.40` directly cannot use this crate at all — `links = "sqlite3"` makes that a hard resolution failure with no downstream remedy. **Revisit if any of:** `libsqlite3-sys` declares `rust-version` (then MSRV-aware resolution serves both audiences and no choice falls to us); the `cfg_select!` dependency goes away; 1.95 stops being a recent floor; or a consumer confirms a parallel line would unblock them. User-facing detail in `docs/src/dependency_security.md`. |
+| **`rusqlite` held at `^0.39`, and the conditions that would change it** | orbok/arama requests, 2026-08-01 | Not a defect to fix — a standing external constraint to **re-evaluate at each replanning**. `rusqlite 0.40` needs `libsqlite3-sys 0.38.x`, which needs **Rust 1.95** (measured: 1.94 fails, 1.95.0 passes), so adopting it would move this crate's floor from 1.85 to 1.95. Cost of holding: bundled SQLite stays at 3.51.3 rather than 3.53.2, and a consumer pinning `rusqlite 0.40` directly cannot use this crate at all — `links = "sqlite3"` makes that a hard resolution failure with no downstream remedy. **Revisit if any of:** `libsqlite3-sys` declares `rust-version` (then MSRV-aware resolution serves both audiences and no choice falls to us); the `cfg_select!` dependency goes away; 1.95 stops being a recent floor; or a consumer confirms a parallel line would unblock them. User-facing detail in `docs/src/dependency_security.md`. **✅ Resolved 2026-09-23 by RFC 023:** the `cfg_select!` condition was met. `libsqlite3-sys 0.38.2` (2026-08-08) polyfills it, and localcache on `rusqlite 0.40.2` passes the 1.85 rows. Adoption is scheduled as Q1c in v0.22.0 (breaking: the public `rusqlite::Error` and `links`). |
 | **`path_in_dir` non-recursive cannot construct an indexable prefix** | N4 §7 ranking, item 4 | **Deferred with a reason, recorded at the Phase 23 exit review — it had been neither done nor explicitly deferred, which criterion 1 forbids.** N4 observed that `path_in_dir` grows with the namespace where a leading-literal glob stays flat, and suggested checking whether it can build a `path > ? AND path < ?` range the way the literal glob does. **Nobody checked.** RFC 021 improved it incidentally (1.11×) by removing the per-row fetch, but did not touch the plan shape: it still narrows on `namespace = ?` alone. The question is live and cheap to answer — a non-recursive directory scope *is* a prefix range, so the construction looks feasible — but it is a query-planner change landing immediately after one, and this phase has twice shown that the recorded remedy targeted a minority of the measured cost. **Measure `path_in_dir`'s share of a realistic workload before designing it.** Revisit when query work next opens. |
 | ~~`preload`, concurrent access, bincode codec at scale, watcher on large trees, cold-open cost~~ → **watcher on large trees, async-runtime concurrency** | N4 §6, narrowed by P1a | **Mostly closed.** P1a measured `preload` (71.5 µs/row at 1M), cold-open (622–799 ms), the bincode codec at scale, and `ReadPool` under 8 threads. Still unmeasured: **watcher behaviour on large trees** (needs sustained observation with induced filesystem events, not one-shot timing; RFC 015 already governs its failure behaviour) and **async-runtime backends** (tokio/async-std/smol — wiring three runtimes into a `harness = false` bench was judged disproportionate, and `ReadPool` already isolates the contended resource). Neither blocks P1b. |
 
@@ -1308,8 +1308,8 @@ below, the contents of each release, and the newly-rejected-input rule.
 | Release | Contents | Breaking? |
 |---|---|---|
 | **v0.21.4** | Q0: six correctness fixes (RFC 022 R1, R2, R6–R9), release-tooling repair, docs and records reconciliation | no |
-| **v0.21.5** | Q2: API consistency, additions and deprecations only; plus the Q2b module split and any non-breaking outcome of Q4 | no |
-| **v0.22.0** | Q3: error-taxonomy completion, configuration and argument validation, and removal of anything Q2 deprecated. Q5: the LRU recency contract (schema v6). Also any MSRV raise, **only** if Q1 approves one | **yes** |
+| **v0.21.5** | Q2: API consistency, additions and deprecations only; plus the Q2b module split and any non-breaking outcome of Q4. Q1b: the fresh-resolution drift check (RFC 023 R6.2). The CHANGELOG summary announces Q1c (RFC 023 R5, R9) | no |
+| **v0.22.0** | Q3: error-taxonomy completion, configuration and argument validation, and removal of anything Q2 deprecated. Q5: the LRU recency contract (schema v6). Q1c: `rusqlite 0.40.2` (RFC 023 R9; **not** an MSRV change). No MSRV raise: RFC 023 finds no necessity | **yes** |
 
 v0.22.0 is now certain. Q3 and Q5 both change observable behaviour.
 
@@ -1340,7 +1340,10 @@ provisional until the file is created (RFC 000).
 | **Q0j — CI runtime hygiene** | Artifact actions to their Node 24 majors (`upload-artifact` v7.0.1, `download-artifact` v8.0.1), SHA-pinned; every job on `ubuntu-24.04`; cache keys name the image. Nothing runs on a retired runtime or a floating image | RFC 022 R3 items 6–7 (Amendment 3, approved 2026-09-23) | Q0e |
 | **Q0e — Hygiene, docs, and records** | RFC 022 R4 and R5, including the documentation for every code slice's contract | RFC 022 R4–R5 | Q0a–Q0d, Q0g–Q0i |
 | **Q0f — Release v0.21.4** | Coming-version housekeeping; a paired re-measurement of LRU eviction (Q0c changed it); gates, RC production run, release decision, owner tag/publish. Handoff: `rfcs/handoffs/022-correctness-and-contract-reconciliation/q0f-release-preparation.md` | owner | Q0e, Q0j |
-| **Q1 — MSRV policy** | Design only (**RFC 023**): when and how a library with app consumers may raise its MSRV. Evaluate the `rusqlite 0.40` / Rust 1.95 question against it. **No MSRV change in this milestone** | owner approval required | — (runs in parallel with Q0) |
+| **Q1 — MSRV policy** ✅ design | **RFC 023, accepted 2026-09-23.** A raise ships only in a minor release, needs a named necessity, goes to the lowest satisfying version, is at least 12 months old (no floor for security), and is announced one release ahead; a 6-month security-only previous line follows a raise. **No MSRV change.** `rusqlite 0.40` no longer needs Rust 1.95 (`libsqlite3-sys 0.38.2`). Handoff: `rfcs/handoffs/023-msrv-policy/implementation-handoff.md` | owner (accepted) | — |
+| **Q1a — MSRV docs correction** | RFC 023 R10: correct `docs/src/dependency_security.md` (the `rusqlite 0.40` floor; `0.19.1`/`0.20.0` status) and add the policy summary. Live on Pages when pushed; no crate release | RFC 023 | Q1 |
+| **Q1b — Fresh-resolution drift check** | RFC 023 R6.2: `release.py msrv --fresh`, a weekly `msrv-fresh` workflow, and the release-gate step | RFC 023 | Q1a |
+| **Q1c — `rusqlite 0.40.2`** | RFC 023 R8, R9: breaking (public `rusqlite::Error`, `links`), so v0.22.0 only, announced in v0.21.5. Opened by the architect after v0.21.5 ships | RFC 023 | v0.21.5 released |
 | **Q2 — API consistency** | **RFC 024**. (1) `ConnectionPool`, `AsyncCacheEngine`, and `ReadPool` each hand-delegate a different subset of `CacheEngine`: define each one's intended surface, add what is missing, and add a test that fails when a wrapper silently falls behind. (2) Names that mislead: `order_by_updated_at`/`then_by_updated_at` sort by the source file's `mtime`, not `updated_at` (RFC 021 hazard 1); `SortOrder` is exported but no public signature accepts it; the CLI `migrate` command copies rather than moves. Fix by adding correctly named items and **deprecating**, never by silently changing what an existing name does. Removal waits for v0.22.0 | RFC 024 | Q0f |
 | **Q2b — Module-size split** | A pure move, verified at token level as in Phase 22 N5: `crates/localcache/src/cache/query.rs` (~719 production ELOC after RFC 021) at the builder/execution seam; `crates/localcache/src/db/repository.rs` (~890) re-assessed. It is a separate commit, because a move must never carry a fix | — | Q2, which touches the same files |
 | **Q3 — Error taxonomy and input validation** | **RFC 025**. (1) Split `UnsupportedFeature`'s remaining uses (invalid argument / invalid configuration / precondition) into matchable variants. (2) Decide `PayloadVersionMismatch`: use it or remove it. (3) Remove what Q2 deprecated. (4) Reject the inputs the patch line documents but must not reject: `max_entries(0)` and a TTL under one second at open, and a `batch_set` with more distinct entries than `max_entries` before writing. Adding variants is additive because the enum is `#[non_exhaustive]`, but changing which variant an existing failure returns, or rejecting accepted input, is behavioural, hence v0.22.0 | RFC 025 | v0.21.5 released |
@@ -1357,7 +1360,10 @@ the release so that v0.21.4 is built and verified on a CI configuration we chose
 - Slice letters are stable identifiers, not positions. Q0f was already the release, so the new
   slices start at g.
 
-Q1 is design work and blocks nothing in v0.21.x.
+Q1 was design work and blocked nothing in v0.21.x. Its slices run **Q1a → Q1b**, then the Q2
+slices; **Q1c** opens only after v0.21.5 ships, because `main` carries no v0.22.0 change before
+then. When RFC 023 moves to `rfcs/done/` after Q1c, the architect updates the GitHub link to it
+that Q1a places in `docs/src/dependency_security.md`.
 
 ### Amendment 2 (RFC 022), 2026-09-23
 
@@ -1385,20 +1391,19 @@ under this rule:
 
 ### MSRV stance
 
-The declared MSRV stays **1.85** for the whole v0.21.x line. Q1 writes the policy before any raise
-is discussed. The questions it must answer:
+**Decided by RFC 023 (accepted 2026-09-23): the declared MSRV stays 1.85.**
+- **Which release:** a minor release only, never a patch.
+- **Necessity:** a named reason from a closed list (security, a runtime dependency's only
+  maintained line, a defect that cannot be fixed otherwise). The raise goes to the lowest version
+  that meets it.
+- **Age floor:** 12 months on the release date, with no floor for a security necessity. Today that
+  permits at most 1.90, at or below both external consumers' declared floors (1.90, 1.91).
+- **Notice:** in the CHANGELOG one release ahead.
+- **Verification:** the locked rows, a fresh-resolution drift check (Q1b), and the
+  post-publication fresh consumer.
+- **Previous line:** 6 months of security and corruption fixes after a raise, on demand.
 
-- **Which release may raise it.** Proposed: a minor (0.x) release only, never a patch, so a
-  consumer pinned to `0.21` keeps building.
-- **The age floor.** Proposed: the new MSRV must be at least six months old on the release date.
-  Rust 1.95.0 was released on 2026-04-16, so it would meet that floor from 2026-10-16. That is a
-  dated external fact, not a target.
-- **Advance notice.** Proposed: announce the raise in the CHANGELOG one release ahead.
-- **Verification.** Keep the fresh-consumer resolution check that v0.21.1–v0.21.3 ran after
-  publication.
-- **Parallel line.** Whether a line on the old MSRV is maintained, and for how long.
-
-The standing `rusqlite ^0.39` register entry is re-evaluated against this policy in Q1, not before.
+The `rusqlite ^0.39` register entry is resolved by RFC 023 R9 (Q1c).
 
 ### Q0 progress — complete; v0.21.4 released (2026-09-23)
 
@@ -1450,9 +1455,10 @@ are eviction 0.879 and `batch_set` 1.012, with the controls within 3.3%. **CI ru
 RFC 022 has moved to `rfcs/done/` as **Implemented (0.21.4)**. **Phase 24 Q0 is closed.** Next,
 per the authorized plan: **Q1**, the MSRV policy (RFC 023, design only).
 
-### Q1 progress — RFC 023 proposed (2026-09-23)
+### Q1 progress — RFC 023 accepted (2026-09-23)
 
-`rfcs/proposed/023-msrv-policy.md` awaits the owner's review. Its measurements changed the
+`rfcs/accepted/023-msrv-policy.md` was accepted by the owner with all three decisions as
+recommended; the handoff is `rfcs/handoffs/023-msrv-policy/implementation-handoff.md`, and Q1a is next. Its measurements changed the
 question Q1 was given. **`rusqlite 0.40` no longer requires Rust 1.95:** `libsqlite3-sys 0.38.2`
 (2026-08-08) polyfills `cfg_select!`, and localcache on `rusqlite 0.40.2` passes all four MSRV
 rows on 1.85.0 and the full suite, with no source change. The move is still breaking (the public
@@ -1472,6 +1478,8 @@ previous-line commitment, and the `rusqlite` schedule.
 | Watcher behaviour on large trees; async-runtime concurrency | Phase 23, unchanged | Still unmeasured; still nothing measured argues for it. |
 | `max_entries` is enforced only by `set`/`batch_set`, not by `import_entries`, `import_from`, or `namespace_copy` | 2026-09-23, found while writing the RFC 022 handoff | Consistent with the rustdoc ("when exceeded after a `set`"), so it is not a defect, and Q0e documents it plainly. Whether an import should honour the bound, and what it should do with the overflow, is an API-contract question for **Q2** (RFC 024). |
 | Encryption key material is copied into engine memory and never zeroized | 2026-09-23, while designing RFC 022 R1 | Pre-existing, and R1 does not widen it materially. Zeroizing needs `zeroize` (a new dependency under RFC 014's watch) and a decision on the builder's `Vec<u8>` key input. Assess at Q2 or Q3, whichever next touches key handling. A zeroizing wrapper is not `Copy`, so the `Cell` introduced by Q0a must then move to `replace`/`take`. Redesign it then; do not patch around it. |
+| `criterion` held at 0.7 because 0.8 requires Rust 1.86 | RFC 023 measurement, 2026-09-23 | Development-only, so under RFC 023 R1/R3 it never justifies a raise. Revisit only if the MSRV rises for a qualifying reason. |
+| `aes-gcm 0.11` is stable (0.11.1, 2026-08-21); the `Cargo.toml` comment still calls it an RC | RFC 023 measurement, 2026-09-23 | Q1c corrects the comment only. Whether to upgrade (it declares 1.85, so no MSRV cost) is assessed together with key zeroization at Q2 or Q3, whichever next touches key handling. |
 | Every writable open applies its own journal mode and `synchronous` setting, and WAL persists in the file. The CLI's writable commands, and any engine opened with default options, silently switch a `Delete`-mode database to WAL | 2026-09-23 re-onboarding | Q0i removes the case the user never chose: watcher helpers. For explicit opens the behaviour is at least requested, if not understood, so v0.21.4 documents it. Whether an engine that does not ask for a journal mode should leave the existing one alone is an API question for **Q2** (RFC 024). |
 | `QueryBuilder::run` silently skips entries it cannot decode (for example, under the wrong encryption key), where `get` returns the error | 2026-09-23 re-onboarding | A query under a wrong key returns an empty, successful result, which the Q0a failing-before output showed in practice. RFC 022 R2 keeps skipping (it defines `offset` over it), so this is a contract question: report, skip, or make it selectable. **Q2** (RFC 024). A change of result is behavioural, so it lands in v0.22.0. |
 | `idx_files_namespace_path` duplicates the `UNIQUE(namespace, path)` autoindex exactly (verified in SQLite), and `create_path_index` builds a third identical index | 2026-09-23 re-onboarding | Every write maintains two identical indexes, and the path is stored three times. The public path-index API (`create_path_index`, `drop_path_index`, `list_path_indexes`, `index_hint`) can only create duplicates, so it adds no capability while `querying.md` presents it as a performance tool. Dropping the built-in is a schema change: evaluate it in **Q5** (RFC 026, schema v6). Whether the path-index API should exist is **Q2** (RFC 024). |

@@ -7,6 +7,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [Unreleased]
+
 ## [0.21.4] — 2026-09-23
 
 Patch release closing Phase 24 Q0 (RFC 022, correctness and contract reconciliation).

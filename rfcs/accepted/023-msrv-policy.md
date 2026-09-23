@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed (architect, 2026-09-23) |
+| Status | Accepted (owner, 2026-09-23), with all three requested decisions as recommended: a 12-month age floor (R4); the 6-month, security- and corruption-only, on-demand previous line (R7); and `rusqlite 0.40.2` in v0.22.0, announced in v0.21.5 (R9) |
 | Feature | *(workspace and release policy; no Cargo feature)* |
 | Touches | `Cargo.toml` (`rust-version`, `rusqlite` requirement: under R9 only), `scripts/release.py` (`msrv` context), `.github/workflows/ci.yaml`, `docs/src/dependency_security.md`, `README.md`, `CHANGELOG.md`, `ROADMAP.md` |
 | Finding | Phase 24 plan, milestone Q1 (owner, 2026-09-23): "the MSRV [is] raised only carefully, because this crate's consumers are application projects" |
@@ -10,7 +10,7 @@
 | Breaking | **No.** This RFC changes no code and no MSRV. R9 schedules one breaking dependency change, the `rusqlite` line, for v0.22.0, which is already a breaking release; it is **not** an MSRV change |
 | Authorship | High-capability model; **reviewed by the owner** (arrangement of 2026-08-01) |
 | Extends | [RFC 014](../done/014-declared-msrv-and-dependency-security-policy.md), which fixed the declared MSRV at 1.85 but defined no rule for changing it |
-| Handoffs | Created at acceptance (RFC 000, "Companion handoffs") |
+| Handoffs | [`../handoffs/023-msrv-policy/`](../handoffs/023-msrv-policy/implementation-handoff.md): implementation handoff and QA checklist |
 
 ## Summary
 
@@ -434,6 +434,8 @@ decision.
 
 ## Decisions requested of the owner
 
+**Decided 2026-09-23: all three accepted as recommended.**
+
 1. **The age floor: 12 months (recommended) or 6.** R4.
 2. **The previous-line commitment: 6 months, security and corruption fixes only, on demand
    (recommended), or none.** R7.
@@ -449,4 +451,4 @@ The resulting slices, which the architect schedules and the owner authorizes wit
 
 ## Open questions
 
-None beyond the three decisions above.
+None. The three decisions above are settled.
