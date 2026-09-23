@@ -97,7 +97,7 @@ section and in **G** holds.
 - [ ] Every CHANGELOG compare link uses unprefixed tags that `git tag` lists; 0.20.1–0.21.3 and `[Unreleased]` are present
 - [ ] The CHANGELOG `[Unreleased]` section has entries for every slice, and Q0c's `### Changed` entry states the read-based policy, the oversized-batch behaviour, and the v0.22.0 rejections in plain words
 - [ ] Every RFC 022 § R5 item marked *(Amendment 2)* is done
-- [ ] Q0d's version gate passes
+- [ ] Q0d's version gate passes on the real tree, and `test_real_repo_version_references_and_changelog_match_workspace` asserts success again (Q0d's temporary flip is reverted)
 
 ## F. Scope discipline (every slice)
 

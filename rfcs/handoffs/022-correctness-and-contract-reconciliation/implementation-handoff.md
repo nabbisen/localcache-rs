@@ -524,6 +524,12 @@ below are what you need to act on it.
 - **Install examples**: `docs/src/features.md:8`, `docs/src/async.md:154,157`,
   `docs/src/cookbook.md:210,235` → the same version as `README.md`'s Quick Start. Q0d's gate must
   then pass.
+  - *(From the Q0d review.)* Then flip
+    `test_real_repo_version_references_and_changelog_match_workspace`
+    (`scripts/tests/test_release_runner.py`) back to asserting that the real tree **passes**. Q0d
+    made it assert the failure, deliberately and temporarily. Show `verify_version_references`
+    passing on the real tree, and run the script tests normally and under the restricted `PATH`.
+    Re-pin nothing unless a script itself changed.
 - **`docs/src/architecture.md`**:
   - Schema v5 DDL, with both built-in indexes (from `crates/localcache/src/db/schema/migration.rs`,
     `create_fresh`).
