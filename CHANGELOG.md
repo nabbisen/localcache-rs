@@ -7,11 +7,34 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [Unreleased]
+## [0.21.4] — Unreleased
 
-RC placeholder date: this section targets the coming v0.21.4 release closing Phase 24 Q0
-(RFC 022, correctness and contract reconciliation). The exact release date is set at owner
-authorization, not before.
+*Date set at owner authorization.*
+
+Patch release closing Phase 24 Q0 (RFC 022, correctness and contract reconciliation).
+
+**A correctness patch. Not breaking.** No public signature, schema, wire-format, dependency, or
+MSRV change. **No input v0.21.3 accepted now returns an error.**
+
+Six reproduced correctness defects are fixed (details under `### Fixed`):
+- **Key rotation (R1).** The rotating engine now keeps working after `rotate_encryption_key`,
+  instead of silently continuing to read and write under the old key.
+- **Query `offset` (R2).** `offset` now counts only entries that decode successfully, on every
+  execution path, instead of sometimes counting undecodable entries toward the page position.
+- **`max_entries` eviction (R6).** A write no longer evicts the entries it just wrote.
+- **Metadata-then-hash change detection (R7).** A file-size change is now conclusive proof of a
+  change, checked before any hashing, so partial hashing can no longer report a file `Fresh`,
+  and serve its old payload, after its size changed.
+- **`AsyncCacheEngine` batch methods (R8).** `batch_get`/`batch_get_fresh`/`check_status_batch`
+  now always return exactly one result per requested path, even on a poisoned lock or a panicking
+  task.
+- **Watcher helper configuration (R9).** `watcher()`/`debounced_watcher()`'s helper connection now
+  inherits the parent engine's journal mode and `synchronous` setting, instead of always opening
+  in WAL mode regardless of what the engine itself was configured with.
+
+**Look ahead, announced one release early:** starting in **v0.22.0**, `max_entries(0)`, a
+`batch_set` larger than `max_entries`, and a TTL under one second will be **rejected with an
+error** instead of silently accepted, as this release and v0.21.3 both still do.
 
 ### Fixed
 
@@ -1120,7 +1143,8 @@ Namespaces, batch ops, TTL, PRAGMAs, schema migration.
 ## [0.1.0] — 2026-05-03
 Initial release.
 
-[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/0.21.3...HEAD
+[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/0.21.4...HEAD
+[0.21.4]: https://github.com/nabbisen/localcache-rs/compare/0.21.3...0.21.4
 [0.21.3]: https://github.com/nabbisen/localcache-rs/compare/0.21.2...0.21.3
 [0.21.2]: https://github.com/nabbisen/localcache-rs/compare/0.21.1...0.21.2
 [0.21.1]: https://github.com/nabbisen/localcache-rs/compare/0.21.0...0.21.1
