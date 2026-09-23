@@ -212,6 +212,17 @@ where
     }
 
     /// Async version of [`CacheEngine::rotate_encryption_key`].
+    ///
+    /// On `Ok`, this engine uses `new_key` for every later call — every
+    /// clone of this `AsyncCacheEngine` shares one inner [`CacheEngine`], so
+    /// they all continue with `new_key` together. Rotation covers **only
+    /// this engine's namespace**. Every other open engine on the same
+    /// database **and namespace** — in this or another process, including a
+    /// [`ConnectionPool`](crate::ConnectionPool) or a `ReadPool` slot —
+    /// keeps its old key and must be reopened with `new_key`; until then it
+    /// returns [`LocalFileCacheError::EncryptionError`] on rotated entries.
+    /// Engines on other namespaces are unaffected. A watcher needs no
+    /// action: it never decodes payloads.
     #[cfg(feature = "encryption")]
     pub async fn rotate_encryption_key(
         &self,

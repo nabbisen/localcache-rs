@@ -28,6 +28,40 @@ use crate::serialization::{decode_payload, encode_payload};
 pub(crate) type EvictCallback = Arc<dyn Fn(&Path) + Send + Sync>;
 
 // ---------------------------------------------------------------------------
+// Test-only interleaving hook (RFC 022 R1 Amendment 2 / C2), mirrors the
+// TEST_HOOK pattern in `crate::db::indexes`.
+// ---------------------------------------------------------------------------
+
+#[cfg(all(test, feature = "encryption"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TestPoint {
+    /// Immediately after `rotate_encryption_key` loads the encrypted rows,
+    /// still inside the `IMMEDIATE` transaction.
+    AfterLoad,
+}
+
+#[cfg(all(test, feature = "encryption"))]
+type TestHook = Box<dyn FnMut(TestPoint) -> Result<(), LocalFileCacheError>>;
+
+#[cfg(all(test, feature = "encryption"))]
+thread_local! {
+    static TEST_HOOK: std::cell::RefCell<Option<TestHook>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(all(test, feature = "encryption"))]
+#[inline]
+fn test_hook(point: TestPoint) -> Result<(), LocalFileCacheError> {
+    TEST_HOOK.with(|slot| {
+        let mut hook = slot.borrow_mut();
+        if let Some(hook) = hook.as_mut() {
+            hook(point)?;
+        }
+        Ok(())
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Public result types
 // ---------------------------------------------------------------------------
 
@@ -81,7 +115,7 @@ pub struct CacheEngine<T> {
     /// Optional callback invoked with the path of each LRU-evicted entry.
     pub(crate) evict_callback: Option<EvictCallback>,
     #[cfg(feature = "encryption")]
-    pub(crate) encryption_key: Option<[u8; 32]>,
+    pub(crate) encryption_key: std::cell::Cell<Option<[u8; 32]>>,
     _phantom: PhantomData<T>,
 }
 
@@ -205,7 +239,7 @@ where
             max_entries: options.max_entries,
             evict_callback: None,
             #[cfg(feature = "encryption")]
-            encryption_key,
+            encryption_key: std::cell::Cell::new(encryption_key),
             _phantom: PhantomData,
         })
     }
@@ -607,9 +641,25 @@ where
     /// Re-encrypt all entries in the current namespace with `new_key`.
     ///
     /// Every payload whose encoding ends in `"-aes256gcm"` is decrypted with
-    /// the current key and re-encrypted with `new_key`.  The operation is
-    /// performed inside a single SQLite transaction so that a failure leaves
-    /// the database consistent (still encrypted with the old key).
+    /// the current key and re-encrypted with `new_key`. The rotation holds
+    /// the database write lock from reading the first entry to commit
+    /// (an `IMMEDIATE` transaction), so a concurrent write on this database
+    /// waits or fails with a busy error rather than being silently
+    /// overwritten with a stale re-encrypted payload. A failure leaves the
+    /// database consistent (still encrypted with the old key).
+    ///
+    /// On `Ok`, this engine uses `new_key` for every later read and write,
+    /// including a [`QueryBuilder`](crate::QueryBuilder) built before this
+    /// call — even when no entry needed re-encryption. Rotation covers
+    /// **only this engine's namespace**. Every other open engine on the
+    /// same database **and namespace** — in this or another process,
+    /// including other [`ConnectionPool`](crate::ConnectionPool)s and
+    /// [`ReadPool`](crate::ReadPool) slots — keeps its old key and must be
+    /// reopened with `new_key`; until then it returns
+    /// [`LocalFileCacheError::EncryptionError`] on rotated entries. Engines
+    /// on other namespaces are unaffected and keep their own key. A
+    /// [`watcher`](Self::watcher) needs no action: it never decodes
+    /// payloads.
     ///
     /// Returns the number of entries that were re-encrypted.
     ///
@@ -619,12 +669,12 @@ where
     /// * [`LocalFileCacheError::UnsupportedFeature`] — no encryption key is
     ///   currently set on this engine (nothing to rotate).
     /// * [`LocalFileCacheError::EncryptionError`] — decryption or re-encryption
-    ///   failed.
+    ///   failed. The engine keeps using the old key; nothing was written.
     #[cfg(feature = "encryption")]
     pub fn rotate_encryption_key(&self, new_key: &[u8]) -> Result<usize, LocalFileCacheError> {
         self.guard_write()?;
 
-        let old_key = self.encryption_key.ok_or_else(|| {
+        let old_key = self.encryption_key.get().ok_or_else(|| {
             LocalFileCacheError::UnsupportedFeature(
                 "rotate_encryption_key requires an existing encryption key on this engine".into(),
             )
@@ -637,14 +687,24 @@ where
             ))
         })?;
 
-        // Load all encrypted payload rows for this namespace.
-        let rows = repository::load_encrypted_payloads(&self.conn, &self.namespace)?;
-        if rows.is_empty() {
-            return Ok(0);
-        }
+        // Hold the write lock from the first read to the commit, so a
+        // concurrent write from another connection cannot land between the
+        // load below and the UPDATEs and then be silently overwritten with
+        // a stale re-encrypted payload (RFC 022 R1 Amendment 2 / C2).
+        let tx = rusqlite::Transaction::new_unchecked(
+            &self.conn,
+            rusqlite::TransactionBehavior::Immediate,
+        )?;
 
-        // Re-encrypt each row; collect updates before opening the transaction
-        // to keep the borrow of `self.conn` clean.
+        // Load all encrypted payload rows for this namespace, through the
+        // transaction so the read is covered by the same write lock as the
+        // updates below.
+        let rows = repository::load_encrypted_payloads(&tx, &self.namespace)?;
+
+        #[cfg(test)]
+        test_hook(TestPoint::AfterLoad)?;
+
+        // Re-encrypt each row.
         let mut updates: Vec<(i64, Vec<u8>)> = Vec::with_capacity(rows.len());
         for row in &rows {
             // Decrypt with old key.
@@ -654,12 +714,22 @@ where
             updates.push((row.file_id, ciphertext));
         }
 
-        // Write all updates atomically.
-        let tx = self.conn.unchecked_transaction()?;
+        // Write all updates atomically (a no-op when `updates` is empty:
+        // there is nothing to re-encrypt, but the engine still switches to
+        // `new_key` below — see C1).
         for (file_id, new_content) in &updates {
             repository::update_payload_content(&tx, *file_id, new_content)?;
         }
         tx.commit()?;
+
+        // `Ok` from this point on always means this engine now uses
+        // `new_key`, including when `updates` is empty — there is no
+        // partial state where rotation "succeeded" but the engine kept the
+        // old key (RFC 022 R1 Amendment 2 / C1). On any earlier error
+        // (decrypt/re-encrypt/commit), the cell is untouched and the engine
+        // keeps reading/writing with `old_key`, matching the still-old-key
+        // database.
+        self.encryption_key.set(Some(new_key_arr));
 
         Ok(updates.len())
     }
@@ -746,7 +816,7 @@ where
                 #[cfg(feature = "compression")]
                 compress_payloads: self.compress,
                 #[cfg(feature = "encryption")]
-                encryption_key: self.encryption_key.map(|k| k.to_vec()),
+                encryption_key: self.encryption_key.get().map(|k| k.to_vec()),
                 ..crate::cache::options::CacheOptions::default()
             },
         )?));
@@ -1012,21 +1082,25 @@ where
     }
 
     fn encode(&self, payload: &T) -> Result<(Vec<u8>, &'static str), LocalFileCacheError> {
+        #[cfg(feature = "encryption")]
+        let key = self.encryption_key.get();
         encode_payload(
             payload,
             self.compress,
             self.codec,
             #[cfg(feature = "encryption")]
-            self.encryption_key.as_ref(),
+            key.as_ref(),
         )
     }
 
     fn decode(&self, bytes: &[u8], encoding: &str) -> Result<T, LocalFileCacheError> {
+        #[cfg(feature = "encryption")]
+        let key = self.encryption_key.get();
         decode_payload(
             bytes,
             encoding,
             #[cfg(feature = "encryption")]
-            self.encryption_key.as_ref(),
+            key.as_ref(),
         )
     }
 
@@ -1041,7 +1115,7 @@ where
             conn: &self.conn,
             namespace: &self.namespace,
             #[cfg(feature = "encryption")]
-            encryption_key: self.encryption_key.as_ref(),
+            encryption_key: &self.encryption_key,
         }
     }
 }
@@ -1055,11 +1129,16 @@ where
 /// today only `encryption_key`. `database_path` / `watch_dirs`
 /// (`watching`-gated) are not read by the query path and are intentionally
 /// not part of this type.
+///
+/// `encryption_key` borrows the `Cell` itself, not a snapshot of its value,
+/// so a [`QueryBuilder`](crate::cache::query::QueryBuilder) built before a
+/// [`CacheEngine::rotate_encryption_key`] call and run after it decodes
+/// with the key current at decode time (RFC 022 R1).
 pub(crate) struct EngineCore<'e> {
     pub(crate) conn: &'e Connection,
     pub(crate) namespace: &'e str,
     #[cfg(feature = "encryption")]
-    pub(crate) encryption_key: Option<&'e [u8; 32]>,
+    pub(crate) encryption_key: &'e std::cell::Cell<Option<[u8; 32]>>,
 }
 
 /// Decode `bytes` into `U`, using `core`'s configuration rather than a
@@ -1074,11 +1153,13 @@ pub(crate) fn decode_with<U>(
 where
     U: DeserializeOwned,
 {
+    #[cfg(feature = "encryption")]
+    let key = core.encryption_key.get();
     decode_payload(
         bytes,
         encoding,
         #[cfg(feature = "encryption")]
-        core.encryption_key,
+        key.as_ref(),
     )
 }
 
@@ -1183,3 +1264,6 @@ fn walk_dir_filtered(
 
     Ok(files)
 }
+
+#[cfg(all(test, feature = "encryption"))]
+mod tests;

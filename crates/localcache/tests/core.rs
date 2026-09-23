@@ -438,3 +438,63 @@ fn migrates_v1_database() {
         CacheStatus::Missing
     );
 }
+
+// RFC 022 Q0a — CacheEngine's auto traits must not change when
+// `encryption_key` becomes a `Cell`. Observed on v0.21.3, before the Cell
+// change: `CacheEngine<Vec<f32>>` is Send, but already !Sync (rusqlite's
+// `Connection` holds a `RefCell`-based statement cache), already
+// !UnwindSafe, and already !RefUnwindSafe (the `RefCell` statement cache
+// again, plus the `dyn Fn` in `evict_callback`, neither of which is
+// `RefUnwindSafe`). The Cell added for key rotation must not change any of
+// the four — it only makes the existing !RefUnwindSafe status "more true".
+//
+// Not gated on `encryption` (RFC 022 R1 Amendment 2 / R-a): these four
+// properties are facts about `CacheEngine` in every configuration, driven
+// by `rusqlite::Connection` and `evict_callback` regardless of which
+// optional fields are compiled in. Gating this module would hide a future
+// auto-trait regression in every other feature row.
+mod auto_traits {
+    fn assert_send<T: Send>() {}
+
+    #[test]
+    fn cache_engine_is_send() {
+        assert_send::<localcache::CacheEngine<Vec<f32>>>();
+    }
+
+    // The ambiguity trick: this only compiles when `T` does NOT implement
+    // the trait. When `T` DOES implement it, both `AmbiguousIf*::<()>`
+    // (the unconditional blanket impl) and `AmbiguousIf*::<u8>` (the
+    // trait-bounded impl) apply, and `check` is ambiguous — a compile
+    // error. When `T` lacks the trait, only the `()` impl applies, so the
+    // item compiles only if the trait is genuinely absent.
+
+    trait AmbiguousIfSync<A> {
+        fn check() {}
+    }
+    impl<T: ?Sized> AmbiguousIfSync<()> for T {}
+    impl<T: ?Sized + Sync> AmbiguousIfSync<u8> for T {}
+    #[test]
+    fn cache_engine_is_not_sync() {
+        let _ = <localcache::CacheEngine<Vec<f32>> as AmbiguousIfSync<_>>::check;
+    }
+
+    trait AmbiguousIfUnwindSafe<A> {
+        fn check() {}
+    }
+    impl<T: ?Sized> AmbiguousIfUnwindSafe<()> for T {}
+    impl<T: ?Sized + std::panic::UnwindSafe> AmbiguousIfUnwindSafe<u8> for T {}
+    #[test]
+    fn cache_engine_is_not_unwind_safe() {
+        let _ = <localcache::CacheEngine<Vec<f32>> as AmbiguousIfUnwindSafe<_>>::check;
+    }
+
+    trait AmbiguousIfRefUnwindSafe<A> {
+        fn check() {}
+    }
+    impl<T: ?Sized> AmbiguousIfRefUnwindSafe<()> for T {}
+    impl<T: ?Sized + std::panic::RefUnwindSafe> AmbiguousIfRefUnwindSafe<u8> for T {}
+    #[test]
+    fn cache_engine_is_not_ref_unwind_safe() {
+        let _ = <localcache::CacheEngine<Vec<f32>> as AmbiguousIfRefUnwindSafe<_>>::check;
+    }
+}

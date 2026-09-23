@@ -7,6 +7,30 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [Unreleased]
+
+RC placeholder date: this section targets the coming v0.21.4 release closing Phase 24 Q0a–Q0e
+(RFC 022, correctness and contract reconciliation). The exact release date is set at owner
+authorization, not before.
+
+### Fixed
+
+- `CacheEngine::rotate_encryption_key` / `AsyncCacheEngine::rotate_encryption_key`
+  (`crates/localcache/src/cache/engine.rs`, `crates/localcache/src/cache/async_engine.rs`): the
+  engine that performs a rotation now keeps working afterwards. Previously the rotating engine's own
+  in-memory key never updated, so it failed to read rows it had just rotated and silently wrote new
+  rows under the old key. `encryption_key` is now a `Cell`, updated only after the rotation
+  transaction commits; a `QueryBuilder` built before a rotation and run after it now decodes with the
+  key current at decode time, and a failed rotation leaves the old key in place. `Ok` now always means
+  the engine switched to the new key, including when there was nothing to re-encrypt — previously a
+  rotation with no encrypted rows returned `Ok(0)` without switching, leaving the same defect reachable
+  from an empty namespace. Rotation now also holds the database write lock from its first read to its
+  commit, so a concurrent write from another connection can no longer land between the load and the
+  update and be silently overwritten with a stale re-encrypted payload. Rotation covers only the
+  engine's own namespace; other open engines on the same database and namespace must be reopened with
+  the new key, engines on other namespaces are unaffected, and a watcher needs no action. No signature
+  change.
+
 ## [0.21.3] — 2026-08-04
 
 Patch release closing Phase 23 P2 (RFC 021, query execution: one pass, late materialization).
