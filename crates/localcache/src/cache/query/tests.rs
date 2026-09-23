@@ -851,3 +851,234 @@ fn decode_count_is_bounded_by_offset_plus_limit_plus_bad_rows() {
         decode_calls()
     );
 }
+
+// ---------------------------------------------------------------------------
+// 10. RFC 024 R9 — `run_report` shares `run`'s execution path
+// ---------------------------------------------------------------------------
+
+fn skipped_paths(report: &crate::cache::query::QueryReport<Value>) -> Vec<PathBuf> {
+    report.skipped.iter().map(|s| s.path.clone()).collect()
+}
+
+/// Candidates in path order `0b, 1, 2b, 3, 4, 5b` (`b` = corrupt), with
+/// `offset(1).limit(2)`. The scan passes `0b` while skipping `offset`, then
+/// `1` (a successful decode that counts toward `offset`), then `2b`, then
+/// fills the page with `3` and `4`, and stops. `5b` is never examined.
+#[test]
+fn run_report_lists_bad_rows_passed_in_scan_order_including_the_offset_region() {
+    let dir = TempDir::new().unwrap();
+    let engine = engine();
+    let paths: Vec<_> = (0..6)
+        .map(|i| write_file(&dir, &format!("{i}.txt")))
+        .collect();
+    for p in &paths {
+        engine.set(p, &json!({"ok": true})).unwrap();
+    }
+    for i in [0, 2, 5] {
+        make_bad_row(&engine, &paths[i], BadKind::Corrupt);
+    }
+
+    fn build(engine: &CacheEngine<Value>) -> crate::cache::query::QueryBuilder<'_, Value> {
+        engine
+            .query()
+            .order_by(SortKey::Path, SortOrder::Asc)
+            .offset(1)
+            .limit(2)
+    }
+    let run = build(&engine).run().unwrap();
+    let report = build(&engine).run_report().unwrap();
+
+    assert_eq!(paths_of(&run), [paths[3].clone(), paths[4].clone()]);
+    assert_eq!(
+        paths_of(&report.entries),
+        paths_of(&run),
+        "entries equal run()'s page"
+    );
+    assert_eq!(
+        skipped_paths(&report),
+        [paths[0].clone(), paths[2].clone()],
+        "the bad row in the offset region and the one in the page, in scan order; not the one after"
+    );
+    for skipped in &report.skipped {
+        assert!(
+            matches!(
+                skipped.error,
+                crate::error::LocalFileCacheError::Serialization(_)
+            ),
+            "unexpected error: {:?}",
+            skipped.error
+        );
+    }
+}
+
+/// `run_report` and `run` agree on every page, for every `offset`/`limit`
+/// over a namespace with bad rows at the start, middle, and end.
+#[test]
+fn run_report_entries_equal_run_for_every_offset_and_limit() {
+    let dir = TempDir::new().unwrap();
+    let engine = engine();
+    let paths: Vec<_> = (0..7)
+        .map(|i| write_file(&dir, &format!("{i}.txt")))
+        .collect();
+    for p in &paths {
+        engine.set(p, &json!({"ok": true})).unwrap();
+    }
+    for i in [0, 3, 6] {
+        make_bad_row(&engine, &paths[i], BadKind::Corrupt);
+    }
+
+    fn build(
+        engine: &CacheEngine<Value>,
+        offset: usize,
+        limit: Option<usize>,
+    ) -> crate::cache::query::QueryBuilder<'_, Value> {
+        let q = engine
+            .query()
+            .order_by(SortKey::Path, SortOrder::Asc)
+            .offset(offset);
+        match limit {
+            Some(n) => q.limit(n),
+            None => q,
+        }
+    }
+
+    for offset in 0..6 {
+        for limit in [None, Some(0), Some(1), Some(2), Some(10)] {
+            let run = build(&engine, offset, limit).run().unwrap();
+            let report = build(&engine, offset, limit).run_report().unwrap();
+            assert_eq!(
+                paths_of(&report.entries),
+                paths_of(&run),
+                "offset={offset} limit={limit:?}"
+            );
+        }
+    }
+}
+
+/// A row with no payload row produces no decode error, so it is not
+/// reported (and `get` treats it as a miss). It is still left out of the
+/// entries, exactly as `run()` leaves it out.
+#[test]
+fn run_report_does_not_list_a_row_with_no_payload() {
+    let dir = TempDir::new().unwrap();
+    let engine = engine();
+    let paths: Vec<_> = (0..3)
+        .map(|i| write_file(&dir, &format!("{i}.txt")))
+        .collect();
+    for p in &paths {
+        engine.set(p, &json!({"ok": true})).unwrap();
+    }
+    make_bad_row(&engine, &paths[0], BadKind::Orphan);
+    make_bad_row(&engine, &paths[1], BadKind::Corrupt);
+
+    let report = engine
+        .query()
+        .order_by(SortKey::Path, SortOrder::Asc)
+        .run_report()
+        .unwrap();
+    assert_eq!(paths_of(&report.entries), [paths[2].clone()]);
+    assert_eq!(skipped_paths(&report), [paths[1].clone()]);
+}
+
+/// A payload predicate routes to the decode-everything tier. An undecodable
+/// row cannot be tested against the predicate, so it is reported whether or
+/// not it would have matched, and the entries still equal `run()`.
+#[test]
+fn run_report_on_the_decode_everything_tier_lists_undecodable_rows() {
+    let dir = TempDir::new().unwrap();
+    let engine = engine();
+    let paths: Vec<_> = (0..4)
+        .map(|i| write_file(&dir, &format!("{i}.txt")))
+        .collect();
+    for (i, p) in paths.iter().enumerate() {
+        engine
+            .set(p, &json!({"kind": if i % 2 == 0 { "even" } else { "odd" }}))
+            .unwrap();
+    }
+    make_bad_row(&engine, &paths[2], BadKind::Corrupt);
+
+    // `field_eq` is not a numeric predicate, so it takes the tier-3 path.
+    fn build(engine: &CacheEngine<Value>) -> crate::cache::query::QueryBuilder<'_, Value> {
+        engine
+            .query()
+            .field_eq("kind", json!("even"))
+            .order_by(SortKey::Path, SortOrder::Asc)
+    }
+    let run = build(&engine).run().unwrap();
+    let report = build(&engine).run_report().unwrap();
+
+    assert_eq!(paths_of(&run), [paths[0].clone()]);
+    assert_eq!(paths_of(&report.entries), paths_of(&run));
+    assert_eq!(skipped_paths(&report), [paths[2].clone()]);
+}
+
+/// A payload whose JSON conversion fails for some values: `serde_json` only
+/// accepts string keys, and a tuple-keyed map encodes fine under bincode.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+enum Convertible {
+    Plain(u32),
+    TupleKeyed(std::collections::BTreeMap<(u8, u8), u8>),
+}
+
+/// A payload that decodes but cannot be turned into JSON, on the tier that
+/// must do that to test a predicate: `run()` leaves it out as it always did,
+/// and `run_report()` lists it with `Serialization`. (RFC 024 R9, review 021
+/// K1: the branch that used to be silent.)
+#[test]
+fn run_report_lists_a_payload_that_decodes_but_cannot_become_json() {
+    let dir = TempDir::new().unwrap();
+    // The default codec is bincode, which encodes the tuple-keyed map.
+    let engine: CacheEngine<Convertible> =
+        CacheEngine::builder().database(":memory:").build().unwrap();
+    let paths: Vec<_> = (0..4)
+        .map(|i| write_file(&dir, &format!("{i}.txt")))
+        .collect();
+    let tuple_keyed = Convertible::TupleKeyed([((1, 2), 3)].into_iter().collect());
+    engine.set(&paths[0], &Convertible::Plain(7)).unwrap();
+    engine.set(&paths[1], &tuple_keyed).unwrap();
+    engine.set(&paths[2], &Convertible::Plain(8)).unwrap();
+    engine.set(&paths[3], &tuple_keyed).unwrap();
+
+    // `get` shows both kinds decode, so the failure is the JSON conversion.
+    assert_eq!(engine.get(&paths[1]).unwrap().unwrap().payload, tuple_keyed);
+    assert!(serde_json::to_value(&tuple_keyed).is_err());
+
+    fn build(
+        engine: &CacheEngine<Convertible>,
+    ) -> crate::cache::query::QueryBuilder<'_, Convertible> {
+        // `field_eq` is not a numeric predicate, so it takes the decode-everything tier.
+        engine
+            .query()
+            .field_eq("Plain", json!(7))
+            .order_by(SortKey::Path, SortOrder::Asc)
+    }
+    let run = build(&engine).run().unwrap();
+    let report = build(&engine).run_report().unwrap();
+
+    assert_eq!(
+        run.iter().map(|e| e.path.clone()).collect::<Vec<_>>(),
+        [paths[0].clone()],
+        "run() omits the unconvertible entries, as before"
+    );
+    assert_eq!(
+        report
+            .entries
+            .iter()
+            .map(|e| e.path.clone())
+            .collect::<Vec<_>>(),
+        run.iter().map(|e| e.path.clone()).collect::<Vec<_>>()
+    );
+    let mut skipped: Vec<_> = report.skipped.iter().map(|s| s.path.clone()).collect();
+    skipped.sort();
+    assert_eq!(skipped, [paths[1].clone(), paths[3].clone()]);
+    for entry in &report.skipped {
+        assert!(
+            matches!(
+                entry.error,
+                crate::error::LocalFileCacheError::Serialization(_)
+            ),
+            "unexpected error: {:?}",
+            entry.error
+        );
+    }
+}

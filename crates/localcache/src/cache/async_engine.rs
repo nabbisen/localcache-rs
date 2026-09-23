@@ -462,6 +462,62 @@ where
             + 'static,
         T: Send + 'static,
     {
+        self.run_built_query(build, crate::cache::query::execute_query)
+            .await
+    }
+
+    /// Like [`query_run`](Self::query_run), and also reports the entries the
+    /// query could not decode. See [`crate::QueryBuilder::run_report`].
+    ///
+    /// ```no_run
+    /// # use localcache::{AsyncCacheEngine, CacheOptions};
+    /// # #[tokio::main] async fn main() -> Result<(), localcache::LocalFileCacheError> {
+    /// let engine: AsyncCacheEngine<Vec<f32>> = AsyncCacheEngine::open(CacheOptions {
+    ///     database_path: ":memory:".into(),
+    ///     ..CacheOptions::default()
+    /// }).await?;
+    ///
+    /// let report: localcache::QueryReport<Vec<f32>> =
+    ///     engine.query_run_report(|q| q.path_like("%.txt")).await?;
+    /// println!("{} entries, {} skipped", report.entries.len(), report.skipped.len());
+    /// # Ok(()) }
+    /// ```
+    pub async fn query_run_report<F, U>(
+        &self,
+        build: F,
+    ) -> Result<crate::cache::query::QueryReport<U>, LocalFileCacheError>
+    where
+        U: serde::Serialize + serde::de::DeserializeOwned + Send + 'static,
+        F: FnOnce(
+                crate::cache::query::QueryBuilder<'_, U>,
+            ) -> crate::cache::query::QueryBuilder<'_, U>
+            + Send
+            + 'static,
+        T: Send + 'static,
+    {
+        self.run_built_query(build, crate::cache::query::execute_report)
+            .await
+    }
+
+    /// Builds a [`crate::QueryBuilder`] over the locked engine, applies
+    /// `build`, and runs `finish` on it, all inside one blocking task. The
+    /// one place the builder is constructed, so `query_run` and
+    /// `query_run_report` cannot drift apart.
+    async fn run_built_query<F, U, R>(
+        &self,
+        build: F,
+        finish: fn(crate::cache::query::QueryBuilder<'_, U>) -> Result<R, LocalFileCacheError>,
+    ) -> Result<R, LocalFileCacheError>
+    where
+        U: serde::Serialize + serde::de::DeserializeOwned + Send + 'static,
+        F: FnOnce(
+                crate::cache::query::QueryBuilder<'_, U>,
+            ) -> crate::cache::query::QueryBuilder<'_, U>
+            + Send
+            + 'static,
+        R: Send + 'static,
+        T: Send + 'static,
+    {
         let inner = Arc::clone(&self.inner);
         spawn(move || {
             let guard = Self::lock(&inner)?;
@@ -485,7 +541,7 @@ where
                 order_by: Vec::new(),
             };
             let q = build(q);
-            crate::cache::query::execute_query(q)
+            finish(q)
         })
         .await
     }

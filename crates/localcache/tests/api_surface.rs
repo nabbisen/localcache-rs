@@ -56,7 +56,7 @@ const REASONS: &[&str] = &[
 /// Methods every wrapper must have that `CacheEngine` does not: the constructor and the closure
 /// forms that stand in for `query`, which the manifest records as "borrows the engine". Without
 /// this check the manifest would accept a wrapper that had no way to run a query at all.
-const WRAPPER_REQUIRED: &[&str] = &["open", "query_run", "query_dry_run"];
+const WRAPPER_REQUIRED: &[&str] = &["open", "query_run", "query_run_report", "query_dry_run"];
 
 /// Every engine method a wrapper deliberately does not delegate, with the reason.
 ///

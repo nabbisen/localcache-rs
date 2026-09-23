@@ -47,7 +47,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use crate::cache::engine::{BatchSetReport, CacheEngine};
 use crate::cache::entry::{CacheEntry, CacheStats, EntryInfo, ExportRecord, PreloadReport};
 use crate::cache::options::CacheOptions;
-use crate::cache::query::QueryBuilder;
+use crate::cache::query::{QueryBuilder, QueryReport};
 use crate::error::LocalFileCacheError;
 
 use crate::{CacheStatus, ScanOptions};
@@ -388,6 +388,21 @@ where
         let q = guard.query();
         let q = build(q);
         crate::cache::query::execute_query(q)
+    }
+
+    /// Execute a query built from a closure, and report the entries it could
+    /// not decode. See [`QueryBuilder::run_report`].
+    ///
+    /// Holds the mutex for the build and the run, like
+    /// [`query_run`](Self::query_run).
+    pub fn query_run_report<F>(&self, build: F) -> Result<QueryReport<T>, LocalFileCacheError>
+    where
+        F: FnOnce(QueryBuilder<'_, T>) -> QueryBuilder<'_, T>,
+    {
+        let guard = self.lock()?;
+        let q = guard.query();
+        let q = build(q);
+        crate::cache::query::execute_report(q)
     }
 
     /// Return the `EXPLAIN QUERY PLAN` output for a query built from a

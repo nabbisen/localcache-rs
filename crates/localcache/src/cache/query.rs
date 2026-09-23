@@ -60,6 +60,48 @@ thread_local! {
 }
 
 // ---------------------------------------------------------------------------
+// QueryReport (always available)
+// ---------------------------------------------------------------------------
+
+/// The result of [`QueryBuilder::run_report`]: the entries a query returns,
+/// and the entries it passed over because they could not be decoded.
+///
+/// `run()` returns only [`entries`](Self::entries); it discards
+/// [`skipped`](Self::skipped). A query under the wrong encryption key or with
+/// a corrupted payload therefore returns fewer entries, or none, without
+/// saying why. `run_report()` says why.
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct QueryReport<T> {
+    /// The entries the query returns: exactly what `run()` returns for the
+    /// same query.
+    pub entries: Vec<CacheEntry<T>>,
+    /// Entries the query passed over because they could not be decoded, with
+    /// the error each produced, in scan order.
+    ///
+    /// * **Without a payload predicate or a payload-field sort**, this lists
+    ///   every undecodable entry the scan passed while producing the page,
+    ///   including those passed while skipping `offset` entries. Entries
+    ///   after the page are never examined, so they are not listed.
+    /// * **With a payload predicate or a payload-field sort**, every
+    ///   candidate's payload must be decoded to be tested or ordered, so an
+    ///   undecodable entry is listed whether or not it would have matched.
+    /// * An entry whose payload row is missing produces no decode error, so
+    ///   it is not listed. `get` also treats it as a miss.
+    pub skipped: Vec<SkippedEntry>,
+}
+
+/// One entry a query could not decode. See [`QueryReport::skipped`].
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct SkippedEntry {
+    /// The stored path of the entry.
+    pub path: PathBuf,
+    /// The error decoding its payload produced.
+    pub error: LocalFileCacheError,
+}
+
+// ---------------------------------------------------------------------------
 // SortOrder (always available)
 // ---------------------------------------------------------------------------
 
@@ -583,8 +625,41 @@ where
     // ------------------------------------------------------------------
 
     /// Execute the query.
+    ///
+    /// An entry whose payload cannot be decoded is left out of the result
+    /// without an error: under the wrong encryption key, a query returns an
+    /// empty `Vec`. Use [`run_report`](Self::run_report) to see what was
+    /// left out and why.
+    ///
+    /// **From v0.22.0**, `run()` will return the first undecodable entry's
+    /// error instead, as `get` does; `run_report()` will remain the way to
+    /// tolerate them. See RFC 024 B1.
     pub fn run(self) -> Result<Vec<CacheEntry<T>>, LocalFileCacheError> {
         execute_query(self)
+    }
+
+    /// Execute the query and report the entries it could not decode.
+    ///
+    /// `entries` is exactly what [`run`](Self::run) returns; `skipped` lists
+    /// each undecodable entry with its error. `offset` and `limit` count
+    /// returned entries only, as for `run()`.
+    ///
+    /// ```no_run
+    /// use localcache::CacheEngine;
+    ///
+    /// let engine = CacheEngine::<Vec<f32>>::builder()
+    ///     .database("cache.sqlite3")
+    ///     .build()?;
+    ///
+    /// let report = engine.query().path_like("%/docs/%").run_report()?;
+    /// for skipped in &report.skipped {
+    ///     eprintln!("{}: {}", skipped.path.display(), skipped.error);
+    /// }
+    /// println!("{} entries", report.entries.len());
+    /// # Ok::<(), localcache::LocalFileCacheError>(())
+    /// ```
+    pub fn run_report(self) -> Result<QueryReport<T>, LocalFileCacheError> {
+        execute_report(self)
     }
 
     fn prepare_path_filters(&self) -> Result<PreparedPathFilters, LocalFileCacheError> {
@@ -637,10 +712,21 @@ impl PreparedPathFilters {
     }
 }
 
-#[cfg(feature = "json")]
+/// The one place a query runs. `run()` is this with `skipped` discarded, so
+/// the offset/limit logic (RFC 022 R2) exists once.
 pub(crate) fn execute_query<T>(
     q: QueryBuilder<'_, T>,
 ) -> Result<Vec<CacheEntry<T>>, LocalFileCacheError>
+where
+    T: Serialize + DeserializeOwned,
+{
+    execute_report(q).map(|report| report.entries)
+}
+
+#[cfg(feature = "json")]
+pub(crate) fn execute_report<T>(
+    q: QueryBuilder<'_, T>,
+) -> Result<QueryReport<T>, LocalFileCacheError>
 where
     T: Serialize + DeserializeOwned,
 {
@@ -722,9 +808,9 @@ where
 }
 
 #[cfg(not(feature = "json"))]
-pub(crate) fn execute_query<T>(
+pub(crate) fn execute_report<T>(
     q: QueryBuilder<'_, T>,
-) -> Result<Vec<CacheEntry<T>>, LocalFileCacheError>
+) -> Result<QueryReport<T>, LocalFileCacheError>
 where
     T: Serialize + DeserializeOwned,
 {
@@ -761,7 +847,7 @@ where
 fn execute_tier3<T>(
     q: QueryBuilder<'_, T>,
     prepared: &PreparedPathFilters,
-) -> Result<Vec<CacheEntry<T>>, LocalFileCacheError>
+) -> Result<QueryReport<T>, LocalFileCacheError>
 where
     T: Serialize + DeserializeOwned,
 {
@@ -775,13 +861,20 @@ where
     )?;
 
     let mut matched: Vec<(CacheEntry<T>, serde_json::Value, i64)> = Vec::new();
+    let mut skipped: Vec<SkippedEntry> = Vec::new();
     for row in rows {
         let (Some(content), Some(encoding)) = (row.content, row.encoding) else {
             continue;
         };
         let payload: T = match decode_with(&q.core, &content, &encoding) {
             Ok(p) => p,
-            Err(_) => continue,
+            Err(error) => {
+                skipped.push(SkippedEntry {
+                    path: PathBuf::from(&row.path),
+                    error,
+                });
+                continue;
+            }
         };
         let laa = row.last_accessed_at;
         let entry = CacheEntry {
@@ -801,7 +894,13 @@ where
         let json_val = if needs_json {
             match serde_json::to_value(&entry.payload) {
                 Ok(v) => v,
-                Err(_) => continue,
+                Err(e) => {
+                    skipped.push(SkippedEntry {
+                        path: entry.path,
+                        error: LocalFileCacheError::Serialization(e.to_string()),
+                    });
+                    continue;
+                }
             }
         } else {
             serde_json::Value::Null
@@ -828,12 +927,13 @@ where
         .limit
         .map(|l| (start + l).min(matched.len()))
         .unwrap_or(matched.len());
-    Ok(matched
+    let entries = matched
         .into_iter()
         .skip(start)
         .take(end - start)
         .map(|(e, _, _)| e)
-        .collect())
+        .collect();
+    Ok(QueryReport { entries, skipped })
 }
 
 /// RFC 021 pass 2 / RFC 022 R2: materialize `candidates[order[..]]`,
@@ -851,7 +951,7 @@ fn materialize<T>(
     q: &QueryBuilder<'_, T>,
     candidates: &[CandidateRow],
     order: &[usize],
-) -> Result<Vec<CacheEntry<T>>, LocalFileCacheError>
+) -> Result<QueryReport<T>, LocalFileCacheError>
 where
     T: Serialize + DeserializeOwned,
 {
@@ -860,6 +960,7 @@ where
     let mut to_skip = q.offset;
     let target = q.limit;
     let mut out = Vec::new();
+    let mut skipped = Vec::new();
     let mut idx = 0;
     while target.is_none_or(|t| out.len() < t) && idx < order.len() {
         let want = match target {
@@ -886,7 +987,13 @@ where
             };
             let payload: T = match decode_with(&q.core, &content, &encoding) {
                 Ok(p) => p,
-                Err(_) => continue,
+                Err(error) => {
+                    skipped.push(SkippedEntry {
+                        path: PathBuf::from(&c.path),
+                        error,
+                    });
+                    continue;
+                }
             };
             if to_skip > 0 {
                 // A successful decode counts toward `offset`, but is not
@@ -909,7 +1016,10 @@ where
         }
         idx = window_end;
     }
-    Ok(out)
+    Ok(QueryReport {
+        entries: out,
+        skipped,
+    })
 }
 
 // ---------------------------------------------------------------------------

@@ -258,6 +258,32 @@ fn sync_cache_engine_query_dry_run_returns_a_plan_without_loading_payloads() {
     assert_eq!(plan, direct);
 }
 
+// RFC 024 R9 — `query_run_report` reports what `query_run` leaves out.
+#[test]
+fn sync_cache_engine_query_run_report_lists_what_query_run_leaves_out() {
+    let dir = TempDir::new().unwrap();
+    let (database, stored) = common::database_with_one_corrupt_entry(&dir, "sync-report.sqlite3");
+    let shared = localcache::SyncCacheEngine::<Vec<f32>>::open(CacheOptions {
+        database_path: database,
+        ..CacheOptions::default()
+    })
+    .unwrap();
+
+    let run = shared
+        .query_run(|q| q.order_by(SortKey::Path, SortOrder::Asc))
+        .unwrap();
+    let report = shared
+        .query_run_report(|q| q.order_by(SortKey::Path, SortOrder::Asc))
+        .unwrap();
+    assert_eq!(
+        report.entries.iter().map(|e| &e.path).collect::<Vec<_>>(),
+        run.iter().map(|e| &e.path).collect::<Vec<_>>()
+    );
+    assert_eq!(run.len(), 2);
+    assert_eq!(report.skipped.len(), 1);
+    assert_eq!(report.skipped[0].path, stored[1]);
+}
+
 // RFC 018 R2 — poisoning is reported, not silently recovered from.
 #[test]
 fn sync_cache_engine_poisoned_mutex_yields_poisoned_error() {
@@ -1397,6 +1423,34 @@ mod rfc024_async_bodies {
         assert_eq!(second.stored, 0);
     }
 
+    pub async fn query_run_report_lists_what_query_run_leaves_out() {
+        let dir = TempDir::new().unwrap();
+        let (database, stored) =
+            super::common::database_with_one_corrupt_entry(&dir, "async-report.sqlite3");
+        let engine = AsyncCacheEngine::<Vec<f32>>::open(CacheOptions {
+            database_path: database,
+            ..CacheOptions::default()
+        })
+        .await
+        .unwrap();
+
+        let run: Vec<localcache::CacheEntry<Vec<f32>>> = engine
+            .query_run(|q| q.order_by(localcache::SortKey::Path, localcache::SortOrder::Asc))
+            .await
+            .unwrap();
+        let report: localcache::QueryReport<Vec<f32>> = engine
+            .query_run_report(|q| q.order_by(localcache::SortKey::Path, localcache::SortOrder::Asc))
+            .await
+            .unwrap();
+        assert_eq!(run.len(), 2);
+        assert_eq!(
+            report.entries.iter().map(|e| &e.path).collect::<Vec<_>>(),
+            run.iter().map(|e| &e.path).collect::<Vec<_>>()
+        );
+        assert_eq!(report.skipped.len(), 1);
+        assert_eq!(report.skipped[0].path, stored[1]);
+    }
+
     #[cfg(feature = "watching")]
     pub async fn watcher_delivers_an_invalidation_event() {
         use std::io::Write as _;
@@ -1478,6 +1532,13 @@ macro_rules! rfc024_async_delegation_tests {
             $block_on_fn(super::rfc024_async_bodies::preload_stores_skips_and_reports());
         }
 
+        #[test]
+        fn async_query_run_report_lists_what_query_run_leaves_out() {
+            $block_on_fn(
+                super::rfc024_async_bodies::query_run_report_lists_what_query_run_leaves_out(),
+            );
+        }
+
         #[cfg(feature = "watching")]
         #[test]
         fn async_watcher_delivers_an_invalidation_event() {
@@ -1501,6 +1562,11 @@ macro_rules! rfc024_async_delegation_tests {
         #[tokio::test]
         async fn async_preload_stores_skips_and_reports() {
             super::rfc024_async_bodies::preload_stores_skips_and_reports().await;
+        }
+
+        #[tokio::test]
+        async fn async_query_run_report_lists_what_query_run_leaves_out() {
+            super::rfc024_async_bodies::query_run_report_lists_what_query_run_leaves_out().await;
         }
 
         #[cfg(feature = "watching")]

@@ -462,3 +462,37 @@ fn read_pool_namespace_list_reports_every_namespace() {
     // Every namespace in the file, not only the pool's own.
     assert_eq!(pool.namespace_list().unwrap(), ["alpha", "beta"]);
 }
+
+// ---------------------------------------------------------------------------
+// RFC 024 R9 — `query_run_report`
+// ---------------------------------------------------------------------------
+
+#[test]
+fn read_pool_query_run_report_lists_what_query_run_leaves_out() {
+    use localcache::{SortKey, SortOrder};
+
+    let dir = TempDir::new().unwrap();
+    let (database, stored) = common::database_with_one_corrupt_entry(&dir, "report.sqlite3");
+    let pool: ReadPool<Vec<f32>> = ReadPool::open(
+        CacheOptions {
+            database_path: database,
+            ..CacheOptions::default()
+        },
+        2,
+    )
+    .unwrap();
+
+    let run = pool
+        .query_run(|q| q.order_by(SortKey::Path, SortOrder::Asc))
+        .unwrap();
+    let report = pool
+        .query_run_report(|q| q.order_by(SortKey::Path, SortOrder::Asc))
+        .unwrap();
+    assert_eq!(run.len(), 2);
+    assert_eq!(
+        report.entries.iter().map(|e| &e.path).collect::<Vec<_>>(),
+        run.iter().map(|e| &e.path).collect::<Vec<_>>()
+    );
+    assert_eq!(report.skipped.len(), 1);
+    assert_eq!(report.skipped[0].path, stored[1]);
+}

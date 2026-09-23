@@ -36,7 +36,7 @@ SyncCacheEngine<T>      — one engine behind a mutex; Clone + Send + Sync
   ├── cleanup_missing_files / cleanup_expired / purge_stale_versions / shrink_database
   ├── rotate_encryption_key                        (encryption feature)
   ├── watcher() / debounced_watcher(window)        (watching feature)
-  └── query_run(|q| …) / query_dry_run(|q| …)
+  └── query_run(|q| …) / query_run_report(|q| …) / query_dry_run(|q| …)
 
 ReadPool<T>             — N read-only connections; Clone + Send + Sync
   ├── open(opts, size) / CacheEngineBuilder::build_read_pool(size)
@@ -45,7 +45,7 @@ ReadPool<T>             — N read-only connections; Clone + Send + Sync
   ├── keys / list_entries / entry_count / entry_count_by_version / cache_stats / export_entries
   ├── namespace_list
   ├── scan_dir / scan_dir_filtered
-  ├── query_run(|q| …) / query_dry_run(|q| …)
+  ├── query_run(|q| …) / query_run_report(|q| …) / query_dry_run(|q| …)
   └── size()
 
 CacheWatcher<T>         (watching feature; via CacheEngine::watcher())
@@ -68,7 +68,8 @@ CacheDebouncedWatcher<T>   (watching feature; via CacheEngine::debounced_watcher
 method under the same name, with these exceptions:
 
 - `builder`: use each wrapper's `open`.
-- `query`: its builder borrows the engine. Use `query_run` and `query_dry_run`.
+- `query`: its builder borrows the engine. Use `query_run`, `query_run_report` and
+  `query_dry_run`.
 - `AsyncCacheEngine::import_from`: its source is a `&CacheEngine`, which cannot
   cross the `spawn_blocking` boundary. Copy with `export_entries` on the
   source and `import_entries` on the destination.
@@ -121,6 +122,8 @@ the batch methods, one such error per requested path. See
 | `MetadataDiff` | mtime / file_size comparison |
 | `PayloadVersionInfo` | Version stored vs expected |
 | `BatchSetReport` | Results from `batch_set()` |
+| `QueryReport<T>` | Result of `run_report()`: `entries`, and the `skipped` entries that could not be decoded |
+| `SkippedEntry` | One undecodable entry: its `path` and the `error` decoding it produced |
 | `WatchEvent` *(watching)* | File-system invalidation event |
 | `PathRegistrationError` *(watching)* | One path that failed OS-level watch registration at construction time; see `registration_errors()` |
 

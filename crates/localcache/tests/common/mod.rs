@@ -26,3 +26,36 @@ pub fn make_engine(dir: &TempDir, mode: ChangeDetectionMode) -> CacheEngine<Vec<
     })
     .unwrap()
 }
+
+/// Overwrite the stored payload of the entry at `stored_path` (the path as
+/// `keys()` returns it) with bytes that no codec can decode, straight in the
+/// database. Reaches a decode failure that no public call produces.
+#[allow(dead_code)]
+pub fn corrupt_payload(database: &std::path::Path, stored_path: &std::path::Path) {
+    let conn = rusqlite::Connection::open(database).unwrap();
+    let changed = conn
+        .execute(
+            "UPDATE payloads SET content = ?1
+             WHERE file_id = (SELECT id FROM files WHERE path = ?2)",
+            rusqlite::params![vec![0xFF_u8], stored_path.to_str().unwrap()],
+        )
+        .unwrap();
+    assert_eq!(changed, 1, "expected exactly one payload row to corrupt");
+}
+
+/// A file-backed database holding three `Vec<f32>` entries (`a.txt`, `b.txt`,
+/// `c.txt`) whose second entry in path order is corrupted. Returns the
+/// database path and the stored paths in path order.
+#[allow(dead_code)]
+pub fn database_with_one_corrupt_entry(dir: &TempDir, name: &str) -> (PathBuf, Vec<PathBuf>) {
+    let database = dir.path().join(name);
+    let engine: CacheEngine<Vec<f32>> = CacheEngine::builder().database(&database).build().unwrap();
+    for file in ["a.txt", "b.txt", "c.txt"] {
+        let p = write_file(dir, file, b"x");
+        engine.set(&p, &vec![1.0_f32]).unwrap();
+    }
+    let mut stored = engine.keys(None).unwrap();
+    stored.sort();
+    corrupt_payload(&database, &stored[1]);
+    (database, stored)
+}

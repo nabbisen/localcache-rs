@@ -39,6 +39,12 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     `watcher` and `debounced_watcher` (`watching`; both watcher types are `Send`). It has no
     `import_from`: copy with `export_entries` and `import_entries`, as its module docs now say.
   - `AsyncCacheEngine::watcher` was previously unreachable: the type exposes no inner engine.
+- `QueryBuilder::run_report()` (RFC 024 R9), with the `#[non_exhaustive]` structs
+  `QueryReport<T> { entries, skipped }` and `SkippedEntry { path, error }`, exported from the crate
+  root. `entries` is exactly what `run()` returns; `skipped` lists each entry the query could not
+  decode, with its error, in scan order. `run()` is unchanged: under the wrong encryption key it
+  still returns `Ok(vec![])`, which `run_report()` now explains. `run()` is `run_report()` with
+  `skipped` discarded. `SyncCacheEngine`, `ReadPool` and `AsyncCacheEngine` gain `query_run_report`.
 - `tests/api_surface.rs` (RFC 024 R3): a test that reads the engine's and the wrappers' sources and
   fails when a public engine method is neither delegated by a wrapper nor recorded, with its reason,
   in the test's manifest, or when a manifest entry has gone stale.

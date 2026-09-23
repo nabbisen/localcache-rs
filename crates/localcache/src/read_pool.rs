@@ -73,7 +73,7 @@ use crate::CacheStatus;
 use crate::cache::engine::CacheEngine;
 use crate::cache::entry::{CacheEntry, CacheStats, Diagnosis, EntryInfo, ExportRecord};
 use crate::cache::options::{CacheOptions, ScanOptions};
-use crate::cache::query::QueryBuilder;
+use crate::cache::query::{QueryBuilder, QueryReport};
 use crate::error::LocalFileCacheError;
 
 // ---------------------------------------------------------------------------
@@ -374,6 +374,17 @@ where
         let guard = self.checkout()?;
         let q = guard.query();
         build(q).run()
+    }
+
+    /// Run a [`QueryBuilder`] closure against one pool slot, and report the
+    /// entries it could not decode. See [`QueryBuilder::run_report`].
+    pub fn query_run_report<F>(&self, build: F) -> Result<QueryReport<T>, LocalFileCacheError>
+    where
+        F: for<'e> FnOnce(QueryBuilder<'e, T>) -> QueryBuilder<'e, T>,
+    {
+        let guard = self.checkout()?;
+        let q = guard.query();
+        build(q).run_report()
     }
 
     /// Return the EXPLAIN QUERY PLAN output without loading payloads.

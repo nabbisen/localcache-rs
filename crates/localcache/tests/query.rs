@@ -1654,3 +1654,146 @@ mod rfc006_dir_predicates {
         );
     }
 }
+
+// ====================================================================
+// RFC 024 R9 — `run_report`
+// ====================================================================
+
+mod run_report_tests {
+    use super::*;
+    use common::corrupt_payload;
+    use localcache::LocalFileCacheError;
+
+    /// Three entries in a file-backed database; the middle one (in path order)
+    /// is corrupted. Returns the engine, its database path, and the stored
+    /// paths in path order.
+    fn engine_with_one_corrupt_entry(
+        dir: &TempDir,
+    ) -> (
+        CacheEngine<Vec<f32>>,
+        std::path::PathBuf,
+        Vec<std::path::PathBuf>,
+    ) {
+        let database = dir.path().join("report.sqlite3");
+        let engine: CacheEngine<Vec<f32>> =
+            CacheEngine::builder().database(&database).build().unwrap();
+        for name in ["a.txt", "b.txt", "c.txt"] {
+            let p = write_file(dir, name, b"x");
+            engine.set(&p, &vec![1.0_f32]).unwrap();
+        }
+        let mut stored = engine.keys(None).unwrap();
+        stored.sort();
+        corrupt_payload(&database, &stored[1]);
+        (engine, database, stored)
+    }
+
+    #[test]
+    fn run_report_lists_what_run_leaves_out() {
+        let dir = TempDir::new().unwrap();
+        let (engine, _database, stored) = engine_with_one_corrupt_entry(&dir);
+
+        let run = engine
+            .query()
+            .order_by(SortKey::Path, SortOrder::Asc)
+            .run()
+            .unwrap();
+        assert_eq!(
+            run.iter().map(|e| e.path.clone()).collect::<Vec<_>>(),
+            [stored[0].clone(), stored[2].clone()],
+            "run() silently leaves the corrupt entry out"
+        );
+
+        let report = engine
+            .query()
+            .order_by(SortKey::Path, SortOrder::Asc)
+            .run_report()
+            .unwrap();
+        assert_eq!(
+            report.entries.iter().map(|e| &e.path).collect::<Vec<_>>(),
+            run.iter().map(|e| &e.path).collect::<Vec<_>>(),
+            "entries are exactly what run() returns"
+        );
+        assert_eq!(report.skipped.len(), 1);
+        assert_eq!(report.skipped[0].path, stored[1]);
+        assert!(
+            matches!(
+                report.skipped[0].error,
+                LocalFileCacheError::Serialization(_)
+            ),
+            "unexpected error: {:?}",
+            report.skipped[0].error
+        );
+    }
+
+    #[test]
+    fn run_report_has_nothing_skipped_when_every_entry_decodes() {
+        let dir = TempDir::new().unwrap();
+        let engine: CacheEngine<Vec<f32>> =
+            CacheEngine::builder().database(":memory:").build().unwrap();
+        for name in ["a.txt", "b.txt"] {
+            let p = write_file(&dir, name, b"x");
+            engine.set(&p, &vec![2.0_f32]).unwrap();
+        }
+        let report = engine.query().run_report().unwrap();
+        assert_eq!(report.entries.len(), 2);
+        assert!(report.skipped.is_empty());
+        assert_eq!(report.entries.len(), engine.query().run().unwrap().len());
+    }
+
+    /// The RFC 024 failing-before: under the wrong key, `run()` returned
+    /// `Ok(vec![])` and nothing said why.
+    #[cfg(feature = "encryption")]
+    #[test]
+    fn wrong_key_run_is_empty_and_run_report_says_why() {
+        let dir = TempDir::new().unwrap();
+        let database = dir.path().join("wrong-key.sqlite3");
+        let key_a = vec![0xAA_u8; 32];
+        let key_b = vec![0xBB_u8; 32];
+        {
+            let writer: CacheEngine<Vec<f32>> = CacheEngine::builder()
+                .database(&database)
+                .encryption_key(key_a)
+                .build()
+                .unwrap();
+            for name in ["k1.txt", "k2.txt", "k3.txt"] {
+                let p = write_file(&dir, name, b"x");
+                writer.set(&p, &vec![1.0_f32]).unwrap();
+            }
+        }
+
+        let wrong: CacheEngine<Vec<f32>> = CacheEngine::builder()
+            .database(&database)
+            .encryption_key(key_b)
+            .build()
+            .unwrap();
+        let mut stored = wrong.keys(None).unwrap();
+        stored.sort();
+        assert_eq!(stored.len(), 3);
+
+        // Unchanged in v0.21.5: an empty result, and no error.
+        assert!(wrong.query().run().unwrap().is_empty());
+
+        let report = wrong
+            .query()
+            .order_by(SortKey::Path, SortOrder::Asc)
+            .run_report()
+            .unwrap();
+        assert!(report.entries.is_empty());
+        assert_eq!(
+            report
+                .skipped
+                .iter()
+                .map(|s| s.path.clone())
+                .collect::<Vec<_>>(),
+            stored,
+            "every row is reported, in scan order"
+        );
+        for skipped in &report.skipped {
+            assert!(
+                matches!(skipped.error, LocalFileCacheError::EncryptionError(_)),
+                "unexpected error: {:?}",
+                skipped.error
+            );
+        }
+    }
+}
