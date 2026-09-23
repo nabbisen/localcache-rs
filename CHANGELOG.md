@@ -29,6 +29,19 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   mutex, not a pool. It is the same type, so existing code keeps compiling.
 - `CacheWatcher::entry_count()` (RFC 024 R7): returns `Result<usize, LocalFileCacheError>` and
   reports a poisoned lock as `Poisoned { resource: "CacheWatcher" }`.
+- Wrapper completion (RFC 024 R1–R2): each wrapper now exposes every public `CacheEngine` method
+  it can, under the engine's name.
+  - `SyncCacheEngine` gains `rotate_encryption_key` (`encryption`), `namespace_list`, `preload`,
+    `import_from`, `watcher` and `debounced_watcher` (`watching`), and `query_dry_run`. `preload`
+    holds the engine's mutex for its whole run, including every call to the factory.
+  - `ReadPool` gains `entry_count_by_version` and `namespace_list`.
+  - `AsyncCacheEngine` gains `namespace_list`, `preload` (its factory must be `Send + 'static`), and
+    `watcher` and `debounced_watcher` (`watching`; both watcher types are `Send`). It has no
+    `import_from`: copy with `export_entries` and `import_entries`, as its module docs now say.
+  - `AsyncCacheEngine::watcher` was previously unreachable: the type exposes no inner engine.
+- `tests/api_surface.rs` (RFC 024 R3): a test that reads the engine's and the wrappers' sources and
+  fails when a public engine method is neither delegated by a wrapper nor recorded, with its reason,
+  in the test's manifest, or when a manifest entry has gone stale.
 
 ### Deprecated
 

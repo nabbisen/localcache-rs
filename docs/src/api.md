@@ -28,17 +28,22 @@ CacheEngine<T>          — the main entry point
 
 SyncCacheEngine<T>      — one engine behind a mutex; Clone + Send + Sync
   ├── open(opts) / with(|engine| …) / with_mut(|engine| …)   (escape hatch to the inner CacheEngine)
-  ├── get / get_if_fresh / set / remove / batch_get / batch_get_fresh / batch_set
+  ├── get / get_if_fresh / set / remove / touch / batch_get / batch_get_fresh / batch_set
   ├── check_status / check_status_batch / contains / explain
-  ├── keys / list_entries / entry_count / cache_stats
-  ├── scan_dir / scan_dir_filtered
+  ├── keys / list_entries / entry_count / entry_count_by_version / cache_stats
+  ├── scan_dir / scan_dir_filtered / preload
+  ├── export_entries / import_entries / import_from / namespace_list
+  ├── cleanup_missing_files / cleanup_expired / purge_stale_versions / shrink_database
+  ├── rotate_encryption_key                        (encryption feature)
+  ├── watcher() / debounced_watcher(window)        (watching feature)
   └── query_run(|q| …) / query_dry_run(|q| …)
 
 ReadPool<T>             — N read-only connections; Clone + Send + Sync
   ├── open(opts, size) / CacheEngineBuilder::build_read_pool(size)
   ├── get / get_if_fresh / batch_get / batch_get_fresh
   ├── check_status / check_status_batch / contains / explain
-  ├── keys / list_entries / entry_count / cache_stats / export_entries
+  ├── keys / list_entries / entry_count / entry_count_by_version / cache_stats / export_entries
+  ├── namespace_list
   ├── scan_dir / scan_dir_filtered
   ├── query_run(|q| …) / query_dry_run(|q| …)
   └── size()
@@ -56,6 +61,22 @@ CacheDebouncedWatcher<T>   (watching feature; via CacheEngine::debounced_watcher
   ├── registration_errors() → &[PathRegistrationError]
   └── dropped_event_count() / failed_invalidation_count()
 ```
+
+### What each wrapper exposes
+
+`SyncCacheEngine` and `AsyncCacheEngine` expose **every** public `CacheEngine`
+method under the same name, with these exceptions:
+
+- `builder`: use each wrapper's `open`.
+- `query`: its builder borrows the engine. Use `query_run` and `query_dry_run`.
+- `AsyncCacheEngine::import_from`: its source is a `&CacheEngine`, which cannot
+  cross the `spawn_blocking` boundary. Copy with `export_entries` on the
+  source and `import_entries` on the destination.
+
+`ReadPool` exposes every method that never writes. A method that writes is
+absent from it, and that includes the watchers, because a watcher removes
+entries when a file changes. A test (`crates/localcache/tests/api_surface.rs`) compares the four surfaces
+and fails when a new engine method is not delegated or recorded as an exception.
 
 ### Path indexes
 

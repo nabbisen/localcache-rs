@@ -305,6 +305,18 @@ where
         self.checkout()?.entry_count()
     }
 
+    /// Entry counts grouped by `payload_version`, as `(version, count)` pairs.
+    pub fn entry_count_by_version(&self) -> Result<Vec<(u32, usize)>, LocalFileCacheError> {
+        self.checkout()?.entry_count_by_version()
+    }
+
+    /// All distinct namespace names present in the database, sorted
+    /// alphabetically. This lists every namespace in the file, not only the
+    /// pool's own.
+    pub fn namespace_list(&self) -> Result<Vec<String>, LocalFileCacheError> {
+        self.checkout()?.namespace_list()
+    }
+
     /// Aggregate statistics for the current namespace: entry count, total
     /// payload bytes, oldest/newest `updated_at`, and breakdowns by encoding
     /// and payload version. Does not include a hit-rate — nothing here
@@ -366,8 +378,7 @@ where
 
     /// Return the EXPLAIN QUERY PLAN output without loading payloads.
     ///
-    /// Useful for verifying that index hints take effect under pool
-    /// conditions.
+    /// Useful for inspecting the query plan under pool conditions.
     pub fn query_dry_run<F>(&self, build: F) -> Result<String, LocalFileCacheError>
     where
         F: for<'e> FnOnce(QueryBuilder<'e, T>) -> QueryBuilder<'e, T>,

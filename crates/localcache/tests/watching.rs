@@ -1039,3 +1039,116 @@ mod rfc015_watcher_diagnostics {
         );
     }
 }
+
+// ====================================================================
+// RFC 024 R2 — watchers through the wrappers, and their `Send`-ness
+// ====================================================================
+
+/// Compile-time proof that both watchers can cross a thread boundary for any
+/// payload the async engine accepts (`T: Send + 'static`). It is what lets
+/// `AsyncCacheEngine::watcher` and `debounced_watcher` return them from a
+/// `spawn_blocking` task. If a future change made either watcher `!Send`,
+/// this stops compiling, naming the type.
+#[cfg(feature = "watching")]
+#[allow(dead_code)]
+fn watchers_are_send<T: Send + 'static>() {
+    fn assert_send<X: Send>() {}
+    assert_send::<localcache::CacheWatcher<T>>();
+    assert_send::<localcache::CacheDebouncedWatcher<T>>();
+}
+
+#[cfg(feature = "watching")]
+mod wrapper_watcher_tests {
+    use super::*;
+    use localcache::{CacheOptions, SyncCacheEngine};
+    use std::io::Write as _;
+    use std::time::Duration;
+
+    fn open(dir: &TempDir) -> SyncCacheEngine<Vec<f32>> {
+        SyncCacheEngine::open(CacheOptions {
+            database_path: dir.path().join("wrapper-watch.sqlite3"),
+            ..CacheOptions::default()
+        })
+        .unwrap()
+    }
+
+    fn modify_file(path: &std::path::Path) {
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .truncate(false)
+            .open(path)
+            .unwrap();
+        f.write_all(b"modified content here!!").unwrap();
+        f.flush().unwrap();
+    }
+
+    #[test]
+    fn sync_cache_engine_watcher_delivers_invalidation_events() {
+        let dir = TempDir::new().unwrap();
+        let shared = open(&dir);
+        let path = write_file(&dir, "sw1.txt", b"original");
+        shared.set(&path, &vec![1.0_f32]).unwrap();
+
+        let watcher = shared.watcher().unwrap();
+        assert!(watcher.registration_errors().is_empty());
+        let rx = watcher.events();
+        std::thread::sleep(Duration::from_millis(100));
+        modify_file(&path);
+
+        let event = rx.recv_timeout(Duration::from_secs(3));
+        assert!(event.is_ok(), "expected a WatchEvent within 3 s");
+        assert_eq!(event.unwrap().path, path);
+        drop(watcher);
+
+        // The watcher does not hold the shared engine's mutex.
+        assert!(shared.entry_count().is_ok());
+    }
+
+    #[test]
+    fn sync_cache_engine_debounced_watcher_delivers_invalidation_events() {
+        let dir = TempDir::new().unwrap();
+        let shared = open(&dir);
+        let path = write_file(&dir, "sw2.txt", b"original");
+        shared.set(&path, &vec![1.0_f32]).unwrap();
+
+        let watcher = shared
+            .debounced_watcher(Duration::from_millis(100))
+            .unwrap();
+        let rx = watcher.events();
+        std::thread::sleep(Duration::from_millis(100));
+        modify_file(&path);
+
+        let event = rx.recv_timeout(Duration::from_secs(3));
+        assert!(event.is_ok(), "expected a debounced WatchEvent within 3 s");
+        drop(watcher);
+    }
+
+    #[test]
+    fn sync_cache_engine_watchers_refuse_a_read_only_engine() {
+        let dir = TempDir::new().unwrap();
+        let db = dir.path().join("wrapper-watch-ro.sqlite3");
+        drop(open_at(&db));
+        let shared = SyncCacheEngine::<Vec<f32>>::open(CacheOptions {
+            database_path: db,
+            read_only: true,
+            ..CacheOptions::default()
+        })
+        .unwrap();
+        assert!(matches!(
+            shared.watcher().err(),
+            Some(localcache::LocalFileCacheError::ReadOnly)
+        ));
+        assert!(matches!(
+            shared.debounced_watcher(Duration::from_millis(10)).err(),
+            Some(localcache::LocalFileCacheError::ReadOnly)
+        ));
+    }
+
+    fn open_at(db: &std::path::Path) -> SyncCacheEngine<Vec<f32>> {
+        SyncCacheEngine::open(CacheOptions {
+            database_path: db.to_path_buf(),
+            ..CacheOptions::default()
+        })
+        .unwrap()
+    }
+}

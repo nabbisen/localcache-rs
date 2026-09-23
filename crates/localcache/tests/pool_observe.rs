@@ -147,6 +147,117 @@ fn pool_query_run() {
     assert_eq!(results.len(), 5);
 }
 
+// RFC 024 R2 — `SyncCacheEngine` delegates the engine methods it used to lack.
+// (`rotate_encryption_key` is covered in `builder_ops.rs`, and the watchers in
+// `watching.rs`.)
+
+#[test]
+fn sync_cache_engine_namespace_list_matches_the_engine() {
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("ns.sqlite3");
+    for ns in ["alpha", "beta"] {
+        let engine: CacheEngine<Vec<f32>> = CacheEngine::builder()
+            .database(&db)
+            .namespace(ns)
+            .build()
+            .unwrap();
+        let p = write_file(&dir, &format!("{ns}.txt"), b"x");
+        engine.set(&p, &vec![1.0_f32]).unwrap();
+    }
+
+    let shared = localcache::SyncCacheEngine::<Vec<f32>>::open(CacheOptions {
+        database_path: db,
+        namespace: "alpha".into(),
+        ..CacheOptions::default()
+    })
+    .unwrap();
+    // Every namespace in the file, not only this engine's.
+    assert_eq!(shared.namespace_list().unwrap(), ["alpha", "beta"]);
+}
+
+#[test]
+fn sync_cache_engine_import_from_copies_another_engines_entries() {
+    let dir = TempDir::new().unwrap();
+    let source: CacheEngine<Vec<f32>> =
+        CacheEngine::builder().database(":memory:").build().unwrap();
+    for i in 0..3u32 {
+        let p = write_file(&dir, &format!("imp{i}.txt"), b"x");
+        source.set(&p, &vec![i as f32]).unwrap();
+    }
+
+    let shared = localcache::SyncCacheEngine::<Vec<f32>>::open(CacheOptions {
+        database_path: ":memory:".into(),
+        ..CacheOptions::default()
+    })
+    .unwrap();
+    assert_eq!(shared.import_from(&source).unwrap(), 3);
+    assert_eq!(shared.entry_count().unwrap(), 3);
+    assert_eq!(
+        shared.keys(None).unwrap().len(),
+        source.keys(None).unwrap().len()
+    );
+}
+
+#[test]
+fn sync_cache_engine_preload_stores_skips_and_reports() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path().join("preload");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(root.join("a.txt"), b"a").unwrap();
+    std::fs::write(root.join("b.txt"), b"b").unwrap();
+    std::fs::write(root.join("bad.txt"), b"bad").unwrap();
+
+    let shared = localcache::SyncCacheEngine::<Vec<f32>>::open(CacheOptions {
+        database_path: ":memory:".into(),
+        ..CacheOptions::default()
+    })
+    .unwrap();
+    let factory = |p: &std::path::Path| {
+        let content = std::fs::read(p)?;
+        if content == b"bad" {
+            return Err("simulated factory error".into());
+        }
+        Ok(vec![content.len() as f32])
+    };
+
+    let first = shared
+        .preload(&root, localcache::ScanOptions::default(), false, factory)
+        .unwrap();
+    assert_eq!(
+        (first.stored, first.skipped, first.already_fresh),
+        (2, 1, 0)
+    );
+    assert_eq!(first.errors.len(), 1);
+    assert!(first.errors[0].1.contains("simulated factory error"));
+    assert_eq!(shared.entry_count().unwrap(), 2);
+
+    let second = shared
+        .preload(&root, localcache::ScanOptions::default(), false, factory)
+        .unwrap();
+    assert_eq!(second.already_fresh, 2, "fresh entries are not recomputed");
+    assert_eq!(second.stored, 0);
+}
+
+#[test]
+fn sync_cache_engine_query_dry_run_returns_a_plan_without_loading_payloads() {
+    let dir = TempDir::new().unwrap();
+    let shared = localcache::SyncCacheEngine::<Vec<f32>>::open(CacheOptions {
+        database_path: ":memory:".into(),
+        ..CacheOptions::default()
+    })
+    .unwrap();
+    let p = write_file(&dir, "dry.txt", b"x");
+    shared.set(&p, &vec![1.0_f32]).unwrap();
+
+    let plan = shared.query_dry_run(|q| q.path_like("%dry%")).unwrap();
+    assert!(plan.contains("files"), "unexpected plan: {plan}");
+    // It is the same output the engine gives.
+    let direct = shared
+        .with(|engine| engine.query().path_like("%dry%").dry_run())
+        .unwrap();
+    assert_eq!(plan, direct);
+}
+
 // RFC 018 R2 — poisoning is reported, not silently recovered from.
 #[test]
 fn sync_cache_engine_poisoned_mutex_yields_poisoned_error() {
@@ -1208,6 +1319,204 @@ macro_rules! rfc022_r8_batch_results_test {
     };
 }
 
+// RFC 024 R2 — `AsyncCacheEngine::{namespace_list, preload, watcher,
+// debounced_watcher}`. The bodies are shared; the macro below wraps each one
+// in the harness shape of the active runtime, as the other RFC-numbered
+// macros in this file do.
+#[cfg(any(feature = "async", feature = "async-std", feature = "smol"))]
+mod rfc024_async_bodies {
+    use localcache::{AsyncCacheEngine, CacheEngine, CacheOptions, ScanOptions};
+    use tempfile::TempDir;
+
+    use super::write_file;
+
+    pub async fn namespace_list_reports_every_namespace() {
+        let dir = TempDir::new().unwrap();
+        let db = dir.path().join("async-ns.sqlite3");
+        for ns in ["alpha", "beta"] {
+            let engine: CacheEngine<Vec<f32>> = CacheEngine::builder()
+                .database(&db)
+                .namespace(ns)
+                .build()
+                .unwrap();
+            let p = write_file(&dir, &format!("{ns}.txt"), b"x");
+            engine.set(&p, &vec![1.0_f32]).unwrap();
+        }
+
+        let engine = AsyncCacheEngine::<Vec<f32>>::open(CacheOptions {
+            database_path: db,
+            namespace: "alpha".into(),
+            ..CacheOptions::default()
+        })
+        .await
+        .unwrap();
+        assert_eq!(engine.namespace_list().await.unwrap(), ["alpha", "beta"]);
+    }
+
+    pub async fn preload_stores_skips_and_reports() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("preload");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("a.txt"), b"a").unwrap();
+        std::fs::write(root.join("b.txt"), b"b").unwrap();
+        std::fs::write(root.join("bad.txt"), b"bad").unwrap();
+
+        let engine = AsyncCacheEngine::<Vec<f32>>::open(CacheOptions {
+            database_path: ":memory:".into(),
+            ..CacheOptions::default()
+        })
+        .await
+        .unwrap();
+        // `Send + 'static`: the factory crosses `spawn_blocking`.
+        fn factory(
+            p: &std::path::Path,
+        ) -> Result<Vec<f32>, Box<dyn std::error::Error + Send + Sync>> {
+            let content = std::fs::read(p)?;
+            if content == b"bad" {
+                return Err("simulated factory error".into());
+            }
+            Ok(vec![content.len() as f32])
+        }
+
+        let first = engine
+            .preload(root.clone(), ScanOptions::default(), false, factory)
+            .await
+            .unwrap();
+        assert_eq!(
+            (first.stored, first.skipped, first.already_fresh),
+            (2, 1, 0)
+        );
+        assert!(first.errors[0].1.contains("simulated factory error"));
+        assert_eq!(engine.entry_count().await.unwrap(), 2);
+
+        let second = engine
+            .preload(root, ScanOptions::default(), false, factory)
+            .await
+            .unwrap();
+        assert_eq!(second.already_fresh, 2);
+        assert_eq!(second.stored, 0);
+    }
+
+    #[cfg(feature = "watching")]
+    pub async fn watcher_delivers_an_invalidation_event() {
+        use std::io::Write as _;
+        use std::time::Duration;
+
+        let dir = TempDir::new().unwrap();
+        let engine = AsyncCacheEngine::<Vec<f32>>::open(CacheOptions {
+            database_path: dir.path().join("async-watch.sqlite3"),
+            ..CacheOptions::default()
+        })
+        .await
+        .unwrap();
+        let path = write_file(&dir, "watched.txt", b"original");
+        engine.set(path.clone(), vec![1.0_f32]).await.unwrap();
+
+        let watcher = engine.watcher().await.unwrap();
+        assert!(watcher.registration_errors().is_empty());
+        let rx = watcher.events();
+        std::thread::sleep(Duration::from_millis(100));
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .truncate(false)
+            .open(&path)
+            .unwrap();
+        file.write_all(b"modified content here!!").unwrap();
+        file.flush().unwrap();
+
+        let event = rx.recv_timeout(Duration::from_secs(3));
+        assert!(event.is_ok(), "expected a WatchEvent within 3 s");
+        assert_eq!(event.unwrap().path, path);
+        drop(watcher);
+    }
+
+    #[cfg(feature = "watching")]
+    pub async fn debounced_watcher_delivers_an_invalidation_event() {
+        use std::io::Write as _;
+        use std::time::Duration;
+
+        let dir = TempDir::new().unwrap();
+        let engine = AsyncCacheEngine::<Vec<f32>>::open(CacheOptions {
+            database_path: dir.path().join("async-debounced.sqlite3"),
+            ..CacheOptions::default()
+        })
+        .await
+        .unwrap();
+        let path = write_file(&dir, "debounced.txt", b"original");
+        engine.set(path.clone(), vec![1.0_f32]).await.unwrap();
+
+        let watcher = engine
+            .debounced_watcher(Duration::from_millis(100))
+            .await
+            .unwrap();
+        let rx = watcher.events();
+        std::thread::sleep(Duration::from_millis(100));
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .truncate(false)
+            .open(&path)
+            .unwrap();
+        file.write_all(b"modified content here!!").unwrap();
+        file.flush().unwrap();
+
+        let event = rx.recv_timeout(Duration::from_secs(3));
+        assert!(event.is_ok(), "expected a debounced WatchEvent within 3 s");
+        drop(watcher);
+    }
+}
+
+#[cfg(any(feature = "async", feature = "async-std", feature = "smol"))]
+macro_rules! rfc024_async_delegation_tests {
+    (block_on = $block_on_fn:path) => {
+        #[test]
+        fn async_namespace_list_reports_every_namespace() {
+            $block_on_fn(super::rfc024_async_bodies::namespace_list_reports_every_namespace());
+        }
+
+        #[test]
+        fn async_preload_stores_skips_and_reports() {
+            $block_on_fn(super::rfc024_async_bodies::preload_stores_skips_and_reports());
+        }
+
+        #[cfg(feature = "watching")]
+        #[test]
+        fn async_watcher_delivers_an_invalidation_event() {
+            $block_on_fn(super::rfc024_async_bodies::watcher_delivers_an_invalidation_event());
+        }
+
+        #[cfg(feature = "watching")]
+        #[test]
+        fn async_debounced_watcher_delivers_an_invalidation_event() {
+            $block_on_fn(
+                super::rfc024_async_bodies::debounced_watcher_delivers_an_invalidation_event(),
+            );
+        }
+    };
+    (tokio) => {
+        #[tokio::test]
+        async fn async_namespace_list_reports_every_namespace() {
+            super::rfc024_async_bodies::namespace_list_reports_every_namespace().await;
+        }
+
+        #[tokio::test]
+        async fn async_preload_stores_skips_and_reports() {
+            super::rfc024_async_bodies::preload_stores_skips_and_reports().await;
+        }
+
+        #[cfg(feature = "watching")]
+        #[tokio::test]
+        async fn async_watcher_delivers_an_invalidation_event() {
+            super::rfc024_async_bodies::watcher_delivers_an_invalidation_event().await;
+        }
+
+        #[cfg(feature = "watching")]
+        #[tokio::test]
+        async fn async_debounced_watcher_delivers_an_invalidation_event() {
+            super::rfc024_async_bodies::debounced_watcher_delivers_an_invalidation_event().await;
+        }
+    };
+}
+
 // async-std backend tests (only when async-std is the active runtime,
 // i.e. async-std is enabled but Tokio is not).
 #[cfg(all(not(feature = "async"), feature = "async-std"))]
@@ -1221,6 +1530,7 @@ mod rfc005_async_std {
         block_on = async_std::task::block_on
     );
     rfc022_r8_batch_results_test!(block_on = async_std::task::block_on);
+    rfc024_async_delegation_tests!(block_on = async_std::task::block_on);
 
     #[test]
     fn async_std_engine_set_get() {
@@ -1291,6 +1601,7 @@ mod rfc005_smol {
 
     panic_inside_blocking_closure_yields_async_task_panicked_test!(block_on = smol::block_on);
     rfc022_r8_batch_results_test!(block_on = smol::block_on);
+    rfc024_async_delegation_tests!(block_on = smol::block_on);
 
     #[test]
     fn smol_engine_set_get() {
@@ -1363,6 +1674,7 @@ mod rfc015_tokio_async_engine {
 
     panic_inside_blocking_closure_yields_async_task_panicked_test!(tokio);
     rfc022_r8_batch_results_test!(tokio);
+    rfc024_async_delegation_tests!(tokio);
 
     #[tokio::test]
     async fn poisoned_mutex_recovers_on_subsequent_calls() {

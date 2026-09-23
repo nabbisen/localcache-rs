@@ -35,6 +35,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 `AsyncCacheEngine<T>` is `Clone` — all clones share the underlying engine
 via `Arc<Mutex<CacheEngine<T>>>`.
 
+### Preloading and watching
+
+`preload` takes an owned `PathBuf` and a factory that is `Send + 'static`,
+because it runs on a blocking thread while the engine's mutex is held. The
+factory must not call back into the same `AsyncCacheEngine`.
+
+```rust
+use localcache::ScanOptions;
+
+let report = engine
+    .preload("data".into(), ScanOptions::default(), false, |path| {
+        Ok(vec![std::fs::metadata(path)?.len() as f32])
+    })
+    .await?;
+println!("stored {}, skipped {}", report.stored, report.skipped);
+```
+
+With the `watching` feature, `watcher()` and `debounced_watcher(window)` return
+the same `CacheWatcher` and `CacheDebouncedWatcher` as the synchronous engine.
+Both are `Send`.
+
+```rust
+let watcher = engine.watcher().await?;
+for event in watcher.events() {
+    println!("invalidated: {}", event.path.display());
+}
+```
+
+### Copying between engines
+
+`AsyncCacheEngine` has no `import_from`: its source would have to be a
+`&CacheEngine` crossing a `spawn_blocking` boundary, and taking a second async
+engine would lock two mutexes and deadlock if both were the same one. Export
+from the source and import into the destination:
+
+```rust
+let records = source.export_entries().await?;
+let copied = destination.import_entries(records).await?;
+```
+
 ### Async query execution
 
 Because `QueryBuilder` borrows the engine, it cannot cross an `await` point.

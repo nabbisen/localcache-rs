@@ -391,7 +391,7 @@ mod rotation_tests {
             pool.set(p, &vec![i as f32]).unwrap();
         }
 
-        let rotated = pool.with(|e| e.rotate_encryption_key(&key(0x62))).unwrap();
+        let rotated = pool.rotate_encryption_key(&key(0x62)).unwrap();
         assert_eq!(rotated, 3);
 
         for (i, p) in paths.iter().enumerate() {
@@ -420,7 +420,7 @@ mod rotation_tests {
         .unwrap();
         pool.set(&existing, &vec![1.0_f32]).unwrap();
 
-        pool.with(|e| e.rotate_encryption_key(&key(0x72))).unwrap();
+        pool.rotate_encryption_key(&key(0x72)).unwrap();
         pool.set(&new_path, &vec![2.0_f32]).unwrap();
         drop(pool);
 

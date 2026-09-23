@@ -398,3 +398,67 @@ fn read_pool_shared_cache_reads_writer_data() {
     .unwrap();
     assert_eq!(pool.entry_count().unwrap(), 10);
 }
+
+// ---------------------------------------------------------------------------
+// RFC 024 R2 — `entry_count_by_version` and `namespace_list`
+// ---------------------------------------------------------------------------
+
+#[test]
+fn read_pool_entry_count_by_version_matches_the_engine() {
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("versions.sqlite3");
+    for (version, name) in [(1u32, "v1a"), (1, "v1b"), (2, "v2a")] {
+        let engine: CacheEngine<Vec<f32>> = CacheEngine::builder()
+            .database(&db)
+            .payload_version(version)
+            .build()
+            .unwrap();
+        let p = write_file(&dir, &format!("{name}.txt"), b"x");
+        engine.set(&p, &vec![1.0_f32]).unwrap();
+    }
+
+    let reader: CacheEngine<Vec<f32>> = CacheEngine::builder()
+        .database(&db)
+        .read_only()
+        .build()
+        .unwrap();
+    let expected = reader.entry_count_by_version().unwrap();
+    assert_eq!(expected, [(1, 2), (2, 1)]);
+
+    let pool: ReadPool<Vec<f32>> = ReadPool::open(
+        CacheOptions {
+            database_path: db,
+            ..CacheOptions::default()
+        },
+        2,
+    )
+    .unwrap();
+    assert_eq!(pool.entry_count_by_version().unwrap(), expected);
+}
+
+#[test]
+fn read_pool_namespace_list_reports_every_namespace() {
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("namespaces.sqlite3");
+    for ns in ["alpha", "beta"] {
+        let engine: CacheEngine<Vec<f32>> = CacheEngine::builder()
+            .database(&db)
+            .namespace(ns)
+            .build()
+            .unwrap();
+        let p = write_file(&dir, &format!("{ns}.txt"), b"x");
+        engine.set(&p, &vec![1.0_f32]).unwrap();
+    }
+
+    let pool: ReadPool<Vec<f32>> = ReadPool::open(
+        CacheOptions {
+            database_path: db,
+            namespace: "alpha".into(),
+            ..CacheOptions::default()
+        },
+        2,
+    )
+    .unwrap();
+    // Every namespace in the file, not only the pool's own.
+    assert_eq!(pool.namespace_list().unwrap(), ["alpha", "beta"]);
+}

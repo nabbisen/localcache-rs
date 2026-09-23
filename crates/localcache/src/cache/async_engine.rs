@@ -1,4 +1,18 @@
 //! Async wrapper around [`CacheEngine`].
+//!
+//! [`AsyncCacheEngine`] delegates every public `CacheEngine` method under the
+//! same name, taking owned arguments where the call crosses a
+//! `spawn_blocking` boundary. The exceptions are:
+//!
+//! * `builder`: the engine's constructor; use [`AsyncCacheEngine::open`].
+//! * `query`: its builder borrows the engine and cannot cross an `await`; use
+//!   [`AsyncCacheEngine::query_run`] or [`AsyncCacheEngine::query_dry_run`].
+//! * `import_from`: its source argument is a `&CacheEngine<U>`, which would
+//!   have to cross the `spawn_blocking` boundary, and taking another
+//!   `AsyncCacheEngine` instead would lock two mutexes and deadlock when both
+//!   are the same engine. To copy entries between engines, call
+//!   [`export_entries`](AsyncCacheEngine::export_entries) on the source and
+//!   [`import_entries`](AsyncCacheEngine::import_entries) on the destination.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -6,7 +20,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::cache::engine::{BatchSetReport, CacheEngine};
-use crate::cache::entry::{CacheEntry, CacheStatus, EntryInfo};
+use crate::cache::entry::{CacheEntry, CacheStatus, EntryInfo, PreloadReport};
 use crate::cache::options::{CacheOptions, ScanOptions};
 use crate::error::LocalFileCacheError;
 
@@ -330,6 +344,60 @@ where
     ) -> Result<usize, LocalFileCacheError> {
         let inner = Arc::clone(&self.inner);
         spawn(move || Self::lock(&inner)?.import_entries(&records)).await
+    }
+
+    /// Async version of [`CacheEngine::namespace_list`].
+    pub async fn namespace_list(&self) -> Result<Vec<String>, LocalFileCacheError> {
+        let inner = Arc::clone(&self.inner);
+        spawn(move || Self::lock(&inner)?.namespace_list()).await
+    }
+
+    /// Async version of [`CacheEngine::preload`].
+    ///
+    /// `factory` runs on a blocking thread while the engine's mutex is held,
+    /// so it must be `Send + 'static`, and it must not call back into this
+    /// `AsyncCacheEngine` (or a clone), which would deadlock. Other calls on
+    /// this engine wait until the preload finishes.
+    pub async fn preload<F>(
+        &self,
+        dir: PathBuf,
+        options: ScanOptions,
+        force: bool,
+        factory: F,
+    ) -> Result<PreloadReport, LocalFileCacheError>
+    where
+        F: Fn(&std::path::Path) -> Result<T, Box<dyn std::error::Error + Send + Sync>>
+            + Send
+            + 'static,
+    {
+        let inner = Arc::clone(&self.inner);
+        spawn(move || Self::lock(&inner)?.preload(&dir, options, force, factory)).await
+    }
+
+    /// Async version of [`CacheEngine::watcher`].
+    ///
+    /// The returned [`CacheWatcher`](crate::cache::watcher::CacheWatcher) is
+    /// `Send`. Requires the `watching` Cargo feature.
+    #[cfg(feature = "watching")]
+    pub async fn watcher(
+        &self,
+    ) -> Result<crate::cache::watcher::CacheWatcher<T>, LocalFileCacheError> {
+        let inner = Arc::clone(&self.inner);
+        spawn(move || Self::lock(&inner)?.watcher()).await
+    }
+
+    /// Async version of [`CacheEngine::debounced_watcher`].
+    ///
+    /// The returned
+    /// [`CacheDebouncedWatcher`](crate::cache::watcher::CacheDebouncedWatcher)
+    /// is `Send`. Requires the `watching` Cargo feature.
+    #[cfg(feature = "watching")]
+    pub async fn debounced_watcher(
+        &self,
+        window: std::time::Duration,
+    ) -> Result<crate::cache::watcher::CacheDebouncedWatcher<T>, LocalFileCacheError> {
+        let inner = Arc::clone(&self.inner);
+        spawn(move || Self::lock(&inner)?.debounced_watcher(window)).await
     }
 
     /// Async version of [`CacheEngine::touch`].

@@ -1,8 +1,11 @@
 //! [`SyncCacheEngine`]: one [`CacheEngine`] shared across threads.
 //!
 //! [`SyncCacheEngine`] wraps a `CacheEngine<T>` behind an `Arc<Mutex<…>>` and
-//! provides the same API surface, so a single cache engine can be shared
-//! across threads without callers managing the mutex themselves. Every call
+//! delegates every public `CacheEngine` method under the same name, so a
+//! single cache engine can be shared across threads without callers managing
+//! the mutex themselves. The two exceptions are `builder` (use
+//! [`SyncCacheEngine::open`]) and `query`, whose builder borrows the engine
+//! (use [`SyncCacheEngine::query_run`] or [`SyncCacheEngine::query_dry_run`]). Every call
 //! takes the lock for its duration, so calls from different threads run one
 //! at a time; it is one engine, not a pool of connections. For many
 //! concurrent readers, use [`ReadPool`][crate::ReadPool], which is a pool of
@@ -42,7 +45,7 @@ use std::time::Duration;
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::cache::engine::{BatchSetReport, CacheEngine};
-use crate::cache::entry::{CacheEntry, CacheStats, EntryInfo, ExportRecord};
+use crate::cache::entry::{CacheEntry, CacheStats, EntryInfo, ExportRecord, PreloadReport};
 use crate::cache::options::CacheOptions;
 use crate::cache::query::QueryBuilder;
 use crate::error::LocalFileCacheError;
@@ -89,7 +92,12 @@ where
 
     /// Acquire the mutex and call `f` with a reference to the inner engine.
     ///
-    /// This is the escape hatch for operations not yet exposed on this wrapper.
+    /// This is the escape hatch for what the wrapper does not expose: a
+    /// `CacheEngine` method used with borrowed state, such as `query`, or an
+    /// argument that is itself a `&CacheEngine`. **Do not** call another
+    /// method of this same `SyncCacheEngine` (or a clone) from inside `f`: the
+    /// mutex is not reentrant, so that deadlocks.
+    ///
     /// A read-only engine retains its normal mutation guards inside `f`.
     pub fn with<R, F>(&self, f: F) -> Result<R, LocalFileCacheError>
     where
@@ -332,6 +340,37 @@ where
         self.lock()?.import_entries(records)
     }
 
+    /// Locks the shared engine and calls [`CacheEngine::import_from`].
+    ///
+    /// `source` is a plain [`CacheEngine`], separate from this one. **Do not**
+    /// obtain it from this same `SyncCacheEngine` (for example through
+    /// [`with`](Self::with)): the mutex is not reentrant, so that deadlocks.
+    pub fn import_from<U>(&self, source: &CacheEngine<U>) -> Result<usize, LocalFileCacheError>
+    where
+        U: Serialize + DeserializeOwned,
+    {
+        self.lock()?.import_from(source)
+    }
+
+    /// Locks the shared engine and calls [`CacheEngine::namespace_list`].
+    pub fn namespace_list(&self) -> Result<Vec<String>, LocalFileCacheError> {
+        self.lock()?.namespace_list()
+    }
+
+    /// Locks the shared engine and calls [`CacheEngine::rotate_encryption_key`].
+    ///
+    /// The mutex is held for the whole rotation, so other threads wait. Every
+    /// clone of this `SyncCacheEngine` shares one inner engine and continues
+    /// with `new_key` together. Rotation covers **only this engine's
+    /// namespace**; another open engine on the same database and namespace
+    /// keeps its old key and must be reopened with `new_key`.
+    ///
+    /// Requires the `encryption` Cargo feature.
+    #[cfg(feature = "encryption")]
+    pub fn rotate_encryption_key(&self, new_key: &[u8]) -> Result<usize, LocalFileCacheError> {
+        self.lock()?.rotate_encryption_key(new_key)
+    }
+
     // ------------------------------------------------------------------
     // Query
     // ------------------------------------------------------------------
@@ -349,6 +388,78 @@ where
         let q = guard.query();
         let q = build(q);
         crate::cache::query::execute_query(q)
+    }
+
+    /// Return the `EXPLAIN QUERY PLAN` output for a query built from a
+    /// closure, without loading payloads.
+    ///
+    /// Holds the mutex while the closure runs, like
+    /// [`query_run`](Self::query_run).
+    pub fn query_dry_run<F>(&self, build: F) -> Result<String, LocalFileCacheError>
+    where
+        F: FnOnce(QueryBuilder<'_, T>) -> QueryBuilder<'_, T>,
+    {
+        let guard = self.lock()?;
+        let q = guard.query();
+        build(q).dry_run()
+    }
+
+    // ------------------------------------------------------------------
+    // Preload
+    // ------------------------------------------------------------------
+
+    /// Locks the shared engine and calls [`CacheEngine::preload`].
+    ///
+    /// **The mutex is held for the whole preload, including every call to
+    /// `factory`.** Other threads using this engine wait, and `factory` must
+    /// not call back into this `SyncCacheEngine` (or a clone): the mutex is
+    /// not reentrant, so that deadlocks.
+    pub fn preload<P, F>(
+        &self,
+        dir: P,
+        options: ScanOptions,
+        force: bool,
+        factory: F,
+    ) -> Result<PreloadReport, LocalFileCacheError>
+    where
+        P: AsRef<Path>,
+        F: Fn(&Path) -> Result<T, Box<dyn std::error::Error + Send + Sync>>,
+    {
+        self.lock()?.preload(dir, options, force, factory)
+    }
+
+    // ------------------------------------------------------------------
+    // Watching (watching feature)
+    // ------------------------------------------------------------------
+
+    /// Locks the shared engine and calls [`CacheEngine::watcher`].
+    ///
+    /// The lock is released once the watcher is built. The watcher owns its
+    /// own helper connection, so it does not hold this engine's mutex.
+    ///
+    /// Requires the `watching` Cargo feature.
+    #[cfg(feature = "watching")]
+    pub fn watcher(&self) -> Result<crate::cache::watcher::CacheWatcher<T>, LocalFileCacheError>
+    where
+        T: Send + 'static,
+    {
+        self.lock()?.watcher()
+    }
+
+    /// Locks the shared engine and calls [`CacheEngine::debounced_watcher`].
+    ///
+    /// The lock is released once the watcher is built.
+    ///
+    /// Requires the `watching` Cargo feature.
+    #[cfg(feature = "watching")]
+    pub fn debounced_watcher(
+        &self,
+        window: Duration,
+    ) -> Result<crate::cache::watcher::CacheDebouncedWatcher<T>, LocalFileCacheError>
+    where
+        T: Send + 'static,
+    {
+        self.lock()?.debounced_watcher(window)
     }
 
     // ------------------------------------------------------------------
