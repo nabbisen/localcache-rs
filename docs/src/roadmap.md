@@ -29,6 +29,44 @@ on GitHub for the full backlog with implementation notes.
 | 19 | 0.19 | Read-only pool + compatibility guarantees — `ReadPool<T>`, golden fixture |
 | 20 | 0.20 | Nanosecond mtime precision — schema v5 and overwrite regression coverage |
 | 21 | 0.20.1 | Stabilization — eight release blockers closed, reproducible source archives, release gates |
+| 22 | 0.21.0 | Consolidation and measurement — truthful error taxonomy, first at-scale profile |
+| 23 | 0.21.1–0.21.3 | Measured performance — maintenance-delete batching, query execution redesign |
+
+## Phase 24 — Correctness, Contracts, and API Consistency (in progress)
+
+**Authorized by the owner 2026-09-23**, immediately after Phase 23 closed. RFC 022 (accepted the
+same day, later amended) drives the first sub-phase, v0.21.4: a patch release fixing six
+reproduced correctness defects found and reproduced during Phase 24's review — key rotation, query
+`offset`, `max_entries` eviction, partial-hash change detection, `AsyncCacheEngine` batch results,
+watcher journal-mode inheritance — plus release-tooling repair and a documentation/records
+reconciliation pass (this page included). **No MSRV change, and no behaviour newly rejected as an
+error, ships in this patch** — see [Error Handling](./errors.md) and the compatibility notes
+throughout this book for what each fix actually changes.
+
+Two further sub-phases are planned, not yet started: v0.21.5 (API consistency — additive names and
+deprecations only, no removals) and v0.22.0 (the first breaking release since v0.21.0: completing
+the error taxonomy, validating configuration that is silently accepted today, and a true
+least-recently-used eviction policy on a schema change). See the live
+[ROADMAP.md](https://github.com/nabbisen/localcache-rs/blob/main/ROADMAP.md) for the milestone
+table and RFC mapping.
+
+## Phase 23 — Measured Performance and Consolidation ✅
+
+**Released as v0.21.1, v0.21.2, and v0.21.3.** The first phase scoped from measurement rather than
+intuition: Phase 22's profile (N4) overturned two of its own three hypotheses, so Phase 23 started
+from numbers instead. Three non-breaking patches shipped, each at its own breaking point with CI
+green before the next started:
+
+- **v0.21.1** — query documentation, a `ConnectionPool` batch-result fix, tooling hygiene.
+- **v0.21.2** — maintenance-delete batching (`cleanup_missing_files`/`cleanup_expired` page their
+  scan and batch each page's deletes in one transaction).
+- **v0.21.3** — query execution redesign: one streaming query replaces the old per-row `SELECT`
+  pair, and payloads are decoded only for rows surviving `offset`/`limit`.
+
+Twice, the initially recorded remedy targeted a minority of the measured cost — batching the
+maintenance `stat` calls was 11.7% of the cost, and the query-execution work first estimated the
+same way was corrected by measuring before committing to a design. See
+[Performance and Capacity](./performance.md) for the current numbers.
 
 ## Phase 22 — Consolidation and Measurement ✅
 
@@ -48,11 +86,12 @@ release-tooling fixes, identifier-quoting hardening, module splits along existin
 and an unsound advisory in a transitive dependency resolved by taking the upstream patch.
 
 **The measurement work produced the most useful result.** Point lookups turn out to be
-**O(1)** from ten thousand entries to a million (~7.5 µs throughout), and a `path_glob`
+**O(1)** from ten thousand entries to a million (~10 µs throughout), and a `path_glob`
 with a leading literal is equally flat. The real cost is a JSON field query with a sort —
-about **4 seconds per million entries**, because no index can serve an `ORDER BY` on a
-JSON field. See [Performance and Capacity](./performance.md) for the full profile and
-what to do about it.
+just over **2 seconds per million entries** (reduced by Phase 23's query-execution work
+from the original ~3.9 s), because no index can serve an `ORDER BY` on a JSON field. See
+[Performance and Capacity](./performance.md) for the full, current profile and what to do
+about it.
 
 ## Phase 21 — Stabilization and Compatibility Recovery ✅
 
@@ -76,7 +115,7 @@ remain the sole copies.
 | M4 ✅ | Completed Jul 28 | Declared MSRV and dependency-security policy are verified |
 | M5 ✅ | Completed Jul 28 | Async/watcher failure handling and highest-risk maintainability debt are addressed |
 | M6 ✅ | Completed Jul 30 | CI, documentation, release gates, and fresh RC evidence agree |
-| M7 | Next; only milestone remaining | Independent architecture review and owner release decision |
+| M7 ✅ | Completed Jul 30 | Independent architecture review and owner release decision |
 
 Two bounded residual corrections—partial-hash `explain` comparison and the
 CLI import overwrite contract—are complete with regression evidence. They do not
@@ -153,7 +192,8 @@ progress to stderr. Both were invisible on a maintainer host with every tool
 installed and a warm cache. A restricted `PATH` and an empty `CARGO_HOME` are now
 standing verification requirements for release-tooling changes.
 
-M7 is the only remaining milestone. These closures authorize no release action.
+These closures authorize no release action; M7 (the independent architecture review and owner
+release decision) is what did — see above.
 
 The virtual-workspace relocation at `fe9fe88` was accepted for continued
 development. Its recorded legal-file publication blocker never existed and was
@@ -166,9 +206,14 @@ the repository-root
 [ROADMAP.md](https://github.com/nabbisen/localcache-rs/blob/main/ROADMAP.md).
 Dates are targets; no milestone is complete until its exit gate passes.
 
-## Future directions
+## Future / unscheduled
 
-- Performance tuning for very large namespaces (> 1M entries)
-- Cross-process shared-cache via named shared memory (beyond RFC 004 scope)
-- `#[async_test]` proc-macro wrapper for unified async test authoring across
-  runtime backends (deferred from RFC 005)
+- **Cross-process shared-cache via named shared memory (beyond RFC 004 scope)** — deferred,
+  blocked on a stated use case from the owner. RFC 004 delivered read-only shared memory;
+  cross-process read-write is a different design (multi-reader/one-writer and symmetric
+  multi-writer are not the same problem).
+
+Two items previously listed here are resolved: performance tuning for very large namespaces was
+measured and largely addressed in Phase 23 (see [Performance and Capacity](./performance.md)), and
+the `#[async_test]` proc-macro wrapper was evaluated and **not pursued** — a `macro_rules!` helper
+removed the only real test duplication without a new crate or dependency.

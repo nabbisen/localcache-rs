@@ -45,9 +45,12 @@ println!("entries: {}", stats.total_entries);
 println!("bytes:   {}", stats.total_payload_bytes);
 ```
 
-## `QueryBuilder` (requires `json` feature)
+## `QueryBuilder`
 
-`QueryBuilder` scans entries and filters by payload content.
+`QueryBuilder` filters and sorts entries. Path filters, pagination, and
+non-field sorting (by path, `updated_at`, or `last_accessed_at`) are always
+available. Only payload predicates and sorting by a payload field
+(`order_by_field`) require the `json` feature — see the tables below.
 Payloads are evaluated as `serde_json::Value`, so any codec works.
 
 ```rust
@@ -78,6 +81,9 @@ let results = engine.query()
 | `.index_hint(name)` | Nominate a SQLite index for the path-listing scan |
 | `.dry_run()` | Return `EXPLAIN QUERY PLAN` output, plus which execution path `run()` would take, without loading payloads |
 
+`path_like`'s pattern uses `\` as its `LIKE` escape character. A literal `%`, `_`, or `\` must be
+written as `\%`, `\_`, or `\\`. This matters for Windows paths, whose separator is `\`.
+
 ### Payload predicates *(require `json` feature)*
 
 | Method | Description |
@@ -104,6 +110,9 @@ engine.query()
 ```
 
 ### Pagination
+
+`offset` and `limit` count only entries that decode successfully; entries that cannot be decoded
+are skipped, never counted.
 
 ```rust
 let page_size = 20;

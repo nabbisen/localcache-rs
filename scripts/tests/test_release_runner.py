@@ -283,21 +283,18 @@ class ReleaseRunnerTests(unittest.TestCase):
         # Demonstrates the fixed defect directly: before M6d this failed
         # because README.md/docs said 0.20.1 while Cargo.toml said 0.20.0.
         #
-        # RFC 022 R3 (Q0d): the gate was widened from a three-file hand list
-        # to every docs/src/**/*.md page, and now correctly fails on five
+        # RFC 022 R3 (Q0d) widened the gate from a three-file hand list to
+        # every docs/src/**/*.md page, and it correctly failed on five
         # pre-existing stale "0.19" declaration lines across three pages
         # (docs/src/async.md, docs/src/cookbook.md, docs/src/features.md)
-        # that the narrow gate never covered. Q0d deliberately leaves them
-        # unfixed -- Q0e's job -- so this asserts today's real, known
-        # failure rather than a success the repo does not yet have. Q0e
-        # must flip this back to a bare (non-raising) call once it fixes
-        # those five lines.
+        # that the narrow gate never covered. Q0d deliberately left them
+        # unfixed and this test deliberately asserted that failure; Q0e
+        # (RFC 022 R5) fixed those five lines, so this asserts success again.
         root = SCRIPT.resolve().parents[1]
         with (root / "Cargo.toml").open("rb") as file:
             document = tomllib.load(file)
         version = document["workspace"]["package"]["version"]
-        with self.assertRaisesRegex(RUNNER.ReleaseError, "stale version reference"):
-            RUNNER.verify_version_references(root, version)
+        RUNNER.verify_version_references(root, version)
         RUNNER.verify_changelog_has_coming_version_section(root, version)
 
     def test_failed_gate_is_logged_and_fails_closed(self) -> None:

@@ -12,8 +12,11 @@ use crate::error::LocalFileCacheError;
 
 /// Async wrapper around [`CacheEngine`].
 ///
-/// Every blocking operation runs on `tokio::task::spawn_blocking`.
-/// `AsyncCacheEngine` is `Clone` — all clones share the same engine.
+/// Every blocking operation runs on a `spawn_blocking`-equivalent from
+/// whichever async-runtime Cargo feature is active — Tokio (`async`),
+/// `async-std`, or `smol`, in that priority order when more than one is
+/// enabled. `AsyncCacheEngine` is `Clone` — all clones share the same
+/// engine.
 ///
 /// ```no_run
 /// use localcache::{AsyncCacheEngine, CacheOptions, ChangeDetectionMode};

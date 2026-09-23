@@ -16,6 +16,7 @@ CacheEngine<T>          — the main entry point
   ├── keys / list_entries / entry_count / cache_stats
   ├── preload           → PreloadReport
   ├── explain           → Diagnosis
+  ├── scan_dir / scan_dir_filtered
   ├── query()           → QueryBuilder<T>          (path filters always; payload predicates require json)
   ├── export_entries / import_entries / import_from / namespace_copy
   ├── namespace_list
@@ -26,6 +27,14 @@ CacheEngine<T>          — the main entry point
   ├── watcher()         → CacheWatcher<T>          (watching feature)
   └── debounced_watcher() → CacheDebouncedWatcher<T>  (watching feature)
 
+ConnectionPool<T>       — single shared connection; Clone + Send + Sync
+  ├── open(opts) / with(|engine| …) / with_mut(|engine| …)   (escape hatch to the inner CacheEngine)
+  ├── get / get_if_fresh / set / remove / batch_get / batch_get_fresh / batch_set
+  ├── check_status / check_status_batch / contains / explain
+  ├── keys / list_entries / entry_count / cache_stats
+  ├── scan_dir / scan_dir_filtered
+  └── query_run(|q| …) / query_dry_run(|q| …)
+
 ReadPool<T>             — N read-only connections; Clone + Send + Sync
   ├── open(opts, size) / CacheEngineBuilder::build_read_pool(size)
   ├── get / get_if_fresh / batch_get / batch_get_fresh
@@ -34,6 +43,22 @@ ReadPool<T>             — N read-only connections; Clone + Send + Sync
   ├── scan_dir / scan_dir_filtered
   ├── query_run(|q| …) / query_dry_run(|q| …)
   └── size()
+
+CacheWatcher<T>         (watching feature; via CacheEngine::watcher())
+  ├── watch(path) / unwatch(path) / watch_dir(dir) / unwatch_dir(dir)
+  ├── events()          → &Receiver<WatchEvent>
+  ├── watched_count()   — entries currently cached in the watcher's engine snapshot
+  ├── registration_errors() → &[PathRegistrationError]
+  └── dropped_event_count() / failed_invalidation_count()
+
+CacheDebouncedWatcher<T>   (watching feature; via CacheEngine::debounced_watcher(debounce))
+  ├── watch_dir(dir) / unwatch_dir(dir)   (directory-only — no per-file watch/unwatch)
+  ├── events()          → &Receiver<WatchEvent>
+  ├── registration_errors() → &[PathRegistrationError]
+  └── dropped_event_count() / failed_invalidation_count()
+
+shared_engine(opts) → SharedEngine<T>   — SharedEngine<T> = Arc<Mutex<CacheEngine<T>>>;
+                                           the escape hatch behind ConnectionPool
 ```
 
 ### Path-index identifier boundary
@@ -77,6 +102,7 @@ the batch methods, one such error per requested path. See
 |---|---|
 | `CacheEntry<T>` | Payload + path + metadata |
 | `EntryInfo` | Metadata only (no payload) |
+| `FileMetadata` | mtime (nanoseconds) + file_size + optional hash, the public-facing shape of on-disk metadata |
 | `CacheStats` | Aggregate DB statistics |
 | `PreloadReport` | Results from `preload()` |
 | `ExportRecord` | Portable serialised entry |
@@ -84,7 +110,8 @@ the batch methods, one such error per requested path. See
 | `MetadataDiff` | mtime / file_size comparison |
 | `PayloadVersionInfo` | Version stored vs expected |
 | `BatchSetReport` | Results from `batch_set()` |
-| `WatchEvent` | File-system invalidation event |
+| `WatchEvent` *(watching)* | File-system invalidation event |
+| `PathRegistrationError` *(watching)* | One path that failed OS-level watch registration at construction time; see `registration_errors()` |
 
 ## Public enums
 

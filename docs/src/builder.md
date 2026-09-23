@@ -60,16 +60,40 @@ Selects the payload serialisation format.  `Codec::Json` requires the
 
 **Default**: `Codec::Bincode`
 
+### `journal_mode(mode)`
+
+SQLite journal mode: `JournalMode::Wal`, `Delete`, or `Memory`.
+
+**Default**: `JournalMode::Wal`
+
+### `synchronous(mode)`
+
+SQLite `synchronous` pragma: `SynchronousMode::Off`, `Normal`, `Full`, or `Extra`.
+
+**Default**: `SynchronousMode::Normal`
+
 ### `ttl(duration)` / `no_ttl()`
 
 Time-to-live for cache entries.  Entries older than `duration` are treated
-as stale by `get_if_fresh` and `check_status`.
+as stale by `get_if_fresh` and `check_status`. TTL has **one-second resolution**
+(`updated_at` is stored in Unix seconds): a duration under one second makes
+every entry immediately stale, since even an entry read back in the same
+second as it was written already exceeds it. **From v0.22.0**, a TTL under
+one second is rejected at open instead of silently accepted as it is today.
 
 ### `max_entries(n)`
 
-Cap the namespace at `n` entries.  When the limit is exceeded after a
-`set`, the **least recently accessed** entries are removed (true LRU based
-on `last_accessed_at`).
+Cap the namespace at `n` entries. Eviction removes the entries with the
+oldest `last_accessed_at` first — **never-read entries first** (`last_accessed_at
+== 0`), then oldest `updated_at`, then lowest `id` as a final deterministic
+tiebreak. **A write never evicts what it just wrote**: an oversized `batch_set`
+stores everything it reports as succeeded, and the bound is restored by the
+*next* write, not necessarily within the same call. `max_entries(0)` keeps
+only the most recently written entry. **From v0.22.0**, `max_entries(0)` and
+a `batch_set` larger than `max_entries` will be rejected with an error
+instead of silently accepted as they are today. The bound is enforced only
+by `set`/`batch_set` — it is **not** enforced by `import_entries`,
+`import_from`, or `namespace_copy`.
 
 ### `payload_version(v)`
 
@@ -154,11 +178,11 @@ let watcher = engine.watcher()?;  // registers directories, not individual files
 
 ### `build()`
 
-Consumes the builder and opens a [`CacheEngine<T>`].
+Consumes the builder and opens a `CacheEngine<T>`.
 
 ### `build_read_pool(size)`
 
-Consumes the builder and opens a read-only [`ReadPool<T>`] of `size`
+Consumes the builder and opens a read-only `ReadPool<T>` of `size`
 concurrent connections.  All builder options are forwarded to each slot.
 `read_only` is forced `true`.
 

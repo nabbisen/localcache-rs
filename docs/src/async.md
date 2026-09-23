@@ -1,14 +1,12 @@
 # Async & Thread Safety
 
-# Async & Thread Safety
-
 ## `AsyncCacheEngine<T>`
 
 Available with the `async` (Tokio), `async-std`, or `smol` Cargo features.
 Every blocking operation runs on a `spawn_blocking`-equivalent from the
 active runtime, ensuring the async executor thread is never blocked by
 SQLite I/O.  The default and most-documented backend is Tokio — see
-[Alternative async runtimes](#alternative-async-runtimes-v0170) below for
+[Alternative async runtimes](#alternative-async-runtimes) below for
 the others.
 
 ```rust
@@ -136,8 +134,10 @@ let count = shared.lock().unwrap().entry_count()?;
 `localcache` uses SQLite's **WAL (Write-Ahead Logging)** journal mode by
 default, which allows one writer and multiple concurrent readers.
 
-- `CacheEngine` is **not** `Send` — SQLite connections cannot be shared
-  across threads.
+- `CacheEngine` is `Send` but not `Sync` — it can be moved to another
+  thread, but not shared across threads through a `&CacheEngine` (an
+  `Arc<CacheEngine<T>>` is therefore not itself `Send`, since that
+  requires `T: Sync`).
 - `ConnectionPool` and `AsyncCacheEngine` both solve this by wrapping the
   engine in `Arc<Mutex<…>>` and holding the lock only for the duration of
   each operation.
@@ -151,10 +151,10 @@ alternative runtime features instead:
 
 ```toml
 # async-std backend
-localcache = { version = "0.19", features = ["async-std"] }
+localcache = { version = "0.21.3", features = ["async-std"] }
 
 # smol backend
-localcache = { version = "0.19", features = ["smol"] }
+localcache = { version = "0.21.3", features = ["smol"] }
 ```
 
 The public API of `AsyncCacheEngine` is identical regardless of which

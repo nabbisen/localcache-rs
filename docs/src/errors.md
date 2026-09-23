@@ -18,9 +18,9 @@ Existing exhaustive matches must add a `_` arm to upgrade to v0.21.0.
 | `InvalidPath { path }` | Path cannot be represented as an exact SQLite `TEXT` key | Use a valid UTF-8 filesystem/database path |
 | `ReadOnly` | Mutation requested on a read-only engine | Use a deliberately writable engine if mutation is intended |
 | `UnknownEncoding(String)` | Stored encoding tag not recognised | Wrong feature enabled for decoding |
-| `PayloadVersionMismatch { stored, expected }` | Version tag mismatch | Call `purge_stale_versions()` |
+| `PayloadVersionMismatch { stored, expected }` | *Reserved; not currently returned* — see below | n/a |
 | `Poisoned { resource: &'static str }` | A lock guarding shared cache state was poisoned by a panic in another thread | The poisoning caller's bug, not yours — recreate the pool/engine/watcher |
-| `EncryptionError(String)` *(encryption)* | Wrong key or corrupt data | Verify encryption key |
+| `EncryptionError(String)` *(encryption)* | Wrong key or corrupt data — *not* a missing feature or a missing key (see below) | Verify encryption key |
 | `AsyncTaskPanicked` *(async / async-std / smol)* | `spawn_blocking` task panicked | Check payload type and encoding |
 
 ### v0.21.0 migration note
@@ -30,11 +30,14 @@ codec failures:
 
 - **Add a `_` arm** to any exhaustive `match` on `LocalFileCacheError` — the
   enum is now `#[non_exhaustive]`.
-- **Lock poisoning now returns `Poisoned`**, not `UnsupportedFeature`. This
-  affects `ConnectionPool`, `AsyncCacheEngine`, `CacheWatcher` construction,
-  and `ReadPool` (a **behaviour change**: `ReadPool`'s read methods were
-  previously infallible under poisoning and silently recovered; they now
-  return `Poisoned` instead).
+- **Lock poisoning now returns `Poisoned`**, not `UnsupportedFeature`. At
+  v0.21.0 this affected `ConnectionPool`, `AsyncCacheEngine`, `CacheWatcher`
+  construction, and `ReadPool` (a **behaviour change**: `ReadPool`'s read
+  methods were previously infallible under poisoning and silently
+  recovered; they now return `Poisoned` instead). `CacheWatcher`
+  construction no longer has a lock to poison as of v0.21.4 (RFC 022 R9):
+  the helper-connection lock that produced `Poisoned { resource:
+  "CacheWatcher" }` was removed, not merely made harder to reach.
 - **JSON codec failures now return `Serialization`**, not
   `UnsupportedFeature`. Code matching `UnsupportedFeature` to catch JSON
   encode/decode errors stops matching.
@@ -91,8 +94,13 @@ match engine.set("file.txt", &payload) {
 
 ### Version migration
 
-When `payload_version` is bumped, old entries return
-`PayloadVersionMismatch`.  Purge them all at once:
+`PayloadVersionMismatch` is reserved and not currently returned by any
+operation. When `payload_version` is bumped, an entry whose stored version
+no longer matches is instead treated exactly like a missing or stale
+entry: `get_if_fresh` returns `None`, and `check_status` returns
+`CacheStatus::Stale`. Purge outdated entries all at once with
+`purge_stale_versions()`, which finds them the same way — by comparing the
+stored version, not by matching this error:
 
 ```rust
 let purged = engine.purge_stale_versions()?;
@@ -111,6 +119,12 @@ match engine.get("file.txt") {
     other => { other?; }
 }
 ```
+
+Two related, but distinct, failures return different variants: decoding an encrypted entry
+without the `encryption` Cargo feature compiled in returns `UnknownEncoding`, and decoding one
+with the feature compiled in but no encryption key configured on the engine returns
+`UnsupportedFeature`. `EncryptionError` itself only covers an actual decrypt failure — the wrong
+key, or corrupted stored data.
 
 ## Using `?` with custom error types
 

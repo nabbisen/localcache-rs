@@ -26,11 +26,10 @@ let engine = CacheEngine::<Vec<f32>>::builder()
 engine.set("document.txt", &embedding)?;
 
 // Start watching — auto-registers all currently cached paths.
-let watcher = engine.watcher()?;
-let rx = watcher.events();
+let mut watcher = engine.watcher()?;
 
 // In your event loop:
-for event in rx.iter() {
+while let Ok(event) = watcher.events().recv() {
     match event.reason {
         InvalidationReason::FileModified => println!("changed: {}", event.path.display()),
         InvalidationReason::FileRemoved  => println!("deleted: {}", event.path.display()),
@@ -92,9 +91,12 @@ let engine = CacheEngine::<Vec<f32>>::builder()
     .build()?;
 
 // After preload(), all directories in the cache are registered recursively.
-engine.preload("/data", &ScanOptions { recursive: true, ..Default::default() }, |p| {
-    Ok(compute(&p)?)
-})?;
+engine.preload(
+    "/data",
+    ScanOptions { recursive: true, ..Default::default() },
+    false,
+    |p| Ok(compute(&p)?),
+)?;
 let watcher = engine.watcher()?;  // auto-registers parent dirs
 ```
 
@@ -134,25 +136,28 @@ Internally this uses
 
 ## Spawning a watcher thread
 
-To keep the watcher alive while your main thread does other work:
+`CacheEngine` is `Send` but not `Sync` (see [Async support](./async.md)), so it cannot be shared
+across threads behind an `Arc` — `Arc<CacheEngine<T>>` is itself not `Send`, since that requires
+`CacheEngine<T>: Sync`. The pattern that does work is thread ownership: open a separate engine
+handle to the same database file inside the thread that needs one, rather than sharing a single
+engine.
 
 ```rust
-use std::sync::{Arc, Mutex};
-
-let engine = Arc::new(engine);
-let engine_watcher = Arc::clone(&engine);
-
 let handle = std::thread::spawn(move || {
-    let watcher = engine_watcher.watcher().unwrap();
+    let engine = CacheEngine::<Vec<f32>>::builder()
+        .database("cache.sqlite3")
+        .build()
+        .unwrap();
+    let watcher = engine.watcher().unwrap();
     let rx = watcher.events();
     for event in rx.iter() {
         // handle events…
         let _ = event;
     }
-    // watcher dropped here when thread exits
+    // watcher (and engine) dropped here when thread exits
 });
 
-// Main thread continues using engine normally.
+// Main thread continues using its own engine normally.
 engine.set("file.txt", &payload)?;
 ```
 
@@ -195,7 +200,7 @@ semantics.
 | Platform | Backend |
 |---|---|
 | Linux | `inotify` |
-| macOS | `kqueue` |
+| macOS | `FSEvents` |
 | Windows | `ReadDirectoryChangesW` |
 | Other | fallback polling |
 

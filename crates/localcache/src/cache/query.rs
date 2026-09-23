@@ -187,6 +187,10 @@ where
     // ------------------------------------------------------------------
 
     /// Restrict to entries whose stored path matches a SQL LIKE pattern.
+    ///
+    /// `\` is the pattern's escape character: a literal `%`, `_`, or `\`
+    /// must be written as `\%`, `\_`, or `\\`. This matters for Windows
+    /// paths, whose separator is `\`.
     pub fn path_like(mut self, pattern: impl Into<String>) -> Self {
         self.path_like = Some(pattern.into());
         self
@@ -268,6 +272,7 @@ where
         self.path_glob = Some(pattern.into());
         self
     }
+    /// Force the query to use a specific index via SQLite's `INDEXED BY`.
     ///
     /// Requires the full name of an allowed main-schema index. Both terminal
     /// operations validate its complete catalog shape before generating

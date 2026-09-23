@@ -8,7 +8,6 @@ use tempfile::TempDir;
 #[allow(unused_imports)]
 use localcache::{CacheEngine, CacheOptions};
 
-#[cfg(feature = "async")]
 // ====================================================================
 #[test]
 fn contains_returns_true_for_cached_entry() {

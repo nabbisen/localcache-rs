@@ -9,7 +9,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-RC placeholder date: this section targets the coming v0.21.4 release closing Phase 24 Q0a–Q0e
+RC placeholder date: this section targets the coming v0.21.4 release closing Phase 24 Q0
 (RFC 022, correctness and contract reconciliation). The exact release date is set at owner
 authorization, not before.
 
@@ -76,7 +76,9 @@ authorization, not before.
   and now opens exactly one connection instead of one that was immediately discarded. Separately,
   `debounced_watcher`'s invalidation callback no longer sends a notification when its internal
   lock cannot be taken — it previously did, incorrectly claiming an invalidation that never
-  happened.
+  happened. `watcher()`/`debounced_watcher()` construction can no longer return
+  `LocalFileCacheError::Poisoned { resource: "CacheWatcher" }`: the helper-connection lock that
+  produced it was removed, not merely made harder to reach.
 - `scripts/check_advisories.py`'s `live_fetch` (RFC 022 R3) no longer retries a definitive HTTP
   error response. `HTTPError` is a subclass of `URLError` (in turn an `OSError`), so an HTTP error
   status raised as an exception by `urlopen` — a 404, for example — was caught by the same broad
@@ -113,6 +115,46 @@ authorization, not before.
   pattern) instead of `cargo install mdbook --vers "^0.5"`.
 - `scripts/release-tools.toml`'s hash pins for `scripts/release.py` and
   `scripts/check_advisories.py` are updated to match this slice's changes (RFC 022 R3).
+- Code hygiene, no behaviour change (RFC 022 R4): the CLI's inline `#[cfg(test)] mod tests`
+  moved to `crates/cli/src/main/tests.rs`, a pure move with the same test count, matching
+  `crates/cli/src/text.rs`'s existing pattern. The CLI's `unsafe extern "C" fn isatty` FFI is
+  replaced by `std::io::IsTerminal`, identical behaviour on unix and unchanged on other
+  platforms; `git grep -n unsafe -- crates` now shows only comments. The stray
+  `#[cfg(feature = "async")]` above `contains_returns_true_for_cached_entry`
+  (`crates/localcache/tests/query.rs`) is removed, so the test runs with no features.
+  `LocalFileCacheError::PayloadVersionMismatch` is documented as reserved and not currently
+  returned. `QueryBuilder::index_hint`'s rustdoc gets its missing one-line summary;
+  `path_filter_clauses`' comment no longer claims `path_like` has no `ESCAPE`; the empty
+  duplicate "Builder entrypoint" banner in `engine.rs` is removed; `CacheEngine::query`'s
+  rustdoc now names the three RFC 021 execution tiers instead of describing every query as a
+  linear scan.
+- Documentation and rustdoc reconciliation against the code as it stands after every Phase 24
+  Q0 code slice (RFC 022 R5, including every *(Amendment 2)* item): corrected claims about
+  `path_like`'s `\` escape character, `ReadPool::get`'s `last_accessed_at` behaviour,
+  `ReadPool::cache_stats` (no hit-rate), `AsyncCacheEngine`'s active-runtime dispatch (not only
+  Tokio), `CacheWatcher::watch` (returns an error for a nonexistent path, not a silent no-op),
+  `LocalFileCacheError::EncryptionError`'s actual causes, TTL's one-second resolution, and that
+  `encryption` covers payload content only — paths, namespaces, sizes, mtimes, hashes, and
+  timestamps stay unencrypted. `docs/src/architecture.md` now describes schema v5 (both
+  built-in indexes, nanosecond `mtime`, the `ON CONFLICT … DO UPDATE` upsert, and the
+  tag-driven decode pipeline) instead of the stale v4 description. Two non-compiling examples
+  are fixed: `docs/src/watching.md`'s thread-ownership example (`CacheEngine` is `Send` but not
+  `Sync`, so it cannot be shared via `Arc`) and its per-event loop (a borrow-checker conflict
+  between the event receiver and a later `watch()` call); `docs/src/cookbook.md`'s
+  "Query + export" recipe no longer calls `export_entries()` once per result. `docs/src/cli.md`
+  documents `migrate` as a copy (not a move) with its defaults, `copy --to`'s default, that
+  `check`/`inspect` force `MetadataThenFullHash`, and that every writable command opens with
+  WAL and `synchronous = NORMAL`. `docs/src/roadmap.md` now covers Phase 23 and the Phase 24
+  outline instead of stopping at Phase 22 with a stale "M7 next". `README.md`'s features table
+  lists all ten Cargo features, Design Highlights adds `MetadataThenPartialHash` and `ReadPool`
+  and qualifies "no background threads" for `watching`, and "Project source archives" moves
+  below Design Highlights.
+- `CHANGELOG.md`'s compare links now use this repository's actual, unprefixed tag names
+  (`git tag` shows `0.19.1`, not `v0.19.1`) and cover every release through 0.21.3, including
+  0.20.1–0.21.3, which had none before. The thirteen release headings for 0.1.0 through 0.13.0
+  that read 2025 are corrected to their actual tag date, 2026-05-03 — confirmed via
+  `git tag --format='%(refname:short) %(creatordate:short)'`; the same check found two further
+  stale dates outside that named set, 0.16.2 and 0.20.0, corrected the same way.
 
 ## [0.21.3] — 2026-08-04
 
@@ -427,7 +469,7 @@ by the project owner the same day.
 
 ---
 
-## [0.20.0] — 2026-06-06
+## [0.20.0] — 2026-06-07
 
 ### Fixed — mtime nanosecond precision (schema v5)
 
@@ -748,7 +790,7 @@ various transitive deps updated to their latest compatible patch versions.
 
 ---
 
-## [0.16.2] — 2026-05-05
+## [0.16.2] — 2026-06-06
 
 ### Added
 
@@ -991,7 +1033,7 @@ various transitive deps updated to their latest compatible patch versions.
 
 ---
 
-## [0.13.0] — 2025-05-03
+## [0.13.0] — 2026-05-03
 
 ### Added
 
@@ -1032,65 +1074,70 @@ various transitive deps updated to their latest compatible patch versions.
 
 ---
 
-## [0.12.0] — 2025-05-03
+## [0.12.0] — 2026-05-03
 Benchmarks, `ConnectionPool`, `CacheOptionsExt`, examples, docs.rs metadata.
 
-## [0.11.0] — 2025-05-03
+## [0.11.0] — 2026-05-03
 `QueryBuilder` ordering / pagination, `touch`, persistent indexes, CLI `query`.
 
-## [0.10.0] — 2025-05-03
+## [0.10.0] — 2026-05-03
 `contains`, `keys`, `QueryBuilder` predicates, CLI `copy` / `migrate`.
 
-## [0.9.0] — 2025-05-03
+## [0.9.0] — 2026-05-03
 `export_entries` / `import_entries` / `import_from`, CLI `export` / `import`.
 
-## [0.8.0] — 2025-05-03
+## [0.8.0] — 2026-05-03
 Cargo workspace, `localcache-cli`, `on_evict`, multi-group brace expansion.
 
-## [0.7.0] — 2025-05-02
+## [0.7.0] — 2026-05-03
 Builder API, `cache_stats`, `check_status_batch`, key rotation.
 
-## [0.6.0] — 2025-05-02
+## [0.6.0] — 2026-05-03
 AES-256-GCM encryption, true LRU, glob scan, `list_entries`, schema v4.
 
-## [0.5.0] — 2025-05-02
+## [0.5.0] — 2026-05-03
 JSON codec, `max_entries`, `scan_dir_filtered`, version migration.
 
-## [0.4.0] — 2025-05-02
+## [0.4.0] — 2026-05-03
 `AsyncCacheEngine`, zstd, `scan_dir`, payload versioning.
 
-## [0.3.0] — 2025-05-02
+## [0.3.0] — 2026-05-03
 Partial hash, streaming bincode, read-only, in-memory backend.
 
-## [0.2.0] — 2025-05-02
+## [0.2.0] — 2026-05-03
 Namespaces, batch ops, TTL, PRAGMAs, schema migration.
 
-## [0.1.0] — 2025-05-02
+## [0.1.0] — 2026-05-03
 Initial release.
 
-[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/v0.16.2...HEAD
-[0.20.0]: https://github.com/nabbisen/localcache-rs/compare/v0.19.1...v0.20.0
-[0.19.1]: https://github.com/nabbisen/localcache-rs/compare/v0.19.0...v0.19.1
-[0.19.0]: https://github.com/nabbisen/localcache-rs/compare/v0.18.0...v0.19.0
-[0.18.0]: https://github.com/nabbisen/localcache-rs/compare/v0.17.0...v0.18.0
-[0.17.0]: https://github.com/nabbisen/localcache-rs/compare/v0.16.2...v0.17.0
-[0.16.2]: https://github.com/nabbisen/localcache-rs/compare/v0.16.1...v0.16.2
-[0.16.1]: https://github.com/nabbisen/localcache-rs/compare/v0.16.0...v0.16.1
-[0.16.0]: https://github.com/nabbisen/localcache-rs/compare/v0.15.0...v0.16.0
-[0.15.0]: https://github.com/nabbisen/localcache-rs/compare/v0.14.0...v0.15.0
-[0.14.0]: https://github.com/nabbisen/localcache-rs/compare/v0.13.2...v0.14.0
-[0.13.2]: https://github.com/nabbisen/localcache-rs/compare/v0.13.1...v0.13.2
-[0.13.1]: https://github.com/nabbisen/localcache-rs/compare/v0.13.0...v0.13.1
-[0.13.0]: https://github.com/nabbisen/localcache-rs/compare/v0.12.0...v0.13.0
-[0.12.0]: https://github.com/nabbisen/localcache-rs/compare/v0.11.0...v0.12.0
-[0.11.0]: https://github.com/nabbisen/localcache-rs/compare/v0.10.0...v0.11.0
-[0.10.0]: https://github.com/nabbisen/localcache-rs/compare/v0.9.0...v0.10.0
-[0.9.0]: https://github.com/nabbisen/localcache-rs/compare/v0.8.0...v0.9.0
-[0.8.0]: https://github.com/nabbisen/localcache-rs/compare/v0.7.0...v0.8.0
-[0.7.0]: https://github.com/nabbisen/localcache-rs/compare/v0.6.0...v0.7.0
-[0.6.0]: https://github.com/nabbisen/localcache-rs/compare/v0.5.0...v0.6.0
-[0.5.0]: https://github.com/nabbisen/localcache-rs/compare/v0.4.0...v0.5.0
-[0.4.0]: https://github.com/nabbisen/localcache-rs/compare/v0.3.0...v0.4.0
-[0.3.0]: https://github.com/nabbisen/localcache-rs/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/nabbisen/localcache-rs/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/nabbisen/localcache-rs/releases/tag/v0.1.0
+[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/0.21.3...HEAD
+[0.21.3]: https://github.com/nabbisen/localcache-rs/compare/0.21.2...0.21.3
+[0.21.2]: https://github.com/nabbisen/localcache-rs/compare/0.21.1...0.21.2
+[0.21.1]: https://github.com/nabbisen/localcache-rs/compare/0.21.0...0.21.1
+[0.21.0]: https://github.com/nabbisen/localcache-rs/compare/0.20.1...0.21.0
+[0.20.1]: https://github.com/nabbisen/localcache-rs/compare/0.20.0...0.20.1
+[0.20.0]: https://github.com/nabbisen/localcache-rs/compare/0.19.1...0.20.0
+[0.19.1]: https://github.com/nabbisen/localcache-rs/compare/0.19.0...0.19.1
+[0.19.0]: https://github.com/nabbisen/localcache-rs/compare/0.18.0...0.19.0
+[0.18.0]: https://github.com/nabbisen/localcache-rs/compare/0.17.0...0.18.0
+[0.17.0]: https://github.com/nabbisen/localcache-rs/compare/0.16.2...0.17.0
+[0.16.2]: https://github.com/nabbisen/localcache-rs/compare/0.16.1...0.16.2
+[0.16.1]: https://github.com/nabbisen/localcache-rs/compare/0.16.0...0.16.1
+[0.16.0]: https://github.com/nabbisen/localcache-rs/compare/0.15.0...0.16.0
+[0.15.0]: https://github.com/nabbisen/localcache-rs/compare/0.14.0...0.15.0
+[0.14.0]: https://github.com/nabbisen/localcache-rs/compare/0.13.2...0.14.0
+[0.13.2]: https://github.com/nabbisen/localcache-rs/compare/0.13.1...0.13.2
+[0.13.1]: https://github.com/nabbisen/localcache-rs/compare/0.13.0...0.13.1
+[0.13.0]: https://github.com/nabbisen/localcache-rs/compare/0.12.0...0.13.0
+[0.12.0]: https://github.com/nabbisen/localcache-rs/compare/0.11.0...0.12.0
+[0.11.0]: https://github.com/nabbisen/localcache-rs/compare/0.10.0...0.11.0
+[0.10.0]: https://github.com/nabbisen/localcache-rs/compare/0.9.0...0.10.0
+[0.9.0]: https://github.com/nabbisen/localcache-rs/compare/0.8.0...0.9.0
+[0.8.0]: https://github.com/nabbisen/localcache-rs/compare/0.7.0...0.8.0
+[0.7.0]: https://github.com/nabbisen/localcache-rs/compare/0.6.0...0.7.0
+[0.6.0]: https://github.com/nabbisen/localcache-rs/compare/0.5.0...0.6.0
+[0.5.0]: https://github.com/nabbisen/localcache-rs/compare/0.4.0...0.5.0
+[0.4.0]: https://github.com/nabbisen/localcache-rs/compare/0.3.0...0.4.0
+[0.3.0]: https://github.com/nabbisen/localcache-rs/compare/0.2.0...0.3.0
+[0.2.0]: https://github.com/nabbisen/localcache-rs/compare/0.1.0...0.2.0
+[0.1.0]: https://github.com/nabbisen/localcache-rs/releases/tag/0.1.0

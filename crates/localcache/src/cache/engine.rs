@@ -1054,10 +1054,6 @@ where
     }
 
     // ------------------------------------------------------------------
-    // Builder entrypoint
-    // ------------------------------------------------------------------
-
-    // ------------------------------------------------------------------
     // Lightweight existence / key queries
     // ------------------------------------------------------------------
 
@@ -1076,6 +1072,9 @@ where
     ///
     /// Optionally filter by a SQLite `LIKE` pattern applied to the stored
     /// path string (`%` matches any sequence, `_` matches one character).
+    /// `\` is the pattern's escape character: a literal `%`, `_`, or `\`
+    /// must be written as `\%`, `\_`, or `\\`. This matters for Windows
+    /// paths, whose separator is `\`.
     ///
     /// # Example
     ///
@@ -1100,9 +1099,15 @@ where
     /// Return a [`crate::QueryBuilder`] for filtering entries by payload
     /// content.
     ///
-    /// The query performs a linear scan over all entries in the namespace
-    /// (subject to optional `path_like` filtering).  Suitable for small-to-
-    /// medium caches or infrequent queries.
+    /// `run()`/`dry_run()` route the query through one of three execution
+    /// tiers: no field predicate or sort decodes payloads only for rows
+    /// surviving `offset`/`limit`; a `field_gt`/`field_lt` predicate or sort
+    /// on a JSON-encoded namespace pushes the comparison into SQL via
+    /// `json_extract` and still only decodes surviving rows; anything else
+    /// (an unpushable predicate, or a non-JSON encoding) decodes every
+    /// candidate payload before ordering and limiting. Use
+    /// [`crate::QueryBuilder::dry_run`] to see which tier a given query
+    /// takes and why.
     ///
     /// Payload predicates serialise the decoded value through
     /// `serde_json::Value`, so they work with any codec; the `json` Cargo

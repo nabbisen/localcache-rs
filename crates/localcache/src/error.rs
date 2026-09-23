@@ -75,7 +75,10 @@ pub enum LocalFileCacheError {
     #[error("unknown payload encoding: {0}")]
     UnknownEncoding(String),
 
-    /// A payload's schema version does not match the configured version.
+    /// Reserved, and not currently returned by any operation. A stored
+    /// payload whose version does not match the configured version instead
+    /// makes `get_if_fresh` return `None` and `check_status` return
+    /// `CacheStatus::Stale`.
     #[error("payload version mismatch: stored={stored}, expected={expected}")]
     PayloadVersionMismatch { stored: u32, expected: u32 },
 
@@ -86,10 +89,14 @@ pub enum LocalFileCacheError {
     #[error("lock poisoned: {resource}")]
     Poisoned { resource: &'static str },
 
-    /// An AES-256-GCM encryption or decryption failure.
+    /// An AES-256-GCM encryption or decryption failure: wrong key or
+    /// corrupted data.
     ///
-    /// Possible causes: wrong key, corrupted data, missing `encryption` feature
-    /// when trying to decrypt an encrypted entry.
+    /// Two related failures return different variants, not this one: an
+    /// encrypted entry decoded without the `encryption` feature compiled in
+    /// returns [`LocalFileCacheError::UnknownEncoding`], and an encrypted
+    /// entry decoded with the feature compiled in but no key configured
+    /// returns [`LocalFileCacheError::UnsupportedFeature`].
     #[cfg(feature = "encryption")]
     #[error("encryption error: {0}")]
     EncryptionError(String),

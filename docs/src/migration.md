@@ -1,8 +1,8 @@
 # Migration Guide
 
-## 0.13.x → 0.14.x (bincode 1.x → 2.x)
+## 0.13.1 → 0.13.2 (bincode 1.x → 2.x)
 
-`localcache 0.14` upgraded `bincode` from 1.3.3 to 2.0.1.  The new version
+`localcache 0.13.2` upgraded `bincode` from 1.3.3 to 2.0.1.  The new version
 uses `config::legacy()` which produces **byte-identical output** to bincode
 1.x.  **Existing SQLite databases require no migration.**
 
@@ -12,13 +12,13 @@ The only breaking change is in the error type:
 code:
 
 ```rust
-// Before (0.13.x and earlier):
+// Before (0.13.1 and earlier):
 Err(LocalFileCacheError::Serialization(e)) => {
     // e: Box<bincode::ErrorKind>
     eprintln!("bincode error: {e:?}");
 }
 
-// After (0.14+):
+// After (0.13.2+):
 Err(LocalFileCacheError::Serialization(msg)) => {
     // msg: String
     eprintln!("serialisation error: {msg}");

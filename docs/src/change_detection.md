@@ -39,7 +39,12 @@ file (64 KiB each) using a `partial:` prefix on the stored hash.
 
 - **Good for large files** — catches most real-world changes (appends,
   truncations, header rewrites) without reading the whole file.
-- May miss changes in the middle of very large files.
+- **A file-size change is conclusive** — reported `Stale` immediately,
+  without hashing — and any change within the first or last 64 KiB is
+  caught by the partial hash. This mode detects any size change and any
+  change to the head or tail, but it does **not** detect a same-size
+  change confined to the middle of a file larger than 128 KiB — use
+  `MetadataThenFullHash` if that matters for your data.
 
 ```rust
 .change_detection(ChangeDetectionMode::MetadataThenPartialHash)

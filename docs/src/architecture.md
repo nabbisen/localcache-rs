@@ -5,19 +5,19 @@
 `localcache` uses a single **SQLite** file (via the `rusqlite` crate with
 bundled SQLite).  No daemon, no network, no external process.
 
-### Schema (v4)
+### Schema (v5)
 
 ```sql
 CREATE TABLE files (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     namespace         TEXT    NOT NULL DEFAULT 'default',
     path              TEXT    NOT NULL,
-    mtime             INTEGER NOT NULL,
+    mtime             INTEGER NOT NULL,        -- nanoseconds since the Unix epoch
     file_size         INTEGER NOT NULL,
     hash              TEXT,                    -- BLAKE3 hash (optional)
     updated_at        INTEGER NOT NULL,        -- Unix seconds of last write
     payload_version   INTEGER NOT NULL DEFAULT 0,
-    last_accessed_at  INTEGER NOT NULL DEFAULT 0,  -- Unix seconds of last read
+    last_accessed_at  INTEGER NOT NULL DEFAULT 0,  -- Unix seconds of last read; 0 = never read
     UNIQUE(namespace, path)
 );
 
@@ -27,7 +27,14 @@ CREATE TABLE payloads (
     encoding TEXT    NOT NULL DEFAULT 'raw',   -- codec/compression/encryption tag
     FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
 );
+
+CREATE INDEX idx_files_namespace_path ON files(namespace, path);
+CREATE INDEX idx_files_lru ON files(namespace, last_accessed_at, updated_at);
 ```
+
+`mtime` has been nanosecond-resolution since schema v5, so two writes to the same file within the
+same second are still detected as distinct. `idx_files_namespace_path` backs path lookups and
+`path_like`/`path_glob`/`path_in_dir` queries; `idx_files_lru` backs the eviction scan below.
 
 ### Encoding tags
 
@@ -60,9 +67,17 @@ engine.set(path, payload)
   │     codec (bincode / json)
   │     compress? (zstd)
   │     encrypt? (AES-256-GCM + nonce)
-  ├── repository::upsert()          → INSERT OR REPLACE INTO files + payloads
-  └── enforce_max_entries()         → delete_lru_n() + on_evict callback
+  │
+  ├── BEGIN IMMEDIATE
+  │     ├── repository::upsert_in_tx()   → INSERT ... ON CONFLICT(namespace, path) DO UPDATE
+  │     └── enforce_max_entries()        → evict_lru(), excluding the row(s) just written
+  ├── COMMIT
+  └── on_evict callback, once per evicted path
 ```
+
+The write and its eviction share **one** `IMMEDIATE` transaction: `Ok` means the entry was stored
+and the bound enforced; `Err` means nothing changed. A concurrent writer waits under the busy
+timeout rather than racing a deferred read-then-write.
 
 ## Read path
 
@@ -82,22 +97,23 @@ engine.get_if_fresh(path)
   └── touch_last_accessed()         → UPDATE last_accessed_at
 ```
 
-## LRU eviction
+## Eviction
 
-`last_accessed_at` is updated on every successful `get` or `get_if_fresh`.
-When `max_entries` is set, `enforce_max_entries` after each `set` runs:
+`last_accessed_at` reflects the last **read** — it is set on every successful `get`,
+`get_if_fresh`, and `touch`, and left untouched by a write to an existing entry. A brand-new row starts at
+`last_accessed_at = 0` ("never read"). When `max_entries` is set, `enforce_max_entries` after each
+`set`/`batch_set` selects eviction candidates in this order, oldest first:
 
-```sql
-DELETE FROM files
-WHERE namespace = ?
-  AND id IN (
-    SELECT id FROM files WHERE namespace = ?
-    ORDER BY last_accessed_at ASC, updated_at ASC
-    LIMIT ?
-  )
-```
+1. `last_accessed_at` ascending — never-read entries (`0`) sort first.
+2. `updated_at` ascending, as a tiebreak.
+3. `id` ascending, as a final, fully deterministic tiebreak.
 
-Entries with `last_accessed_at = 0` (never read) are evicted first.
+**A write never evicts what it just wrote.** The row(s) a `set`/`batch_set` call just inserted or
+updated are excluded from that call's own eviction candidates, even though a brand-new row's
+`last_accessed_at = 0` would otherwise make it the first entry eligible for eviction. An oversized
+`batch_set` therefore keeps everything it reports as stored; the bound is restored by the *next*
+write, not necessarily within the same call. `max_entries(0)` keeps only the most recently written
+entry. The bound is not enforced by `import_entries`/`import_from`.
 
 ## SQLite settings
 
@@ -117,6 +133,13 @@ User payload (T: Serialize)
 → BLOB stored in payloads.content
 ```
 
-The inverse is applied on read.  Encoding parameters are not stored
-per-entry — they are determined by the engine configuration.  The
-`encoding` tag verifies that the correct features are available.
+The inverse is applied on read, driven entirely by the stored `encoding` tag: which codec,
+whether to decompress, and whether to decrypt are all read from the tag, not from the engine's
+current configuration. Configuration supplies only the encryption key (when needed) — this is
+what lets different entries in the same namespace carry different encodings and still decode
+correctly.
+
+This is accurate about *configuration*, but which tags can be decoded **at all** is fixed by which
+Cargo features this build was compiled with: `zstd`/`json-zstd` need `compression`, `json*` needs
+`json`, and `*-aes256gcm` needs `encryption`. A tag this build cannot handle returns
+`UnknownEncoding` (`crates/localcache/src/serialization.rs`, `decode_payload`).

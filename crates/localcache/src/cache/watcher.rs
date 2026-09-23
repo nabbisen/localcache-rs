@@ -265,7 +265,9 @@ where
 
     /// Start watching an additional `path`.
     ///
-    /// Has no effect if the path is already watched or does not exist.
+    /// Has no effect if the path is already watched. Returns
+    /// [`LocalFileCacheError::UnsupportedFeature`] if the path does not
+    /// exist — this does not silently do nothing.
     pub fn watch<P: AsRef<Path>>(&mut self, path: P) -> Result<(), LocalFileCacheError> {
         self._os_watcher
             .watch(path.as_ref(), RecursiveMode::NonRecursive)

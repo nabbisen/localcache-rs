@@ -795,7 +795,8 @@ fn path_filter_clauses(
     let mut clauses: Vec<String> = vec!["namespace = ?".to_owned()];
     let mut params: Vec<String> = vec![namespace.to_owned()];
 
-    // path_like — SQL LIKE with no ESCAPE (caller controls metacharacters).
+    // path_like — SQL LIKE with `\` as the ESCAPE character, so a caller can
+    // match a literal `%`, `_`, or `\` by writing `\%`, `\_`, or `\\`.
     if let Some(pat) = pattern {
         clauses.push("path LIKE ? ESCAPE '\\'".to_owned());
         params.push(pat.to_owned());

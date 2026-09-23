@@ -5,7 +5,7 @@ only for what you use.
 
 ```toml
 [dependencies]
-localcache = { version = "0.19", features = ["async", "compression", "json"] }
+localcache = { version = "0.21.3", features = ["async", "compression", "json"] }
 ```
 
 ## Feature reference
@@ -104,6 +104,11 @@ Key rotation is supported via `engine.rotate_encryption_key(&new_key)`.
 > **Warning**: losing the encryption key makes all encrypted entries
 > permanently unreadable.
 
+> **Scope**: this encrypts **payload content only**. Paths, namespaces, file
+> sizes, modification times, content hashes, and timestamps are stored
+> unencrypted, and anyone who can read the database file can read them.
+> Enabling this feature does not encrypt the database file.
+
 ## tracing
 
 When enabled, `get`, `set`, and `check_status` emit `tracing::debug_span!`
@@ -148,7 +153,7 @@ application's responsibility.
 ## watching
 
 Provides reactive cache invalidation using OS-native file-system events
-(`inotify` / `kqueue` / `ReadDirectoryChanges`).
+(`inotify` / `FSEvents` / `ReadDirectoryChanges`).
 
 ```rust
 let watcher = engine.watcher()?;  // auto-registers all cached paths

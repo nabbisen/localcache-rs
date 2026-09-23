@@ -17,7 +17,8 @@ On the next request it can tell you immediately whether the cached result is sti
 valid — without re-running the expensive computation.
 
 Storage is a single SQLite file that lives wherever you point it.  No daemon, no
-background threads, no network.
+network, and no background threads unless you opt into the `watching` feature,
+which starts one to deliver file-system invalidation events.
 
 ---
 
@@ -77,6 +78,48 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+## Features
+
+| Cargo feature | Description |
+|---|---|
+| `async` | `AsyncCacheEngine` backed by Tokio's `spawn_blocking` |
+| `async-std` | `AsyncCacheEngine` backed by `async_std::task::spawn_blocking` |
+| `smol` | `AsyncCacheEngine` backed by `smol::unblock` |
+| `compression` | Transparent `zstd` payload compression |
+| `json` | `Json` codec + payload field queries in `QueryBuilder` |
+| `encryption` | AES-256-GCM **payload content** encryption — paths, namespaces, sizes, mtimes, hashes, and timestamps stay unencrypted |
+| `tracing` | `tracing` instrumentation on hot paths (zero-cost when disabled) |
+| `watching` | OS-native file-system watching — `CacheWatcher`, `CacheEngine::watcher()`/`debounced_watcher()`; starts one background thread |
+| `metrics` | `metrics` counters/histograms for `get`/`set` and hit/miss events |
+| `opentelemetry` | Bridges existing `tracing` spans to an OTel-compatible backend; implies `tracing` |
+
+---
+
+## Design Highlights
+
+- **Zero-daemon** — just a library; no background processes, and no background
+  thread unless you opt into `watching`.
+- **Single-file storage** — one SQLite database, easy to ship or delete.
+- **Pluggable change detection** — `MetadataOnly` (fast), `MetadataThenPartialHash`
+  (head/tail sampling for large files), `MetadataThenFullHash` (balanced), or
+  `StrictFullHash` (exact).
+- **Any serialisable payload** — `T: Serialize + DeserializeOwned` via bincode or JSON.
+- **Atomic writes** — `set` uses a single SQLite transaction; partial failures
+  leave no corrupt state.
+- **LRU eviction** — `max_entries` evicts the least recently **read** entries
+  automatically; a write never evicts what it just wrote.
+- **Thread-safe** — `ConnectionPool<T>` wraps the engine in `Arc<Mutex<…>>` for
+  multi-threaded use; `ReadPool<T>` gives N concurrent read-only connections for
+  read-heavy workloads with a separate writer; `AsyncCacheEngine<T>` for async
+  runtimes.
+- **Data portability** — `export_entries` / `import_entries` / `import_from` for
+  cross-database migration.
+
+For the full guide — every feature, the CLI, and a cookbook of common patterns — see the
+[mdBook user guide](https://nabbisen.github.io/localcache-rs/).
+
+---
+
 ## Project source archives
 
 Project source archives are named `localcache-vX.Y.Z.tar.gz`. Their project
@@ -92,35 +135,6 @@ tar -xzf localcache-vX.Y.Z.tar.gz -C localcache-vX.Y.Z
 Do not extract one over an existing checkout. Maintainer-produced archives are
 validated against the exact committed export manifest and smoke-tested from a
 Git-free fresh extraction before review.
-
----
-
-## Features
-
-| Cargo feature | Description |
-|---|---|
-| `async` | `AsyncCacheEngine` backed by `tokio::task::spawn_blocking` |
-| `compression` | Transparent `zstd` payload compression |
-| `json` | `Json` codec + payload field queries in `QueryBuilder` |
-| `encryption` | AES-256-GCM payload encryption |
-| `tracing` | `tracing` instrumentation on hot paths (zero-cost when disabled) |
-
----
-
-## Design Highlights
-
-- **Zero-daemon** — just a library; no background processes.
-- **Single-file storage** — one SQLite database, easy to ship or delete.
-- **Pluggable change detection** — `MetadataOnly` (fast), `MetadataThenFullHash`
-  (balanced), or `StrictFullHash` (exact).
-- **Any serialisable payload** — `T: Serialize + DeserializeOwned` via bincode or JSON.
-- **Atomic writes** — `set` uses a single SQLite transaction; partial failures
-  leave no corrupt state.
-- **LRU eviction** — `max_entries` evicts the least recently accessed entries automatically.
-- **Thread-safe** — `ConnectionPool<T>` wraps the engine in `Arc<Mutex<…>>` for
-  multi-threaded use; `AsyncCacheEngine<T>` for async runtimes.
-- **Data portability** — `export_entries` / `import_entries` / `import_from` for
-  cross-database migration.
 
 ---
 

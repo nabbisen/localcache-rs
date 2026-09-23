@@ -177,12 +177,11 @@ where
 
     /// Return the cached entry for `path`, if one exists.
     ///
-    /// Updates `last_accessed_at` — the only state change permitted on a
-    /// read-only connection (it is a read on an in-memory field…
-    /// technically `last_accessed_at` write requires read-write access,
-    /// so on read-only connections the LRU timestamp update is skipped by
-    /// the engine guard).  Use [`ConnectionPool`][crate::ConnectionPool]
-    /// if LRU tracking matters for your workload.
+    /// A read-only connection never updates `last_accessed_at` — writing it
+    /// requires read-write access, so the engine's normal LRU timestamp
+    /// update is skipped on every slot. Use
+    /// [`ConnectionPool`][crate::ConnectionPool] if LRU tracking matters for
+    /// your workload.
     pub fn get<P: AsRef<Path>>(&self, path: P) -> Result<Option<CacheEntry<T>>, LocalFileCacheError>
     where
         T: Clone,
@@ -306,7 +305,10 @@ where
         self.checkout()?.entry_count()
     }
 
-    /// Hit-rate and count statistics for the current namespace.
+    /// Aggregate statistics for the current namespace: entry count, total
+    /// payload bytes, oldest/newest `updated_at`, and breakdowns by encoding
+    /// and payload version. Does not include a hit-rate — nothing here
+    /// tracks cache hits or misses.
     pub fn cache_stats(&self) -> Result<CacheStats, LocalFileCacheError> {
         self.checkout()?.cache_stats()
     }

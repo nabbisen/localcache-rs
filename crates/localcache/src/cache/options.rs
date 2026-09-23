@@ -142,6 +142,12 @@ pub struct CacheOptions {
     pub synchronous: SynchronousMode,
 
     /// Optional time-to-live for cache entries.
+    ///
+    /// Has **one-second resolution**: `updated_at` is stored in Unix seconds,
+    /// so a duration under one second makes every entry immediately stale —
+    /// even one read back in the same second it was written already exceeds
+    /// it. Not rejected in this release; **from v0.22.0** a sub-second TTL
+    /// will be rejected at open instead of silently accepted.
     pub ttl: Option<Duration>,
 
     /// Logical namespace for cache entries.  Defaults to `"default"`.
@@ -182,6 +188,11 @@ pub struct CacheOptions {
     /// When set, all payloads written by this engine are encrypted with
     /// AES-256-GCM.  A fresh 96-bit nonce is generated per write; the nonce
     /// is prepended to the ciphertext in the database.
+    ///
+    /// **This encrypts payload content only.** Paths, namespaces, file
+    /// sizes, modification times, content hashes, and timestamps are
+    /// stored unencrypted — anyone who can read the database file can read
+    /// them. Enabling this option does not encrypt the database file.
     ///
     /// Requires the `encryption` Cargo feature.
     ///

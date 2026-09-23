@@ -2,7 +2,7 @@
 
 Common patterns and recipes for `localcache`.
 
-## Embedding pipeline
+## Recipe 1 — Embedding pipeline
 
 Cache vector embeddings for a document corpus.  Only re-embed files
 that have changed since the last run.
@@ -35,7 +35,7 @@ fn run(corpus: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-## Multi-threaded web server
+## Recipe 2 — Multi-threaded web server
 
 Share a cache pool across Actix-web request handlers:
 
@@ -73,7 +73,7 @@ async fn main() -> std::io::Result<()> {
 }
 ```
 
-## Reactive pipeline with file watching
+## Recipe 3 — Reactive pipeline with file watching
 
 Automatically re-process files when they change on disk:
 
@@ -108,7 +108,7 @@ for event in rx.iter() {
 }
 ```
 
-## Versioned cache with migration
+## Recipe 4 — Versioned cache with migration
 
 Bump `payload_version` when your computation logic changes:
 
@@ -130,9 +130,11 @@ for (version, count) in engine.entry_count_by_version()? {
 }
 ```
 
-## Encrypted cache
+## Recipe 5 — Encrypted cache
 
-Protect payloads at rest with AES-256-GCM:
+Protect payload content at rest with AES-256-GCM. **Scope**: this encrypts payload content only —
+paths, namespaces, file sizes, modification times, content hashes, and timestamps are stored
+unencrypted, and anyone who can read the database file can read them.
 
 ```rust
 use localcache::CacheEngine;
@@ -150,7 +152,12 @@ let rotated = engine.rotate_encryption_key(&new_key)?;
 println!("rotated {rotated} entries");
 ```
 
-## TTL-based expiry
+Rotation covers only **this engine's namespace, on this engine**. Every other open engine on the
+same database and namespace — another `ConnectionPool`, `ReadPool` slot, or process — keeps the
+old key and returns `EncryptionError` on rotated entries until it is reopened with `new_key`.
+Engines on other namespaces are unaffected.
+
+## Recipe 6 — TTL-based expiry
 
 Use time-to-live for data that ages out regardless of file changes:
 
@@ -172,12 +179,13 @@ let response = fetch_api()?;
 engine.set("endpoint.txt", &response)?;
 ```
 
-## Query + export pattern
+## Recipe 7 — Query + export pattern
 
 Find high-value entries and export them to a smaller database:
 
 ```rust
 use localcache::{CacheEngine, Codec};
+use std::collections::HashSet;
 
 let src = CacheEngine::<Doc>::builder()
     .database("full.sqlite3")
@@ -189,25 +197,30 @@ let results = src.query()
     .field_gt("score", 0.9)
     .order_by_field("score", false)
     .run()?;
+let matched: HashSet<String> = results.iter()
+    .map(|e| e.path.display().to_string())
+    .collect();
 
-// Export just those entries.
-let records = results.iter()
-    .map(|e| src.export_entries()) // simplified
-    .collect::<Result<Vec<_>, _>>()?;
+// export_entries() has no path filter, so export the whole namespace once
+// and keep only the matched records — not one export call per result.
+let records = src.export_entries()?
+    .into_iter()
+    .filter(|r| matched.contains(&r.path))
+    .collect::<Vec<_>>();
 
 let dst = CacheEngine::<Doc>::builder()
     .database("top_entries.sqlite3")
     .build()?;
-// dst.import_entries(&records)?;
+dst.import_entries(&records)?;
 ```
 
-## Monitoring with metrics
+## Recipe 8 — Monitoring with metrics
 
 Wire up Prometheus to monitor cache performance:
 
 ```toml
 [dependencies]
-localcache         = { version = "0.19", features = ["metrics"] }
+localcache         = { version = "0.21.3", features = ["metrics"] }
 metrics-exporter-prometheus = "0.16"
 ```
 
@@ -225,14 +238,14 @@ let engine = CacheEngine::<Vec<f32>>::builder()
     .build()?;
 ```
 
-## Recipe 8 — Distributed tracing with OpenTelemetry
+## Recipe 9 — Distributed tracing with OpenTelemetry
 
 Enable the `opentelemetry` feature to export `localcache` spans to any
 OTel-compatible backend:
 
 ```toml
 [dependencies]
-localcache          = { version = "0.19", features = ["opentelemetry"] }
+localcache          = { version = "0.21.3", features = ["opentelemetry"] }
 opentelemetry       = { version = "0.32", features = ["trace"] }
 tracing-opentelemetry = "0.33"
 tracing-subscriber  = { version = "0.3", features = ["registry"] }
@@ -261,14 +274,14 @@ fn init_tracing() {
 
 // Then use the engine normally — spans export automatically:
 //   localcache::get  { path = "…", namespace = "embeddings" }
-//   localcache::set  { path = "…", namespace = "embeddings", bytes = 4096 }
+//   localcache::set  { path = "…", namespace = "embeddings" }
 ```
 
 `localcache` never calls OTel APIs directly; it only emits `tracing` spans.
 The `opentelemetry` feature simply ensures compatible dependency versions
 are in scope.
 
-## Recipe 9 — Read-only shared-cache for worker fleets
+## Recipe 10 — Read-only shared-cache for worker fleets
 
 One writer + many readers in the same process (e.g. a thread pool):
 

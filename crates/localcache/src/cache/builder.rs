@@ -88,7 +88,8 @@ where
         self
     }
 
-    /// Time-to-live for cache entries.
+    /// Time-to-live for cache entries. See [`CacheOptions::ttl`] for the
+    /// one-second resolution and the v0.22.0 rejection plan.
     pub fn ttl(mut self, duration: Duration) -> Self {
         self.opts.ttl = Some(duration);
         self
@@ -220,6 +221,10 @@ where
     }
 
     /// Set the AES-256-GCM encryption key (exactly 32 bytes).
+    ///
+    /// Encrypts payload content only — paths, namespaces, file sizes,
+    /// modification times, content hashes, and timestamps stay unencrypted.
+    /// See [`CacheOptions::encryption_key`] for the full scope.
     ///
     /// Requires the `encryption` Cargo feature.
     #[cfg(feature = "encryption")]

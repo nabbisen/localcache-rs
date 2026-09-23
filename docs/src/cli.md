@@ -24,6 +24,11 @@ Options:
   -V, --version           Print version
 ```
 
+Every writable command (`cleanup`, `vacuum`, `purge-version`, `import`, `copy`, `migrate`,
+`watch`) opens its database with SQLite's `WAL` journal mode and `synchronous = NORMAL` — the
+library's defaults. WAL persists in the database file as a `-wal` file until checkpointed; this
+is documented current behaviour, not something the CLI changes for you.
+
 ## Commands
 
 ### `list`
@@ -67,16 +72,23 @@ Status:        Stale
 Entry exists:  true
 File exists:   true
 TTL:           not configured
+Payload ver:   stored=2 expected=2 match=true
 --- Metadata ---
   mtime:     stored=2025-01-01 00:00:00.123456789 current=2026-05-03 10:22:11.987654321 changed=true
-  file_size: 4.0 KiB              current=4.1 KiB              changed=true
+  file_size: stored=4.0 KiB current=4.1 KiB changed=true
+Hash match:    false
 
 Summary: Both mtime and file_size differ.
 ```
 
+`Payload ver:` prints only when the entry has a stored payload version; `Hash match:` prints only
+when a hash comparison was made. `check` and `inspect` both always run change detection under
+`MetadataThenFullHash`, regardless of the mode the entry was originally cached under.
+
 ### `check <PATH>`
 
-Quick freshness check — prints `FRESH`, `STALE`, or `MISSING`.
+Quick freshness check — prints `FRESH`, `STALE`, or `MISSING`. Always runs change detection under
+`MetadataThenFullHash`, regardless of the mode the entry was originally cached under.
 
 ```sh
 localcache -d cache.sqlite3 check /data/file.txt
@@ -103,7 +115,9 @@ entry update/access times remain Unix-second timestamps.
 ### `query`
 
 List cached entries matching a SQL `LIKE` path pattern
-(`%` = any sequence, `_` = one character).
+(`%` = any sequence, `_` = one character). `\` is the pattern's escape
+character: write a literal `%`, `_`, or `\` as `\%`, `\_`, or `\\` (this
+matters for Windows paths).
 
 ```sh
 localcache -d cache.sqlite3 query --path-like "%/docs/%"
@@ -172,9 +186,13 @@ localcache -d cache.sqlite3 import --overwrite=false -i backup.jsonl
 # Imported 12 entries, skipped 3 existing
 ```
 
+The skipped count is only printed when it is non-zero; with nothing skipped, the message is just
+`Imported N entries`.
+
 ### `copy`
 
 Copy all entries from one namespace to another within the same database.
+`--to` defaults to the `-n`/`--namespace` global option when omitted.
 
 ```sh
 localcache -d cache.sqlite3 copy --from embeddings --to embeddings_v2
@@ -182,7 +200,10 @@ localcache -d cache.sqlite3 copy --from embeddings --to embeddings_v2
 
 ### `migrate`
 
-Move a namespace from one database to another.
+Copy a namespace from one database to another — the source namespace is left
+in place, not removed. Defaults: `--src-ns` is `default`; `--dst-db` defaults
+to the `-d`/`--database` global option; `--dst-ns` defaults to the
+`-n`/`--namespace` global option.
 
 ```sh
 localcache migrate \
@@ -194,7 +215,9 @@ localcache migrate \
 current schema before entries are copied, so back it up and plan any required
 maintenance window first. Observational commands (`list`, `stats`, `check`,
 `scan`, `export`, `query`, `inspect`, and `namespaces`) open read-only and
-therefore never create or migrate the cache.
+therefore never create or migrate the cache. `watch` also opens writable and
+may initialize an empty database or upgrade an older one to the current
+schema, the same as any other writable command.
 
 ### `watch` *(requires `watching` feature)*
 
@@ -205,4 +228,8 @@ Press Ctrl-C to stop.
 localcache -d cache.sqlite3 watch
 ```
 
-Output: `[YYYY-MM-DD HH:MM:SS] MODIFIED  /path/to/changed/file.txt`
+Output: `[YYYY-MM-DD HH:MM:SS] MODIFIED /path/to/changed/file.txt`
+
+The reason column is padded to a fixed width (`MODIFIED`, `REMOVED `, `RENAMED `, each 8
+characters including any trailing pad), so `REMOVED`/`RENAMED` lines show one extra space before
+the path compared to `MODIFIED`.
