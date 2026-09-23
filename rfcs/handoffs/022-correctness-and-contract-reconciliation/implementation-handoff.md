@@ -82,12 +82,12 @@ The same engine then fails to read rotated rows and writes new rows under the ol
    `AsyncCacheEngine` query path, which builds `guard.core()` (`async_engine.rs`, around line 313).
 4. In `rotate_encryption_key`, call `self.encryption_key.set(Some(new_key_arr))` **only after
    `tx.commit()?` returns**. On any earlier error, the cell is untouched.
-5. Rustdoc on `CacheEngine::rotate_encryption_key` and `AsyncCacheEngine::rotate_encryption_key`
-   must state two things:
-   - this engine continues with the new key;
-   - **every other open engine on this database** (other processes, other `ConnectionPool`
-     instances, `ReadPool` slots, a watcher's helper connection) must be reopened with the new key,
-     and until then it returns `EncryptionError` on rotated rows.
+5. *(Corrected by Amendment 2; see "Corrections from the Q0a review" below.)* Rustdoc on
+   `CacheEngine::rotate_encryption_key` and `AsyncCacheEngine::rotate_encryption_key` must state:
+   - this engine continues with the new key, even when nothing needed re-encryption;
+   - rotation covers **one namespace**. Every other open engine on the same database **and
+     namespace** must be reopened with the new key. Engines on other namespaces keep their key, a
+     watcher needs no action, and `AsyncCacheEngine` clones share the engine.
 6. **Verify, don't assume:** confirm that the `CacheWatcher` helper engine never decodes payloads,
    and so is unaffected by a stale key. Say in the review request how you confirmed it.
 
@@ -567,6 +567,8 @@ below are what you need to act on it.
   - Add a link to the mdBook user guide. Use the Pages URL from `.github/workflows/docs.yaml`'s
     deployment; if you cannot determine it, ask rather than guess.
 - **`CHANGELOG.md`**:
+  - The `## [Unreleased]` preamble says "closing Phase 24 Q0a–Q0e"; make it "Phase 24 Q0
+    (RFC 022)", since Q0 now also includes Q0g–Q0i.
   - Rewrite every compare link to the repository's **unprefixed** tag names (`git tag` shows
     `0.19.1`, not `v0.19.1`).
   - Add 0.20.1 through 0.21.3, plus `[Unreleased]: …/compare/0.21.3...HEAD`.
