@@ -28,8 +28,9 @@ before any raise is discussed:
 Applying the policy to today's facts gives an answer that differs from the one the roadmap
 expected:
 - **The MSRV stays 1.85.** Nothing a user depends on needs more.
-- **`rusqlite 0.40` no longer requires Rust 1.95.** `libsqlite3-sys 0.38.2` (2026-08-08)
-  replaced its use of the standard-library `cfg_select!` with a local polyfill. localcache on
+- **`rusqlite 0.40.2` no longer requires Rust 1.95.** `rusqlite 0.40.2` and `libsqlite3-sys
+  0.38.2` (both 2026-08-08) replaced their use of the standard-library `cfg_select!` with local
+  polyfills; the earlier 0.40.x/0.38.x patches still need 1.95 *(Erratum 1)*. localcache on
   `rusqlite 0.40.2` passes all four declared-MSRV rows on 1.85.0, the full suite (459 tests),
   and clippy, with **no source change**.
 - **Adopting 0.40 is still breaking**, for two reasons that have nothing to do with the
@@ -106,6 +107,7 @@ policy. The premise has changed:
 | Evidence (2026-09-23) | Result |
 |---|---|
 | `libsqlite3-sys 0.38.0` and `0.38.1` `build.rs` | use the standard-library `cfg_select!` (Rust 1.95), with no polyfill |
+| `rusqlite 0.40.0` and `0.40.1` source *(Erratum 1)* | also use the standard-library `cfg_select!` (`src/inner_connection.rs`); they fail on 1.85.0 even with `libsqlite3-sys 0.38.2`. `0.40.2` polyfills it (`src/error.rs`) |
 | `libsqlite3-sys 0.38.2` `build.rs` (2026-08-08) | defines its own `macro_rules! cfg_select`, commented "Just to keep MSRV low" |
 | `rusqlite 0.40.2` → `libsqlite3-sys` requirement | `^0.38.2` on every non-wasm target (`^0.38.1` on `wasm32-unknown-unknown`) |
 | Minimal `rusqlite =0.40.2` (bundled, limits) | builds on **1.85.0**, 1.94.0, 1.95.0 |
@@ -275,9 +277,10 @@ Therefore:
 2. The requirement names the **lowest patch such that every graph satisfying it meets the
    declared MSRV**, including a consumer's existing lockfile, not only a fresh resolution. For
    0.40 that is `"0.40.2"`:
-   - a bare `"0.40"` leaves a lockfile holding `rusqlite` 0.40.1 with `libsqlite3-sys 0.38.1`
-     valid, and that needs 1.95;
-   - `"0.40.2"` forces `libsqlite3-sys` ≥ 0.38.2, so Cargo must update such a lockfile.
+   - a bare `"0.40"` leaves a lockfile holding `rusqlite` 0.40.0 or 0.40.1 valid, and both
+     need 1.95 themselves, whatever `libsqlite3-sys` is locked *(Erratum 1)*;
+   - `"0.40.2"` forces `rusqlite` ≥ 0.40.2 and, through it, `libsqlite3-sys` ≥ 0.38.2, so Cargo
+     must update such a lockfile.
 3. **Input to RFC 025 (Q3), not a decision here.** If `LocalFileCacheError` stopped exposing
    `rusqlite::Error` directly, future `rusqlite` bumps would stop being API-breaking. The `links`
    coordination would remain, so a bump would still warrant notice. Q3 weighs this against its
@@ -310,11 +313,11 @@ Evaluated against R1–R8 on the evidence in the Motivation:
 `docs/src/dependency_security.md` is deployed to the project's Pages site from `main`, and it
 now misleads:
 - it says `rusqlite 0.40` "would raise this crate's MSRV from 1.85 to exactly 1.95". That is true
-  only of `libsqlite3-sys` 0.38.0–0.38.1;
+  only of `rusqlite` 0.40.0–0.40.1 and `libsqlite3-sys` 0.38.0–0.38.1;
 - it names `0.19.1` and `0.20.0` as broken on their declared baseline. A fresh resolution of
-  either now selects `libsqlite3-sys 0.38.2` and builds on 1.85. They still fail from a
-  **lockfile** holding `libsqlite3-sys` 0.38.0 or 0.38.1, and
-  `cargo update -p libsqlite3-sys` repairs that.
+  either now selects `rusqlite 0.40.2` / `libsqlite3-sys 0.38.2` and builds on 1.85. They still
+  fail from a **lockfile** holding the older patches, and `cargo update -p rusqlite` repairs that
+  (it moves both). `cargo update -p libsqlite3-sys` alone does **not** *(Erratum 1)*.
 
 Correct both, and keep the recorded cases as history. Add a short "MSRV policy" section
 summarizing R2–R7. The change touches only `docs/src/`, so it ships to Pages on push without a
@@ -357,18 +360,18 @@ protect a consumer from.
 ### What the check would have caught
 
 While `libsqlite3-sys 0.38.1` was the newest release (2026-06-06 to 2026-08-08), a weekly R6.2
-run on any `rusqlite ^0.40` tree would have failed within seven days, naming `libsqlite3-sys`
-among the undeclared packages. `0.19.1` and `0.20.0` shipped with that class of failure.
+run on any `rusqlite ^0.40` tree would have failed within seven days, naming `rusqlite` and
+`libsqlite3-sys` among the undeclared packages. `0.19.1` and `0.20.0` shipped with that class of failure.
 
 ## Test plan
 
 - **Drift check, positive.** The current tree passes `--fresh` on 1.85.0.
-- **Drift check, negative.** A fixture workspace pinning `libsqlite3-sys = "=0.38.1"` (with
-  `bundled`) fails `--fresh` on 1.85.0 at its `cfg_select!`, and its evidence names
-  `libsqlite3-sys` as undeclared. The pin must be on `libsqlite3-sys` itself: `rusqlite =0.40.1`
-  requires `^0.38.1`, which a fresh resolution satisfies with 0.38.2 and then passes. This is
-  the failing-before test: it reproduces the historical failure deterministically, whatever
-  upstream publishes next.
+- **Drift check, negative.** A copy of the tree whose `rusqlite` requirement is **replaced** by
+  `"=0.40.1"` fails `--fresh` on 1.85.0 at `rusqlite 0.40.1`'s own `cfg_select!`, and its
+  evidence names `rusqlite` and `libsqlite3-sys` as undeclared *(Erratum 1: the earlier text
+  pinned `libsqlite3-sys =0.38.1` beside `rusqlite ^0.39`, which fails on the `links` conflict,
+  not on the toolchain)*. This is the failing-before test: it reproduces the historical failure
+  deterministically, whatever upstream publishes next.
 - **The repository lockfile is untouched** by a `--fresh` run: its hash is the same before and
   after.
 - **Script tests** run normally and under the restricted `PATH`, as for every `scripts/` change.
@@ -452,3 +455,25 @@ The resulting slices, which the architect schedules and the owner authorizes wit
 ## Open questions
 
 None. The three decisions above are settled.
+
+## Erratum 1 (architect, 2026-09-24)
+
+A factual correction found by the dev team in the Q1a review
+(`.git-exclude/review-request/016-dev-q1a-dependency-security-doc-2026-09-24.md`) and reproduced
+by the architect. **No decision changes.**
+
+- `rusqlite 0.40.0` and `0.40.1` use the standard-library `cfg_select!` in their own source, not
+  only through `libsqlite3-sys`. They fail on 1.85.0 even with `libsqlite3-sys 0.38.2` locked.
+- Therefore the repair for a stale consumer lockfile is `cargo update -p rusqlite`, which moves
+  both crates. `cargo update -p libsqlite3-sys` leaves the build failing. The architect's
+  reproduction: lockfile `rusqlite 0.40.1` / `libsqlite3-sys 0.38.1`, exit 101;
+  `update -p libsqlite3-sys` → 0.40.1 / 0.38.2, still exit 101; `update -p rusqlite` →
+  0.40.2 / 0.38.2, exit 0 (`.git-exclude/tmp/q1a-arch-repair/`).
+- R8.2's conclusion (`"0.40.2"`) stands and is strengthened. R10's repair command, the Summary,
+  the evidence table, and the negative drift-test fixture are corrected in place, each marked
+  *(Erratum 1)*.
+- `libsqlite3-sys 0.38.0` bundles SQLite **3.53.1**, not 3.53.2 (0.38.1 and 0.38.2 bundle
+  3.53.2). This does not affect R9, which targets 0.38.2.
+- The architect's original minimal-crate logs under `.git-exclude/tmp/rfc023-sqlite-floor/` are
+  empty, because the builds ran with `-q` and passed. Their exit codes were observed in session
+  but not retained. The dev team's `.git-exclude/tmp/q1a-verify/` logs now carry that evidence.

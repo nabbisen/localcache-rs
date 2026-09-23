@@ -57,12 +57,14 @@ The page is deployed from `main` to https://nabbisen.github.io/localcache-rs/ an
 counts (RFC 023, "The `rusqlite 0.40` question, re-measured"):
 
 1. It says `rusqlite 0.40` "would raise this crate's MSRV from 1.85 to exactly 1.95". That was
-   true only while `libsqlite3-sys` was at 0.38.0 or 0.38.1. **0.38.2 (2026-08-08) polyfills
-   `cfg_select!`**, and `rusqlite 0.40.2` requires `^0.38.2` on every non-wasm target.
+   true only of `rusqlite` 0.40.0/0.40.1 and `libsqlite3-sys` 0.38.0/0.38.1. **`rusqlite 0.40.2`
+   and `libsqlite3-sys 0.38.2` (2026-08-08) polyfill `cfg_select!`**, and `rusqlite 0.40.2`
+   requires `^0.38.2` on every non-wasm target *(corrected 2026-09-24, RFC 023 Erratum 1)*.
 2. It says `0.19.1` and `0.20.0` are broken on their declared 1.85. A **fresh** resolution of
    either now selects `libsqlite3-sys 0.38.2` and builds on 1.85. The architect verified this for
    `localcache =0.20.0`. They still fail from a **lockfile** that holds `libsqlite3-sys` 0.38.0 or
-   0.38.1, and `cargo update -p libsqlite3-sys` repairs that.
+   0.38.1, and `cargo update -p rusqlite` repairs that (`-p libsqlite3-sys` alone does not;
+   RFC 023 Erratum 1).
 
 ### What to change
 
@@ -100,7 +102,7 @@ that is no longer true, fix it and say so.
      Then say what is true now:
      - a fresh resolution builds on 1.85;
      - an existing lockfile holding 0.38.0/0.38.1 still fails, and the fix is
-       `cargo update -p libsqlite3-sys`.
+       `cargo update -p rusqlite` *(Erratum 1)*.
 
      Keep the advice to use `0.20.1` or later, but give the real reason now: later releases carry
      correctness fixes (point to `CHANGELOG.md`), not an MSRV repair. Keep the yank reasoning.
@@ -232,13 +234,14 @@ Both need the network and the 1.85 toolchain:
 1. **Positive:** `rustup run 1.85.0 python3 scripts/release.py msrv --fresh --output-dir
    .git-exclude/tmp/q1b-fresh-pass` on the tree. PASS. Quote `summary.log` and the undeclared
    list.
-2. **Negative (the failing-before):** a throwaway copy of the tree whose `Cargo.toml` adds
-   `libsqlite3-sys = { version = "=0.38.1", features = ["bundled"] }` to `localcache`'s
-   dependencies. It must FAIL at `cfg_select!`, and its evidence must list `libsqlite3-sys`
-   among the undeclared packages.
+2. **Negative (the failing-before):** a throwaway copy of the tree whose workspace `rusqlite`
+   requirement is **replaced** by `"=0.40.1"` (features unchanged). It must FAIL at
+   `rusqlite 0.40.1`'s own `cfg_select!`, and its evidence must list `rusqlite` and
+   `libsqlite3-sys` among the undeclared packages.
 
-   The pin must be on `libsqlite3-sys` itself. `rusqlite =0.40.1` alone would resolve 0.38.2 and
-   pass (RFC 023 test plan).
+   *(Corrected 2026-09-24, RFC 023 Erratum 1.)* Do **not** add a `libsqlite3-sys =0.38.1` pin
+   beside `rusqlite ^0.39`: that fails on the `links = "sqlite3"` conflict, not on the
+   toolchain, and proves nothing about drift.
 
    Delete the copy afterwards. Its output directory stays under `.git-exclude/tmp/` as evidence.
 3. **The lockfile guard:** show the repository `Cargo.lock` hash before and after both runs.
@@ -266,8 +269,8 @@ v0.21.5 notice and the slice agree.
    `rusqlite = { version = "0.40.2", features = ["bundled", "limits"] }`.
 
    The requirement is **exactly `"0.40.2"`**, never `"0.40"`. `"0.40"` would leave a consumer's
-   lockfile holding `rusqlite 0.40.1` / `libsqlite3-sys 0.38.1` valid, and that needs 1.95
-   (RFC 023 R8.2).
+   lockfile holding `rusqlite` 0.40.0/0.40.1 valid, and those need 1.95 themselves
+   (RFC 023 R8.2, Erratum 1).
 2. `cargo update -p rusqlite`. The `Cargo.lock` diff must be `rusqlite`, `libsqlite3-sys`, and
    only the transitive packages those two require. List every changed package.
 3. Same file, a comment-only correction: the `aes-gcm` line's comment says "0.11.x still RC".

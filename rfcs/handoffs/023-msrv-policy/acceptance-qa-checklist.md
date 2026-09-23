@@ -9,7 +9,7 @@ review checks. A slice is accepted only when every box in its own section and in
 - [ ] No sentence still says that `rusqlite 0.40` requires Rust 1.95 without naming 0.38.0/0.38.1
 - [ ] The current position is stated: 0.21.x keeps `^0.39` for compatibility (public `rusqlite::Error`, `links`), and **0.22.0 moves to `rusqlite 0.40.2`**
 - [ ] "Recorded cases" rows are unchanged. One follow-up sentence records 0.38.2 and the 0.22.0 outcome
-- [ ] "Affected published versions" separates what was true at publication from what is true now (fresh resolution builds; a lockfile holding 0.38.0/0.38.1 fails; `cargo update -p libsqlite3-sys`)
+- [ ] "Affected published versions" separates what was true at publication from what is true now (fresh resolution builds; a lockfile holding the older `rusqlite`/`libsqlite3-sys` patches fails; `cargo update -p rusqlite`, per RFC 023 Erratum 1)
 - [ ] The advice to use `0.20.1`+ stays, with the correctness-fixes reason
 - [ ] "MSRV policy" section, under 25 lines: minor only; necessity and lowest version; 12-month floor with no floor for security; notice one release ahead; verification; 6-month previous line; link to RFC 023
 - [ ] It does **not** describe the fresh-resolution check as running (that is Q1b)
@@ -32,7 +32,7 @@ review checks. A slice is accepted only when every box in its own section and in
 - [ ] `Makefile.toml` `[tasks.msrv-fresh]`
 - [ ] Unit tests for the copy, the parser, the guard, `release` ordering and failure, and plain `msrv` running no fresh step. They pass normally and under the restricted `PATH`
 - [ ] Demonstration 1 (positive, on 1.85.0): PASS, with the summary and undeclared list quoted
-- [ ] Demonstration 2 (negative, `libsqlite3-sys = "=0.38.1"` pinned): FAIL at `cfg_select!`, and `libsqlite3-sys` is listed as undeclared
+- [ ] Demonstration 2 (negative, workspace `rusqlite` replaced by `"=0.40.1"`): FAIL at `rusqlite 0.40.1`'s `cfg_select!`, and `rusqlite` and `libsqlite3-sys` are listed as undeclared (RFC 023 Erratum 1)
 - [ ] Demonstration 3: lockfile hash identical across both runs
 - [ ] The docs sentence and the CHANGELOG `### Added` entry are present
 
