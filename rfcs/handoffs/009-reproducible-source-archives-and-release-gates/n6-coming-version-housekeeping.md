@@ -5,7 +5,8 @@
 > built against the historical set as it stood on 2026-07-31. That set has since changed. The
 > reviewer once described this document as "version-agnostic apart from the target number";
 > that was wrong. For v0.21.1 see
-> `rfcs/handoffs/phase-23-p0/p0d-coming-version-housekeeping.md`, and write a fresh document
+> `rfcs/handoffs/phase-23-p0/p0d-coming-version-housekeeping.md` (removed from the tree on
+> 2026-09-23 under RFC 022; retrieve it from commit `d5214c1`), and write a fresh document
 > for each subsequent release rather than substituting numbers into this one.
 
 ## 1. Summary

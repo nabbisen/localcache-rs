@@ -1082,7 +1082,11 @@ namespace containing `/a/b` and `/a-b`, where component-wise and byte-wise order
 
 **Recorded, not blocking:** the non-`json` (`--no-default-features`) `QueryBuilder::run()` path has
 no integration coverage. Pre-existing, found and disclosed during P2b, verified out-of-band. Worth
-closing when that area is next touched.
+closing when that area is next touched. **Corrected 2026-09-23:** the claim was too broad. The
+ungated `rfc002_index_hints` and `rfc006_dir_predicates` modules run `.run()` with no features, and
+CI's `lib-no-features` row executes them. The real gap is narrower: no ungated test exercises
+`limit`, `offset`, or a primary `order_by_updated_at`. It is closed by RFC 022 R2's tests, which
+must run without `json`.
 
 ### P2c — the correction confirmed by a second instrument
 
@@ -1240,21 +1244,133 @@ v0.21.0. Recorded here so it is in the RFC when written, rather than appended at
   N4 §6. What remains unmeasured (watcher on large trees, async-runtime concurrency) stays out of
   scope until something measured argues for it.
 
+## Phase 24 — Correctness, Contracts, and API Consistency (v0.21.4, v0.21.5, v0.22.0)
+
+**Status: authorized by the owner 2026-09-23.** RFC 022 was accepted the same day. The owner set
+two standing principles for this phase:
+
+- **"Finally clean, safe and secure, robust and sophisticated design."**
+- **Public APIs must not confuse or mislead users.**
+
+The owner also asked that the MSRV be raised only carefully, because this crate's consumers are
+application projects.
+
+### Why this phase exists
+
+Phase 23 closed on 2026-08-04 with every planned RFC resolved, which triggered the mandatory
+replanning report. The architect's onboarding review of v0.21.3 (2026-09-23) found:
+
+- three latent correctness defects that no test catches (key rotation, query `offset`, and
+  `max_entries` evicting the entry a `set` just wrote; the last was reproduced);
+- a Makefile publish path that cannot pass;
+- install examples in the docs that point users at a release the project itself documents as
+  broken on its MSRV;
+- records that had drifted: the RFC index, the CHANGELOG links, and this file's registers.
+
+Phase 24 fixes those first, as a patch. It then takes up the API-contract themes the review
+surfaced: wrapper surfaces that disagree, names that say something the code does not do, and an
+error type whose catch-all variant tells users little.
+
+### Exit criteria — defined before the work
+
+1. Every finding of the 2026-09-23 review is fixed, scheduled in this phase, or registered below
+   with a reason.
+2. Each correctness defect is reproduced by a test that **fails on the unfixed code** before the fix
+   lands.
+3. Non-breaking releases ship before the breaking one. Each release ships at its own breaking point,
+   with CI green on the exact release commit before tagging.
+4. **No MSRV change without an approved MSRV policy (Q1) and explicit owner authorization, and
+   never in a patch release.**
+5. Registers are reconciled **at every release**, not at phase end. Phase 23's criterion 4 failed
+   because its register was appended to and never reconciled.
+6. At each release, the public docs match the code, and every install example is under the version
+   gate.
+7. No release action occurs without owner authorization.
+
+### Version plan — non-breaking work ships first
+
+| Release | Contents | Breaking? |
+|---|---|---|
+| **v0.21.4** | Q0: three correctness fixes, release-tooling repair, docs and records reconciliation (RFC 022) | no |
+| **v0.21.5** | Q2: API consistency, additions and deprecations only; plus the Q2b module split and any non-breaking outcome of Q4 | no |
+| **v0.22.0** | Q3: error-taxonomy completion, and removal of anything Q2 deprecated. Also any MSRV raise, **only** if Q1 approves one | **yes** |
+
+If Q2 deprecates nothing and Q3 concludes with no behavioural change, there is no v0.22.0. As in Phase 23, that is a good
+outcome, not a shortfall.
+
+### Milestones
+
+Dependency order, not dates. Each milestone is an independent review point. RFC numbers are
+provisional until the file is created (RFC 000).
+
+| Milestone | Scope | Authority | Depends on |
+|---|---|---|---|
+| **Q0a — Key rotation state** | The rotating engine adopts the new key only after commit, via an interior-mutable key; reopen-after-rotation contract documented | RFC 022 R1 | RFC 022 accepted ✅ |
+| **Q0b — Query `offset` contract** | `offset` counts only rows that materialize, in every tier | RFC 022 R2 | RFC 022 accepted ✅ |
+| **Q0c — LRU recency** | A write is an access; deterministic eviction order; `set` never evicts what it just wrote | RFC 022 R6 | RFC 022 accepted ✅; owner confirmation of the R6 amendment |
+| **Q0d — Release tooling** | Version gate covers every install example; retire the Makefile publish tasks; no retry on HTTP 404; Pages workflow least privilege | RFC 022 R3 | RFC 022 accepted ✅ |
+| **Q0e — Hygiene, docs, and records** | RFC 022 R4 and R5, including the documentation for Q0a–Q0c's contracts | RFC 022 R4–R5 | Q0a–Q0d |
+| **Q0f — Release v0.21.4** | Gates, evidence, release decision, owner tag/publish | owner | Q0e |
+| **Q1 — MSRV policy** | Design only (**RFC 023**): when and how a library with app consumers may raise its MSRV. Evaluate the `rusqlite 0.40` / Rust 1.95 question against it. **No MSRV change in this milestone** | owner approval required | — (runs in parallel with Q0) |
+| **Q2 — API consistency** | **RFC 024**. (1) `ConnectionPool`, `AsyncCacheEngine`, and `ReadPool` each hand-delegate a different subset of `CacheEngine`: define each one's intended surface, add what is missing, and add a test that fails when a wrapper silently falls behind. (2) Names that mislead: `order_by_updated_at`/`then_by_updated_at` sort by the source file's `mtime`, not `updated_at` (RFC 021 hazard 1); `SortOrder` is exported but no public signature accepts it; the CLI `migrate` command copies rather than moves. Fix by adding correctly named items and **deprecating**, never by silently changing what an existing name does. Removal waits for v0.22.0 | RFC 024 | Q0f |
+| **Q2b — Module-size split** | A pure move, verified at token level as in Phase 22 N5: `crates/localcache/src/cache/query.rs` (~719 production ELOC after RFC 021) at the builder/execution seam; `crates/localcache/src/db/repository.rs` (~890) re-assessed. It is a separate commit, because a move must never carry a fix | — | Q2, which touches the same files |
+| **Q3 — Error-taxonomy completion** | **RFC 025**: split `UnsupportedFeature`'s remaining uses (invalid argument / invalid configuration / precondition) into matchable variants; decide `PayloadVersionMismatch` (use it or remove it); remove what Q2 deprecated. Adding variants is additive because the enum is `#[non_exhaustive]`, but changing which variant an existing failure returns is behavioural, hence v0.22.0 | RFC 025 | v0.21.5 released |
+| **Q4 — `path_in_dir` share** | Measurement only: `path_in_dir`'s share of a realistic query workload, answering the question deferred at the Phase 23 exit review. An RFC follows only if the share justifies a query-planner change | — | Q0f |
+
+Q0a–Q0d are independent and may run in parallel. Q0e comes after them because it documents
+Q0a–Q0c's contracts, and so that Q0d's widened gate checks the corrected examples the first time.
+Q1 is design work and blocks nothing in v0.21.x.
+
+**Handoff placement (decided 2026-09-23, RFC 022).** A tracked handoff exists only as the companion
+of its governing RFC, under `rfcs/handoffs/NNN-slug/`. A milestone with no RFC, such as Q2b or Q4,
+gets its handoff in `.git-exclude/reviewed/`. The two earlier non-RFC directories were resolved
+under this rule:
+
+- `phase-23-p1/p1e-release-preparation.md` moved to `rfcs/handoffs/020-batched-maintenance-deletes/`.
+- `phase-23-p0/` and `phase-23-p1/p1a-*` left the tree. Retrieve them from commit `d5214c1`.
+
+### MSRV stance
+
+The declared MSRV stays **1.85** for the whole v0.21.x line. Q1 writes the policy before any raise
+is discussed. The questions it must answer:
+
+- **Which release may raise it.** Proposed: a minor (0.x) release only, never a patch, so a
+  consumer pinned to `0.21` keeps building.
+- **The age floor.** Proposed: the new MSRV must be at least six months old on the release date.
+  Rust 1.95.0 was released on 2026-04-16, so it would meet that floor from 2026-10-16. That is a
+  dated external fact, not a target.
+- **Advance notice.** Proposed: announce the raise in the CHANGELOG one release ahead.
+- **Verification.** Keep the fresh-consumer resolution check that v0.21.1–v0.21.3 ran after
+  publication.
+- **Parallel line.** Whether a line on the old MSRV is maintained, and for how long.
+
+The standing `rusqlite ^0.39` register entry is re-evaluated against this policy in Q1, not before.
+
+### Deferred register — Phase 24
+
+| Item | Origin | Note |
+|---|---|---|
+| `rotate_encryption_key` loads every encrypted payload of the namespace into memory at once | 2026-09-23 review | O(namespace) memory. RFC 020's keyset paging applies directly. Revisit when a consumer rotates a large encrypted namespace. |
+| `aggregate-ci` accepts zero or duplicated `--evidence-manifest` arguments and does not check each manifest's `context` | 2026-09-23 review | The same defect class RC-1 fixed for jobs. Mitigated because the workflow passes a fixed argument list. Fold into the next change to `scripts/release.py`'s aggregation. |
+| Re-running `msrv-check`/`security-check` fails confusingly on existing output directories | 2026-09-23 review | Operator ergonomics only; both fail closed. |
+| `upload-artifact@v4` / `download-artifact@v4` are behind current majors | 2026-09-23 review | **Q0c must check whether GitHub has announced a runtime-retirement date affecting these pins.** If it has, this becomes a dated external constraint and moves into Q0c. |
+| Watcher behaviour on large trees; async-runtime concurrency | Phase 23, unchanged | Still unmeasured; still nothing measured argues for it. |
+
 ## Future / Unscheduled
 
 *(all items from the previous Future section shipped in v0.17.0)*
 
-- **Performance tuning for very large namespaces (> 1M entries)** — deferred to
-  Phase 23 pending N4's measured profile. Do not scope as tuning before then.
+- ~~**Performance tuning for very large namespaces (> 1M entries)**~~ — **resolved in Phase 23**:
+  measured by N4/P1a, and the two largest costs fixed by RFC 020 and RFC 021. What remains is
+  registered in Phase 23's deferred register (`path_in_dir`, scheduled as Phase 24 Q4).
 - **Cross-process shared-cache via named shared memory (beyond RFC 004 scope)** —
   deferred. RFC 004 delivered read-only shared memory; "beyond" means cross-process
   read-write, i.e. write coordination and lock contention layered directly on the
   data-integrity guarantees Phase 21 just restored, while poison handling is still
   deferred debt. **Blocked on a stated use case from the owner**, since
   multi-reader/one-writer and symmetric multi-writer are different designs.
-- **`#[async_test]` proc-macro wrapper (deferred from RFC 005)** — deferred. A
-  proc-macro needs its own crate, making a **third publishable workspace member**:
-  a third release surface and a third thing a publish step can silently skip. v0.20.1
-  shipped `localcache-cli` late for exactly that reason (a bare `cargo publish`
-  honours `default-members`). Internal test ergonomics do not justify that risk yet;
-  revisit once `cargo publish --workspace` has been proven on a release.
+- ~~**`#[async_test]` proc-macro wrapper (deferred from RFC 005)**~~ — **decided, not
+  pursued** (owner decision 2026-08-01, Phase 23 P0e): a `macro_rules!` helper removed the
+  only real duplication with no new crate. If the attribute form is ever wanted, it must be
+  an unpublished crate, verified against `cargo publish` — see "Why P0e is a `macro_rules!`
+  helper" under Phase 23.

@@ -65,10 +65,14 @@ The "Background" section is optional in both templates.
 | [017](./done/017-content-reproducible-archives-without-a-container-producer.md) | Content-Reproducible Archives Without a Container Producer (amends RFC 009) | v0.20.1 |
 | [018](./done/018-truthful-error-taxonomy.md) | Truthful Error Taxonomy and a Forward-Compatible Error Enum | v0.21.0 |
 | [019](./done/019-standing-dispositions-for-unmaintained-dependencies.md) | Standing Dispositions for Unmaintained Dependencies | v0.21.0 |
+| [020](./done/020-batched-maintenance-deletes.md) | Batched Maintenance Deletes | v0.21.2 |
+| [021](./done/021-query-execution-one-pass-late-materialization.md) | Query Execution: One Pass, Late Materialization | v0.21.3 |
 
 ### Accepted
 
-*(none — all Phase 22 RFCs shipped in v0.21.0)*
+| RFC | Title | Target |
+|-----|-------|--------|
+| [022](./accepted/022-correctness-and-contract-reconciliation.md) | Correctness and Contract Reconciliation | v0.21.4 (Phase 24 Q0) |
 
 ### Proposed
 

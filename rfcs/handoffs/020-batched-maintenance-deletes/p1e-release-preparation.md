@@ -90,7 +90,8 @@ record. Every `0.21.1` occurrence in these files is **historical and stays**:
 - `CHANGELOG.md` — the `## [0.21.1] — 2026-08-01` section and its body
 - `ROADMAP.md` — all `0.21.1` references record what shipped
 - `rfcs/handoffs/009-…/n6-coming-version-housekeeping.md` — historical
-- `rfcs/handoffs/phase-23-p0/*.md` — P0 shipped in 0.21.1; historical
+- `rfcs/handoffs/phase-23-p0/*.md` — P0 shipped in 0.21.1; historical (removed from the tree
+  on 2026-09-23 under RFC 022; retrieve from commit `d5214c1`)
 
 ---
 
