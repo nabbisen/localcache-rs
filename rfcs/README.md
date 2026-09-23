@@ -77,7 +77,9 @@ The "Background" section is optional in both templates.
 
 ### Proposed
 
-*(none)*
+| RFC | Title | Target |
+|-----|-------|--------|
+| [024](./proposed/024-api-consistency.md) | API Consistency: One Surface, Honest Names | v0.21.5 (Part A), v0.22.0 (Part B) |
 
 ### Archive
 

@@ -1467,7 +1467,23 @@ is therefore `cargo update -p rusqlite`, not `-p libsqlite3-sys`. No decision ch
 **Q1a is complete** (`316e702`, pushed by the dev team). The corrected
 `docs/src/dependency_security.md` is live. CI run 35917344742 is 26/26 on attempt 2; attempt 1
 failed at `actions/checkout` with a runner TLS error before any code ran. Docs run 35917344683 is
-green. **Q1b is next.** Its measurements changed the
+green. **Q1b is next.**
+
+**Q1b is complete** (`c6d36c5`, pushed by the dev team). CI run 35920912003 and Docs run
+35920912082 are green. The first `msrv-fresh.yaml` execution, dispatched by the architect, is run
+35923870047: green, with no annotations. **Q1 is complete for v0.21.5; Q1c waits for v0.21.5 to
+ship.**
+
+### Q2 progress — RFC 024 proposed (2026-09-24)
+
+`rfcs/proposed/024-api-consistency.md` awaits the owner's review. Part A (v0.21.5) completes the
+three wrappers to a stated rule, enforced by a new `api_surface.rs` test. It deprecates eight
+misleading names in favour of honest ones: the sort API, `ConnectionPool` → `SyncCacheEngine`,
+`SharedEngine`, `namespace_copy`, `watched_count`, the path-index API, and the CLI `migrate`. It
+also adds `run_report`, and fixes CLI colour and the doc-name collision. Part B (v0.22.0) decides
+three register contracts: `run()` errors on undecodable entries, `JournalMode::Preserve`, and
+imports honouring `max_entries`. It also gives Q3 the removal list. Five decisions go to the owner.
+Proposed slice order: Q2c → Q2a → Q2d → Q2e → Q2b; then Q2f in v0.22.0. Its measurements changed the
 question Q1 was given. **`rusqlite 0.40` no longer requires Rust 1.95:** `libsqlite3-sys 0.38.2`
 (2026-08-08) polyfills `cfg_select!`, and localcache on `rusqlite 0.40.2` passes all four MSRV
 rows on 1.85.0 and the full suite, with no source change. The move is still breaking (the public
