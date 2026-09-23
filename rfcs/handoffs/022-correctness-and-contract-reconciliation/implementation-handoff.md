@@ -569,6 +569,8 @@ below are what you need to act on it.
 - **`CHANGELOG.md`**:
   - The `## [Unreleased]` preamble says "closing Phase 24 Q0a–Q0e"; make it "Phase 24 Q0
     (RFC 022)", since Q0 now also includes Q0g–Q0i.
+  - Correct the 13 release headings dated 2025 (0.1.0 through 0.13.0) to their tag dates in 2026
+    (`git tag --format='%(refname:short) %(creatordate:short)'`).
   - Rewrite every compare link to the repository's **unprefixed** tag names (`git tag` shows
     `0.19.1`, not `v0.19.1`).
   - Add 0.20.1 through 0.21.3, plus `[Unreleased]: …/compare/0.21.3...HEAD`.
@@ -578,7 +580,8 @@ below are what you need to act on it.
     - `max_entries(0)`, an oversized `batch_set`, and a TTL under one second are rejected with
       an error from v0.22.0.
 - **Amendment 2 rustdoc and docs items**: every bullet marked *(Amendment 2)* in RFC 022 § R5.
-  These are the `path_like` escape character, `ReadPool::get`/`cache_stats`, the
+  These are what encryption covers (payload content only; paths and metadata stay unencrypted),
+  the `path_like` escape character, `ReadPool::get`/`cache_stats`, the
   `AsyncCacheEngine` type doc, `CacheWatcher::watch`, `EncryptionError`, TTL resolution,
   `change_detection.md`, and the CLI's journal-mode note.
 

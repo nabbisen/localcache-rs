@@ -277,6 +277,9 @@ Every item was verified against the code on 2026-09-23.
   - Link the mdBook user guide.
 - **`CHANGELOG.md`** → add compare links for 0.20.1–0.21.4, and correct every existing link to the
   repository's actual, unprefixed tag names, as the Rust project rule requires.
+  *(Amendment 2)* Also correct the **13 release headings dated 2025** (0.1.0 through 0.13.0). Git
+  history and the tag dates show those releases were made in **2026** (`git tag --format=
+  '%(refname:short) %(creatordate:short)'`). Use each tag's date.
 - *(Amendment 2)* **Rustdoc that misstates behaviour**, each verified against the code on
   2026-09-23:
   - `QueryBuilder::path_like`, `CacheEngine::keys`, and the CLI `query --path-like` help: the
@@ -296,6 +299,13 @@ Every item was verified against the code on 2026-09-23.
     (RFC 025).
   - `CacheOptions::max_entries` and `CacheEngineBuilder::max_entries`: per R6 design items 1 and 4.
   - `ChangeDetectionMode::MetadataThenPartialHash`: per R7.
+- *(Amendment 2)* **What encryption covers.** `encryption` encrypts payload content only. Paths,
+  namespaces, file sizes, modification times, content hashes, and timestamps are stored
+  unencrypted, and anyone who can read the database file can read them. State this where users
+  enable encryption: the `CacheOptions::encryption_key` and `CacheEngineBuilder::encryption_key`
+  rustdoc, the encryption sections of `docs/src/features.md` and `docs/src/cookbook.md`, and the
+  `README.md` Features table row. A user reading "encryption" must not conclude the database file
+  is encrypted.
 - *(Amendment 2)* **`docs/src/change_detection.md`** → R7's contract. **`docs/src/cli.md`** → the
   writable commands open the database with WAL and `synchronous = NORMAL`, and WAL persists in the
   file. Document this; do not change it. Whether an engine should leave an existing journal mode
