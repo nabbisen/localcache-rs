@@ -1458,7 +1458,16 @@ per the authorized plan: **Q1**, the MSRV policy (RFC 023, design only).
 ### Q1 progress — RFC 023 accepted (2026-09-23)
 
 `rfcs/accepted/023-msrv-policy.md` was accepted by the owner with all three decisions as
-recommended; the handoff is `rfcs/handoffs/023-msrv-policy/implementation-handoff.md`, and Q1a is next. Its measurements changed the
+recommended; the handoff is `rfcs/handoffs/023-msrv-policy/implementation-handoff.md`.
+
+**RFC 023 Erratum 1 (2026-09-24, `ee4c488`).** The Q1a review found, and the architect
+reproduced, that `rusqlite` 0.40.0/0.40.1 use `cfg_select!` themselves. The stale-lockfile repair
+is therefore `cargo update -p rusqlite`, not `-p libsqlite3-sys`. No decision changed.
+
+**Q1a is complete** (`316e702`, pushed by the dev team). The corrected
+`docs/src/dependency_security.md` is live. CI run 35917344742 is 26/26 on attempt 2; attempt 1
+failed at `actions/checkout` with a runner TLS error before any code ran. Docs run 35917344683 is
+green. **Q1b is next.** Its measurements changed the
 question Q1 was given. **`rusqlite 0.40` no longer requires Rust 1.95:** `libsqlite3-sys 0.38.2`
 (2026-08-08) polyfills `cfg_select!`, and localcache on `rusqlite 0.40.2` passes all four MSRV
 rows on 1.85.0 and the full suite, with no source change. The move is still breaking (the public
