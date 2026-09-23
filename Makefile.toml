@@ -8,10 +8,11 @@
 #   cargo make test           — full test suite with all features
 #   cargo make source-integrity — verify manifest target sources without Cargo
 #   cargo make bench-compile  — verify benchmarks compile
-#   cargo make pre-publish    — all checks before publishing
-#   cargo make publish-lib    — publish localcache to crates.io
-#   cargo make publish-cli    — publish localcache-cli to crates.io
-#   cargo make publish-all    — publish both (lib first)
+#
+# Publishing (RFC 022 R3): `cargo make release` runs the RFC 009 R12
+# canonical gates (source, msrv, doc-package, security). Publication
+# itself is owner-only and manual: `cargo publish --workspace --locked`
+# (RFC 009 R15), run after `cargo make release` passes.
 
 [config]
 default_to_workspace = false
@@ -184,42 +185,6 @@ args = [
     "doc-package",
     "--output-dir",
     ".git-exclude/doc-package-evidence",
-]
-
-[tasks.pre-publish]
-description = "All checks required before publishing"
-dependencies = [
-    "source-integrity",
-    "fmt-check",
-    "matrix-coverage-check",
-    "matrix",
-    "bench-compile",
-    "msrv-check",
-    "doc-package-check",
-]
-
-# ---------------------------------------------------------------------------
-# Publish tasks
-# ---------------------------------------------------------------------------
-
-[tasks.publish-lib]
-description = "Publish localcache (library) to crates.io"
-dependencies = ["pre-publish"]
-command = "cargo"
-args = ["publish", "-p", "localcache"]
-
-[tasks.publish-cli-only]
-description = "Publish localcache-cli to crates.io (run after publish-lib)"
-command = "cargo"
-args = ["publish", "-p", "localcache-cli"]
-
-[tasks.publish-all]
-description = "Publish library then CLI (waits for library to propagate)"
-script = [
-    "cargo make publish-lib",
-    "echo 'Waiting 30 s for crates.io to index localcache...'",
-    "sleep 30",
-    "cargo make publish-cli-only",
 ]
 
 # ---------------------------------------------------------------------------

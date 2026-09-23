@@ -113,9 +113,20 @@ class ReleaseRunnerTests(unittest.TestCase):
         del document["packages"][1]["dependencies"]
         self.assertEqual(RUNNER.workspace_version(document), "1.2.3")
 
-    @staticmethod
-    def _version_reference_fixture(root: Path, *, version: str) -> None:
-        for relative in RUNNER.VERSION_REFERENCE_TARGETS:
+    # RFC 022 R3 widened the gate to discover targets by glob rather than a
+    # hand list (see RUNNER.version_reference_targets), so the fixture now
+    # names its own fixed set of paths -- README.md plus two docs/src pages
+    # -- purely to give the glob something to discover on disk; it is not
+    # reading back a target list from the module under test.
+    _VERSION_REFERENCE_FIXTURE_TARGETS = (
+        Path("README.md"),
+        Path("docs/src/getting_started.md"),
+        Path("docs/src/introduction.md"),
+    )
+
+    @classmethod
+    def _version_reference_fixture(cls, root: Path, *, version: str) -> None:
+        for relative in cls._VERSION_REFERENCE_FIXTURE_TARGETS:
             path = root / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(
@@ -152,6 +163,91 @@ class ReleaseRunnerTests(unittest.TestCase):
             with self.assertRaisesRegex(RUNNER.ReleaseError, "cannot read version reference"):
                 RUNNER.verify_version_references(root, "0.20.1")
 
+    def test_version_reference_targets_discovers_docs_pages_by_glob(self) -> None:
+        # RFC 022 R3: no hand list -- README.md plus every docs/src/**/*.md,
+        # found by glob, so a new doc page is covered automatically.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "README.md").write_text("x\n", encoding="utf-8")
+            (root / "docs" / "src" / "nested").mkdir(parents=True)
+            (root / "docs" / "src" / "querying.md").write_text("x\n", encoding="utf-8")
+            (root / "docs" / "src" / "nested" / "deep.md").write_text("x\n", encoding="utf-8")
+            (root / "docs" / "src" / "SUMMARY.md").write_text("x\n", encoding="utf-8")
+            targets = RUNNER.version_reference_targets(root)
+            self.assertEqual(
+                set(targets),
+                {
+                    root / "README.md",
+                    root / "docs" / "src" / "querying.md",
+                    root / "docs" / "src" / "nested" / "deep.md",
+                    root / "docs" / "src" / "SUMMARY.md",
+                },
+            )
+
+    def test_verify_version_references_does_not_require_a_declaration_on_every_docs_page(
+        self,
+    ) -> None:
+        # A docs/src page discovered by glob is only held to the version
+        # contract once it actually makes an install-example claim; most
+        # pages (architecture, querying, SUMMARY.md, ...) never had one and
+        # are not required to grow one just because the gate now finds them.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._version_reference_fixture(root, version="0.20.1")
+            (root / "docs" / "src" / "architecture.md").write_text(
+                "No install example on this page, just prose.\n", encoding="utf-8"
+            )
+            RUNNER.verify_version_references(root, "0.20.1")  # must not raise
+
+    def test_verify_version_references_accepts_the_table_form_declaration(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._version_reference_fixture(root, version="0.20.1")
+            (root / "README.md").write_text(
+                'localcache = { version = "0.20.1", features = ["watching"] }\n',
+                encoding="utf-8",
+            )
+            RUNNER.verify_version_references(root, "0.20.1")  # must not raise
+
+    def test_verify_version_references_accepts_column_aligned_whitespace(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._version_reference_fixture(root, version="0.20.1")
+            (root / "README.md").write_text(
+                'localcache         = "0.20.1"\n', encoding="utf-8"
+            )
+            RUNNER.verify_version_references(root, "0.20.1")  # must not raise
+
+    def test_verify_version_references_fails_closed_on_an_unparseable_declaration(
+        self,
+    ) -> None:
+        # A declaration line is never silently skipped: it either parses or
+        # the gate fails, so a typo that renders the pinned version
+        # unreadable cannot slip through as an accidental pass.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._version_reference_fixture(root, version="0.20.1")
+            (root / "README.md").write_text("localcache = 0.20.1\n", encoding="utf-8")
+            with self.assertRaisesRegex(
+                RUNNER.ReleaseError, "unparseable localcache declaration line"
+            ):
+                RUNNER.verify_version_references(root, "0.20.1")
+
+    def test_verify_version_references_ignores_a_prose_mention(self) -> None:
+        # Anchored on the line's start, not a substring search: a backticked
+        # mid-line mention like this one (docs/src/dependency_security.md's
+        # real shape) is preceded by other text on the same line, so it must
+        # never be treated as a declaration and must never fail the gate.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._version_reference_fixture(root, version="0.20.1")
+            (root / "README.md").write_text(
+                'Some crates pin to `localcache = "0.19"` for compatibility.\n'
+                'localcache = "0.20.1"\n',
+                encoding="utf-8",
+            )
+            RUNNER.verify_version_references(root, "0.20.1")  # must not raise
+
     def test_verify_changelog_has_coming_version_section_passes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -186,11 +282,22 @@ class ReleaseRunnerTests(unittest.TestCase):
     def test_real_repo_version_references_and_changelog_match_workspace(self) -> None:
         # Demonstrates the fixed defect directly: before M6d this failed
         # because README.md/docs said 0.20.1 while Cargo.toml said 0.20.0.
+        #
+        # RFC 022 R3 (Q0d): the gate was widened from a three-file hand list
+        # to every docs/src/**/*.md page, and now correctly fails on five
+        # pre-existing stale "0.19" declaration lines across three pages
+        # (docs/src/async.md, docs/src/cookbook.md, docs/src/features.md)
+        # that the narrow gate never covered. Q0d deliberately leaves them
+        # unfixed -- Q0e's job -- so this asserts today's real, known
+        # failure rather than a success the repo does not yet have. Q0e
+        # must flip this back to a bare (non-raising) call once it fixes
+        # those five lines.
         root = SCRIPT.resolve().parents[1]
         with (root / "Cargo.toml").open("rb") as file:
             document = tomllib.load(file)
         version = document["workspace"]["package"]["version"]
-        RUNNER.verify_version_references(root, version)
+        with self.assertRaisesRegex(RUNNER.ReleaseError, "stale version reference"):
+            RUNNER.verify_version_references(root, version)
         RUNNER.verify_changelog_has_coming_version_section(root, version)
 
     def test_failed_gate_is_logged_and_fails_closed(self) -> None:

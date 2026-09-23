@@ -66,17 +66,54 @@ CI_REQUIRED_JOBS: tuple[str, ...] = (
 # fail-fast orchestration and one consolidated R14 summary.
 RELEASE_GATES: tuple[str, ...] = ("source", "msrv", "doc-package", "security")
 
-# RFC 009 R10/R11: install examples that must name the exact coming version.
-# Deliberately a fixed, narrow target list rather than a broad version-string
-# scan — historical CHANGELOG entries, compatibility ranges, and schema-era
-# prose (e.g. "v0.18.0+", "the v0.20.1 schema") mention other versions on
-# purpose and must never be treated as stale or rewritten.
-VERSION_REFERENCE_TARGETS: tuple[str, ...] = (
-    "README.md",
-    "docs/src/getting_started.md",
-    "docs/src/introduction.md",
-)
-VERSION_REFERENCE_PATTERN = re.compile(r'^localcache = "([^"]+)"$', re.MULTILINE)
+# RFC 009 R10/R11, widened by RFC 022 R3: install examples that must name
+# the exact coming version. `version_reference_targets()` discovers every
+# target by glob (README.md plus every docs/src/**/*.md) rather than a hand
+# list, so a new doc page is covered automatically instead of silently
+# escaping the gate.
+#
+# A **declaration line** is a line starting, after optional indentation,
+# with `localcache`, optional spaces, `=`, then either a plain `"X"` or a
+# `{ … version = "X" … }` table. Anchoring on the line's start — not a
+# substring search anywhere in the line — is what keeps prose out of scope:
+# a backticked mid-line mention like "pinned to `localcache = \"0.19\"`"
+# (`docs/src/dependency_security.md`) is preceded by other text on the same
+# line, so it never matches. Historical CHANGELOG entries, compatibility
+# ranges, and schema-era prose (e.g. "v0.18.0+", "the v0.20.1 schema") are
+# excluded the same way and must never be treated as stale or rewritten.
+#
+# A declaration line whose version cannot be parsed **fails** the gate; it
+# is never silently skipped — see `_parse_declaration_line`.
+_DECLARATION_PREFIX_RE = re.compile(r"^[ \t]*localcache[ \t]*=")
+_SIMPLE_FORM_RE = re.compile(r'^[ \t]*localcache[ \t]*=[ \t]*"([^"]*)"')
+_TABLE_FORM_RE = re.compile(r"^[ \t]*localcache[ \t]*=[ \t]*\{(.*)\}[ \t]*$")
+_TABLE_VERSION_RE = re.compile(r'\bversion[ \t]*=[ \t]*"([^"]*)"')
+
+
+def version_reference_targets(root: Path) -> tuple[Path, ...]:
+    """RFC 022 R3: `README.md` plus every `docs/src/**/*.md`, by glob."""
+    targets = [root / "README.md"]
+    targets.extend(sorted((root / "docs" / "src").glob("**/*.md")))
+    return tuple(targets)
+
+
+def _parse_declaration_line(relative: Path, line_no: int, line: str) -> str:
+    """Extract the pinned version from one declaration line (a line
+    `_DECLARATION_PREFIX_RE` already matched). Raises `ReleaseError` if
+    neither the plain-string nor the `{ … version = "X" … }` form can be
+    parsed out of it — a declaration line is never silently skipped.
+    """
+    simple = _SIMPLE_FORM_RE.match(line)
+    if simple:
+        return simple.group(1)
+    table = _TABLE_FORM_RE.match(line)
+    if table:
+        version = _TABLE_VERSION_RE.search(table.group(1))
+        if version:
+            return version.group(1)
+    raise ReleaseError(
+        f"{relative}:{line_no}: unparseable localcache declaration line: {line!r}"
+    )
 
 
 class ReleaseError(Exception):
@@ -426,22 +463,39 @@ def workspace_version(document: dict[str, object]) -> str:
 
 
 def verify_version_references(root: Path, expected_version: str) -> None:
-    """RFC 009 R10/R11: every install example names the exact coming version.
+    """RFC 009 R10/R11, widened by RFC 022 R3: every install example in
+    `README.md` and every `docs/src/**/*.md` names the exact coming
+    version.
 
-    Fails closed on a missing target file, a target with no matching install
-    line, or a stale version — this is what caught README.md/docs claiming
-    0.20.1 while both packages still said 0.20.0 before M6d.
+    Fails closed on: `README.md` missing entirely, or with no declaration
+    line (the one page this gate has always required an install example
+    on — this is what caught README.md/docs claiming 0.20.1 while both
+    packages still said 0.20.0 before M6d); any target missing entirely;
+    a declaration line whose version cannot be parsed; or a stale version
+    on any declaration line, in any target.
+
+    A `docs/src/**/*.md` page with **zero** declaration lines is not an
+    error — most doc pages (architecture, querying, `SUMMARY.md`, …) never
+    had an install example and are not required to grow one. A page is
+    only held to the version contract once it actually makes the claim.
     """
-    for relative in VERSION_REFERENCE_TARGETS:
-        path = root / relative
+    readme = root / "README.md"
+    for path in version_reference_targets(root):
+        relative = path.relative_to(root)
         try:
             text = path.read_text(encoding="utf-8")
         except OSError as error:
             raise ReleaseError(f"cannot read version reference {relative}: {error}") from error
-        matches = VERSION_REFERENCE_PATTERN.findall(text)
-        if not matches:
-            raise ReleaseError(f"{relative}: no install-example version line found")
-        stale = sorted({match for match in matches if match != expected_version})
+        versions = [
+            _parse_declaration_line(relative, line_no, line)
+            for line_no, line in enumerate(text.splitlines(), start=1)
+            if _DECLARATION_PREFIX_RE.match(line)
+        ]
+        if not versions:
+            if path == readme:
+                raise ReleaseError(f"{relative}: no install-example version line found")
+            continue
+        stale = sorted({v for v in versions if v != expected_version})
         if stale:
             raise ReleaseError(
                 f"{relative}: stale version reference(s) {stale}, "

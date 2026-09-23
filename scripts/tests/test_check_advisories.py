@@ -1,7 +1,9 @@
+import http.server
 import importlib.util
 import json
 import sys
 import tempfile
+import threading
 import unittest
 from datetime import date
 from pathlib import Path
@@ -790,6 +792,81 @@ class RegistryTests(unittest.TestCase):
             f'name = "{name}"\nversion = "{version}"\nsource = "{source}"\n'
             f'checksum = "{self.CHECKSUM}"\n'
         )
+
+
+class LiveFetchHttpServerTests(unittest.TestCase):
+    """RFC 022 R3: live_fetch's only exception path is a genuine network
+    failure (OSError/URLError); an HTTP error response must return
+    normally, exactly like the success path, so fetch_with_retry's status
+    logic -- not live_fetch -- decides whether to retry it. Exercised here
+    against a real local server rather than a monkeypatched urlopen,
+    because a monkeypatch of urlopen itself would not reproduce the actual
+    bug: urlopen raises HTTPError for an error status, and HTTPError is a
+    URLError subclass, so it was being caught by that same except clause
+    and misreported as transient."""
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        hits: dict[str, int] = {}
+
+        def do_GET(self) -> None:
+            self.hits[self.path] = self.hits.get(self.path, 0) + 1
+            if self.path == "/ok":
+                body = b"hello"
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            elif self.path == "/missing":
+                self.send_response(404)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+            else:
+                self.send_response(503)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass  # keep test output quiet; failures are asserted, not logged
+
+    def setUp(self) -> None:
+        self._Handler.hits = {}
+        self.server = http.server.HTTPServer(("127.0.0.1", 0), self._Handler)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.base_url = f"http://127.0.0.1:{self.server.server_address[1]}"
+
+    def tearDown(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join()
+
+    def test_live_fetch_returns_a_success_response(self) -> None:
+        status, headers, body = CHECKER.live_fetch(f"{self.base_url}/ok", 5)
+        self.assertEqual(status, 200)
+        self.assertEqual(body, b"hello")
+        self.assertIn("content-length", headers)
+
+    def test_live_fetch_returns_an_http_error_response_instead_of_raising(self) -> None:
+        # The regression this closes: previously this raised
+        # TransientFetchError, exactly like a network blip.
+        status, _headers, _body = CHECKER.live_fetch(f"{self.base_url}/missing", 5)
+        self.assertEqual(status, 404)
+
+    def test_a_404_through_fetch_with_retry_fails_after_one_attempt(self) -> None:
+        with self.assertRaisesRegex(CHECKER.AdvisoryGateError, "HTTP 404"):
+            CHECKER.fetch_with_retry(
+                CHECKER.live_fetch, f"{self.base_url}/missing", 5,
+                CHECKER.time.monotonic() + 60, lambda _: None,
+            )
+        self.assertEqual(self._Handler.hits.get("/missing"), 1)
+
+    def test_a_503_through_fetch_with_retry_is_retried_up_to_the_limit(self) -> None:
+        with self.assertRaisesRegex(CHECKER.AdvisoryGateError, "HTTP 503"):
+            CHECKER.fetch_with_retry(
+                CHECKER.live_fetch, f"{self.base_url}/unstable", 5,
+                CHECKER.time.monotonic() + 60, lambda _: None,
+            )
+        self.assertEqual(self._Handler.hits.get("/unstable"), CHECKER.MAX_FETCH_ATTEMPTS)
 
 
 if __name__ == "__main__":

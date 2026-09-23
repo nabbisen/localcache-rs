@@ -8,18 +8,21 @@ on:
   workflow_dispatch:
 
 # RFC 009 R16 requires explicit least-privilege permissions and every third-party
-# action pinned to a reviewed immutable commit SHA. This workflow is the one
-# documented deviation from R16's "normally `contents: read`" default: publishing
-# to GitHub Pages requires `pages: write`, and `actions/deploy-pages` authenticates
-# via OIDC, which requires `id-token: write`. Both are the minimum for a Pages
-# deploy and neither grants repository-content, package, or registry write access.
-# Because this workflow does hold write scopes, its action pins matter more than
-# `ci.yaml`'s, not less — each SHA below was resolved from the tag this workflow
-# already referenced, and `actions/checkout` matches the pin `ci.yaml` uses.
+# action pinned to a reviewed immutable commit SHA. RFC 022 R3 narrowed this
+# further: no job needs every scope this workflow holds anywhere, so each job
+# now declares only what it uses, instead of a workflow-level grant of all
+# three. The workflow-level default is `contents: read`, matching `ci.yaml`.
+# `build` never deploys, so it only needs `contents: read` (to check out the
+# repository) plus `pages: read` (`actions/configure-pages` reads the Pages
+# configuration). `deploy` needs `pages: write` to publish, and
+# `actions/deploy-pages` authenticates via OIDC, which requires
+# `id-token: write`; neither job is granted repository-content, package, or
+# registry write access. Because this workflow does hold write scopes, its
+# action pins matter more than `ci.yaml`'s, not less — each SHA below was
+# resolved from the tag this workflow already referenced, and
+# `actions/checkout` matches the pin `ci.yaml` uses.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: "pages"
@@ -28,6 +31,9 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: read
 
     defaults:
       run:
@@ -41,7 +47,17 @@ jobs:
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
 
       - name: Install mdBook
-        run: cargo install mdbook --no-default-features --features search --vers "^0.5" --locked
+        run: |
+          curl -fL --retry 3 \
+            https://github.com/rust-lang/mdBook/releases/download/v0.5.4/mdbook-v0.5.4-x86_64-unknown-linux-gnu.tar.gz \
+            -o "$RUNNER_TEMP/mdbook.tar.gz"
+          printf '%s  %s\n' \
+            3f28de05dafca9d0f2eab99c662116b0e37b89b1d96a08f8f430b9eeae958cd7 \
+            "$RUNNER_TEMP/mdbook.tar.gz" | sha256sum -c -
+          mkdir -p "$HOME/.local/bin"
+          tar -xzf "$RUNNER_TEMP/mdbook.tar.gz" -C "$HOME/.local/bin" mdbook
+          chmod 0755 "$HOME/.local/bin/mdbook"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Build book
         run: mdbook build
@@ -57,6 +73,9 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     needs: build
+    permissions:
+      pages: write
+      id-token: write
     steps:
       - name: Deploy to GitHub Pages
         id: deployment

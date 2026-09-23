@@ -77,6 +77,13 @@ authorization, not before.
   `debounced_watcher`'s invalidation callback no longer sends a notification when its internal
   lock cannot be taken — it previously did, incorrectly claiming an invalidation that never
   happened.
+- `scripts/check_advisories.py`'s `live_fetch` (RFC 022 R3) no longer retries a definitive HTTP
+  error response. `HTTPError` is a subclass of `URLError` (in turn an `OSError`), so an HTTP error
+  status raised as an exception by `urlopen` — a 404, for example — was caught by the same broad
+  except clause as a genuine network failure, wrapped as `TransientFetchError`, and retried up to
+  three times before the gate finally failed. `live_fetch` now returns an HTTP error response the
+  same way it returns a success; `fetch_with_retry`'s existing status logic — already correct —
+  decides whether it is worth retrying (a 5xx) or fails immediately (everything else).
 
 ### Changed
 
@@ -87,6 +94,25 @@ authorization, not before.
   `max_entries(0)` keeps only the most recently written entry. **From v0.22.0**, `max_entries(0)`,
   a `batch_set` larger than `max_entries`, and a TTL under one second will be rejected with an
   error instead of silently accepted as they are in this release.
+- `scripts/release.py`'s install-example version gate (RFC 022 R3) now discovers its targets by
+  glob — `README.md` plus every `docs/src/**/*.md` — instead of a fixed three-file list, so a new
+  doc page is covered automatically. A **declaration line** is defined precisely (a line starting,
+  after optional indentation, with `localcache = "..."` or `localcache = { ... version = "..."
+  ... }`), so a backticked mid-line mention such as "pinned to `` `localcache = \"0.19\"` ``" is
+  never mistaken for one; an unparseable declaration line now fails the gate rather than being
+  silently skipped. `README.md` still requires at least one declaration line; a
+  `docs/src/**/*.md` page is only held to the version contract once it actually contains one.
+- `Makefile.toml`'s `pre-publish`, `publish-lib`, `publish-cli-only`, and `publish-all` tasks are
+  retired (RFC 022 R3). `cargo make release` already runs the RFC 009 R12 canonical gates;
+  publication itself is owner-only and manual (`cargo publish --workspace --locked`, RFC 009
+  R15), run after `cargo make release` passes.
+- `.github/workflows/docs.yaml`'s permissions (RFC 022 R3) are now declared per job instead of
+  once for the whole workflow: `build` holds `contents: read` and `pages: read`, `deploy` holds
+  `pages: write` and `id-token: write`, and the workflow-level default is `contents: read`.
+  mdBook is now installed from a pinned, checksum-verified release download (matching `ci.yaml`'s
+  pattern) instead of `cargo install mdbook --vers "^0.5"`.
+- `scripts/release-tools.toml`'s hash pins for `scripts/release.py` and
+  `scripts/check_advisories.py` are updated to match this slice's changes (RFC 022 R3).
 
 ## [0.21.3] — 2026-08-04
 

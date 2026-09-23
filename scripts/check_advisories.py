@@ -563,6 +563,20 @@ def live_fetch(url: str, timeout: int) -> tuple[int, Mapping[str, str], bytes]:
             status = response.status
             headers = {key.lower(): value for key, value in response.headers.items()}
             body = response.read(MAX_RESPONSE_BYTES + 1)
+    except urllib.error.HTTPError as error:
+        # RFC 022 R3: an HTTP error response is a definitive answer, not a
+        # transient failure. `HTTPError` is a subclass of `URLError` (in
+        # turn an `OSError`), so it used to fall into the broad clause
+        # below and be raised as `TransientFetchError` -- retrying even a
+        # 404. `fetch_with_retry` already distinguishes a 5xx (retry) from
+        # any other status (fail fast); returning normally here, exactly
+        # like the success path, is what lets it decide instead of this
+        # function deciding for it.
+        with error:
+            status = error.code
+            headers = {key.lower(): value for key, value in error.headers.items()}
+            body = error.read(MAX_RESPONSE_BYTES + 1)
+        return status, headers, body
     except (OSError, urllib.error.URLError) as error:
         raise TransientFetchError(f"sparse-index request failed for {url}: {error}") from error
     return status, headers, body
