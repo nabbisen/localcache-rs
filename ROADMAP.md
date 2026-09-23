@@ -1307,7 +1307,7 @@ provisional until the file is created (RFC 000).
 |---|---|---|---|
 | **Q0a — Key rotation state** | The rotating engine adopts the new key only after commit, via an interior-mutable key; reopen-after-rotation contract documented | RFC 022 R1 | RFC 022 accepted ✅ |
 | **Q0b — Query `offset` contract** | `offset` counts only rows that materialize, in every tier | RFC 022 R2 | RFC 022 accepted ✅ |
-| **Q0c — LRU recency** | A write is an access; deterministic eviction order; `set` never evicts what it just wrote | RFC 022 R6 | RFC 022 accepted ✅; owner confirmation of the R6 amendment |
+| **Q0c — LRU recency** | A write is an access; deterministic eviction order; `set` never evicts what it just wrote; `max_entries(0)` and oversized batches rejected | RFC 022 R6 | RFC 022 accepted ✅; R6 amendment accepted ✅ |
 | **Q0d — Release tooling** | Version gate covers every install example; retire the Makefile publish tasks; no retry on HTTP 404; Pages workflow least privilege | RFC 022 R3 | RFC 022 accepted ✅ |
 | **Q0e — Hygiene, docs, and records** | RFC 022 R4 and R5, including the documentation for Q0a–Q0c's contracts | RFC 022 R4–R5 | Q0a–Q0d |
 | **Q0f — Release v0.21.4** | Gates, evidence, release decision, owner tag/publish | owner | Q0e |
@@ -1353,8 +1353,10 @@ The standing `rusqlite ^0.39` register entry is re-evaluated against this policy
 | `rotate_encryption_key` loads every encrypted payload of the namespace into memory at once | 2026-09-23 review | O(namespace) memory. RFC 020's keyset paging applies directly. Revisit when a consumer rotates a large encrypted namespace. |
 | `aggregate-ci` accepts zero or duplicated `--evidence-manifest` arguments and does not check each manifest's `context` | 2026-09-23 review | The same defect class RC-1 fixed for jobs. Mitigated because the workflow passes a fixed argument list. Fold into the next change to `scripts/release.py`'s aggregation. |
 | Re-running `msrv-check`/`security-check` fails confusingly on existing output directories | 2026-09-23 review | Operator ergonomics only; both fail closed. |
-| `upload-artifact@v4` / `download-artifact@v4` are behind current majors | 2026-09-23 review | **Q0c must check whether GitHub has announced a runtime-retirement date affecting these pins.** If it has, this becomes a dated external constraint and moves into Q0c. |
+| `upload-artifact@v4` / `download-artifact@v4` are behind current majors | 2026-09-23 review | **Q0d must check whether GitHub has announced a runtime-retirement date affecting these pins.** If it has, this becomes a dated external constraint and moves into Q0d. |
 | Watcher behaviour on large trees; async-runtime concurrency | Phase 23, unchanged | Still unmeasured; still nothing measured argues for it. |
+| `max_entries` is enforced only by `set`/`batch_set`, not by `import_entries`, `import_from`, or `namespace_copy` | 2026-09-23, found while writing the RFC 022 handoff | Consistent with the rustdoc ("when exceeded after a `set`"), so it is not a defect, and Q0e documents it plainly. Whether an import should honour the bound, and what it should do with the overflow, is an API-contract question for **Q2** (RFC 024). |
+| Encryption key material is copied into engine memory and never zeroized | 2026-09-23, while designing RFC 022 R1 | Pre-existing, and R1 does not widen it materially. Zeroizing needs `zeroize` (a new dependency under RFC 014's watch) and a decision on the builder's `Vec<u8>` key input. Assess at Q2 or Q3, whichever next touches key handling. |
 
 ## Future / Unscheduled
 

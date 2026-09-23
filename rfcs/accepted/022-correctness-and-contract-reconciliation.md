@@ -2,13 +2,14 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted (owner, 2026-09-23); amended the same day with R6 (see "Amendment" below) |
+| Status | Accepted (owner, 2026-09-23); R6 amendment accepted by the owner the same day |
 | Feature | *(core; `encryption` for R1; `json` affects R2's tiers)* |
 | Touches | `crates/localcache/src/cache/engine.rs`, `crates/localcache/src/cache/query.rs`, `crates/localcache/src/db/repository.rs`, `crates/cli/src/main.rs`, `scripts/release.py`, `scripts/check_advisories.py`, `scripts/release-tools.toml`, `Makefile.toml`, `.github/workflows/docs.yaml`, `README.md`, `CHANGELOG.md`, `docs/src/`, `rfcs/README.md`, `ROADMAP.md` |
 | Finding | Architect onboarding review, 2026-09-23 |
 | Milestone | Phase 24 Q0 |
 | Breaking | **No** — no public signature, schema, or wire-format change; one documented field meaning is corrected (R6.6); targets v0.21.4 |
 | Authorship | High-capability model; **reviewed by the owner** (arrangement of 2026-08-01) |
+| Handoffs | [`../handoffs/022-correctness-and-contract-reconciliation/`](../handoffs/022-correctness-and-contract-reconciliation/implementation-handoff.md) — implementation handoff and QA checklist |
 
 ## Summary
 
@@ -254,8 +255,8 @@ Every item was verified against the code on 2026-09-23.
 > **Amendment, 2026-09-23, after acceptance.** R6 was added when the architect re-reviewed R4.4
 > against the owner's principle that APIs must not confuse users. The defect below is **reproduced**
 > (scratch probe under `.git-exclude/tmp/lru-probe/`), not inferred. It is within this RFC's theme,
-> a correctness fix restoring a documented contract, but it adds scope, so the owner is asked to
-> confirm it explicitly.
+> a correctness fix restoring a documented contract, but it added scope, so the owner confirmed it
+> explicitly (**accepted 2026-09-23**).
 
 ### Defect
 
@@ -290,13 +291,18 @@ order.
    keeps its `id`. Apply the same order in `list_lru_n_paths`, so the `on_evict` callback reports
    exactly the rows deleted.
 3. **`set` never evicts the entry it just wrote.** Exclude that row from the eviction candidates.
-   `max_entries(0)` is the only case where a `set` cannot retain its entry. Decide in the
-   implementation review whether to reject it at build time; it is not silently allowed to look
-   like a successful write.
-4. **`batch_set`** excludes its own entries from eviction, **unless the batch alone exceeds
-   `max_entries`**. In that case its earliest items, in input order, are evicted first, and
-   `BatchSetReport` must not report them as retained. Specify the exact reporting in the handoff;
-   the requirement is that no path is reported stored while absent.
+   **`max_entries(0)` is rejected when the engine is opened** (`CacheEngine::open`, and therefore
+   `build()`, `build_read_pool()`, `ReadPool::open`, `ConnectionPool::open`, and
+   `AsyncCacheEngine::open`), with `UnsupportedFeature("max_entries must be at least 1")`. A cache
+   that can hold nothing would make every `set` an `Ok` that stored nothing, which is the confusion
+   R6 exists to remove. Q3 re-homes the variant when it splits `UnsupportedFeature`.
+4. **`batch_set` excludes its own entries from eviction.** A batch whose **distinct stored paths
+   exceed `max_entries` is rejected before anything is written**, with
+   `UnsupportedFeature("batch of N distinct entries exceeds max_entries M")`. The only other
+   design would store the batch and then evict part of it inside the same call. `BatchSetReport`
+   has no truthful way to report that: those items neither failed nor remain stored. Rejection is
+   all-or-nothing, and the caller can split the batch. "Distinct stored paths" counts only items
+   that passed preparation; duplicate paths in one batch count once.
 5. **No schema change and no migration.** Rows written before 0.21.4 keep `last_accessed_at = 0`
    until next read or written, so they are evicted first. That is correct, because they are the
    least recently used.
