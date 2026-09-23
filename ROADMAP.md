@@ -1418,6 +1418,12 @@ Pushed with owner authorization. **CI run 35844256083 is green on `280c05a`, 26/
 Docs workflow also succeeded. Test count 425 → 459. Remaining for v0.21.4: Q0d (release tooling),
 Q0e (hygiene, docs, records), and Q0f (release).
 
+**Q0d and Q0e were pushed together** (owner authorization), because Q0d's widened version gate
+could only pass once Q0e had fixed the stale install examples. **CI run 35852831761 is green on
+`00ef4c6`, 26/26 jobs.** Docs run 35852831771 is also green, and its `build` and `deploy` jobs are
+the first real verification of Q0d's per-job Pages permissions. Q0j (CI runtime hygiene, RFC 022
+Amendment 3) is approved and goes out as its own push, so its run shows only its effect.
+
 ### Deferred register — Phase 24
 
 | Item | Origin | Note |
