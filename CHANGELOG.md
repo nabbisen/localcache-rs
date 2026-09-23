@@ -57,6 +57,15 @@ authorization, not before.
   of a file larger than 128 KiB) was reported `Fresh`, and `get_if_fresh` returned the stale
   payload — the partial hash only samples the head and tail, so it never saw the change.
   `StrictFullHash` and `explain()`'s diagnostic `hash_match` are unaffected.
+- `AsyncCacheEngine::batch_get` / `batch_get_fresh` / `check_status_batch`
+  (`crates/localcache/src/cache/async_engine.rs`): each of these now always returns exactly one
+  result per requested path, in the same order. Previously, if the engine's lock was poisoned or
+  the blocking task panicked, the whole call returned a single-element `Vec` regardless of how many
+  paths were requested — callers indexing the result by request position, or simply trusting
+  `results.len() == paths.len()`, would panic or silently misread which path an error belonged to.
+  On a poisoned lock every element is now `Err(LocalFileCacheError::Poisoned { resource:
+  "AsyncCacheEngine" })`; on a panicking blocking task every element is now
+  `Err(LocalFileCacheError::AsyncTaskPanicked)`.
 
 ### Changed
 

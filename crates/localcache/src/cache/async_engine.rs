@@ -87,6 +87,13 @@ where
         spawn(move || Self::lock(&inner)?.get_if_fresh(&path)).await
     }
 
+    /// Async version of [`CacheEngine::batch_get`].
+    ///
+    /// Always returns exactly one result per path in `paths`, in the same
+    /// order (RFC 022 R8). If the lock is poisoned, every element is
+    /// `Err(`[`LocalFileCacheError::Poisoned`]` { resource: "AsyncCacheEngine" })`.
+    /// If the blocking task itself panics, every element is
+    /// `Err(`[`LocalFileCacheError::AsyncTaskPanicked`]`)`.
     pub async fn batch_get(
         &self,
         paths: Vec<PathBuf>,
@@ -95,12 +102,39 @@ where
         T: Clone,
     {
         let inner = Arc::clone(&self.inner);
-        match spawn(move || Ok(Self::lock(&inner)?.batch_get(&paths))).await {
+        let n = paths.len();
+        match spawn(move || {
+            let guard = match Self::lock(&inner) {
+                Ok(guard) => guard,
+                Err(_) => {
+                    return Ok(n_errors(n, || LocalFileCacheError::Poisoned {
+                        resource: "AsyncCacheEngine",
+                    }));
+                }
+            };
+            Ok(guard.batch_get(&paths))
+        })
+        .await
+        {
             Ok(r) => r,
-            Err(e) => vec![Err(e)],
+            Err(e) => {
+                debug_assert!(
+                    matches!(e, LocalFileCacheError::AsyncTaskPanicked),
+                    "spawn_blocking's own Err is always AsyncTaskPanicked here \
+                     (the closure itself never returns Err); got {e:?}"
+                );
+                n_errors(n, || LocalFileCacheError::AsyncTaskPanicked)
+            }
         }
     }
 
+    /// Async version of [`CacheEngine::batch_get_fresh`].
+    ///
+    /// Always returns exactly one result per path in `paths`, in the same
+    /// order (RFC 022 R8). If the lock is poisoned, every element is
+    /// `Err(`[`LocalFileCacheError::Poisoned`]` { resource: "AsyncCacheEngine" })`.
+    /// If the blocking task itself panics, every element is
+    /// `Err(`[`LocalFileCacheError::AsyncTaskPanicked`]`)`.
     pub async fn batch_get_fresh(
         &self,
         paths: Vec<PathBuf>,
@@ -109,9 +143,29 @@ where
         T: Clone,
     {
         let inner = Arc::clone(&self.inner);
-        match spawn(move || Ok(Self::lock(&inner)?.batch_get_fresh(&paths))).await {
+        let n = paths.len();
+        match spawn(move || {
+            let guard = match Self::lock(&inner) {
+                Ok(guard) => guard,
+                Err(_) => {
+                    return Ok(n_errors(n, || LocalFileCacheError::Poisoned {
+                        resource: "AsyncCacheEngine",
+                    }));
+                }
+            };
+            Ok(guard.batch_get_fresh(&paths))
+        })
+        .await
+        {
             Ok(r) => r,
-            Err(e) => vec![Err(e)],
+            Err(e) => {
+                debug_assert!(
+                    matches!(e, LocalFileCacheError::AsyncTaskPanicked),
+                    "spawn_blocking's own Err is always AsyncTaskPanicked here \
+                     (the closure itself never returns Err); got {e:?}"
+                );
+                n_errors(n, || LocalFileCacheError::AsyncTaskPanicked)
+            }
         }
     }
 
@@ -200,14 +254,40 @@ where
     }
 
     /// Async version of [`CacheEngine::check_status_batch`].
+    ///
+    /// Always returns exactly one result per path in `paths`, in the same
+    /// order (RFC 022 R8). If the lock is poisoned, every element is
+    /// `Err(`[`LocalFileCacheError::Poisoned`]` { resource: "AsyncCacheEngine" })`.
+    /// If the blocking task itself panics, every element is
+    /// `Err(`[`LocalFileCacheError::AsyncTaskPanicked`]`)`.
     pub async fn check_status_batch(
         &self,
         paths: Vec<PathBuf>,
     ) -> Vec<Result<CacheStatus, LocalFileCacheError>> {
         let inner = Arc::clone(&self.inner);
-        match spawn(move || Ok(Self::lock(&inner)?.check_status_batch(&paths))).await {
+        let n = paths.len();
+        match spawn(move || {
+            let guard = match Self::lock(&inner) {
+                Ok(guard) => guard,
+                Err(_) => {
+                    return Ok(n_errors(n, || LocalFileCacheError::Poisoned {
+                        resource: "AsyncCacheEngine",
+                    }));
+                }
+            };
+            Ok(guard.check_status_batch(&paths))
+        })
+        .await
+        {
             Ok(r) => r,
-            Err(e) => vec![Err(e)],
+            Err(e) => {
+                debug_assert!(
+                    matches!(e, LocalFileCacheError::AsyncTaskPanicked),
+                    "spawn_blocking's own Err is always AsyncTaskPanicked here \
+                     (the closure itself never returns Err); got {e:?}"
+                );
+                n_errors(n, || LocalFileCacheError::AsyncTaskPanicked)
+            }
         }
     }
 
@@ -400,4 +480,17 @@ where
     R: Send + 'static,
 {
     crate::cache::runtime::spawn_blocking(f).await
+}
+
+/// `n` copies of an error, one per requested path (RFC 022 R8) — every
+/// batch method's poisoned-lock and panicked-task path uses this, instead
+/// of three separate loops. `LocalFileCacheError` is not `Clone`, and both
+/// errors this is ever called with (`Poisoned`, `AsyncTaskPanicked`) carry
+/// no heap data, so a constructor is called once per copy rather than
+/// requiring `Clone`.
+fn n_errors<R>(
+    n: usize,
+    mut err: impl FnMut() -> LocalFileCacheError,
+) -> Vec<Result<R, LocalFileCacheError>> {
+    (0..n).map(|_| Err(err())).collect()
 }

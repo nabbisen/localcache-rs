@@ -964,6 +964,227 @@ macro_rules! panic_inside_blocking_closure_yields_async_task_panicked_test {
     };
 }
 
+// RFC 022 R8 — a payload whose `Deserialize` impl panics unconditionally.
+// `Serialize` is a normal derive: writing never panics, only decoding does,
+// which is what forces the panic to happen inside `batch_get`'s blocking
+// closure, at the choke point RFC 022 R8's test needs.
+#[cfg(any(feature = "async", feature = "async-std", feature = "smol"))]
+#[derive(Debug, Clone, serde::Serialize)]
+struct PanicOnDeserialize;
+
+#[cfg(any(feature = "async", feature = "async-std", feature = "smol"))]
+impl<'de> serde::Deserialize<'de> for PanicOnDeserialize {
+    fn deserialize<D>(_deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        panic!("intentional test panic: PanicOnDeserialize");
+    }
+}
+
+// RFC 022 R8 — `AsyncCacheEngine`'s `batch_get`/`batch_get_fresh`/
+// `check_status_batch` must return exactly one result per requested path,
+// never a single `Err` for the whole call. Same generation rationale as
+// `panic_inside_blocking_closure_yields_async_task_panicked_test!` above:
+// identical bodies, only the harness shape differs per runtime.
+#[cfg(any(feature = "async", feature = "async-std", feature = "smol"))]
+macro_rules! rfc022_r8_batch_results_test {
+    (block_on = $block_on_fn:path) => {
+        // Must fail on v0.21.3: each batch method returned 1 result, not 3.
+        #[test]
+        fn batch_methods_return_one_poisoned_result_per_path() {
+            $block_on_fn(async {
+                let engine = AsyncCacheEngine::<Vec<f32>>::open(CacheOptions {
+                    database_path: ":memory:".into(),
+                    ..CacheOptions::default()
+                })
+                .await
+                .unwrap();
+
+                // Poison the mutex, same mechanism as
+                // `poisoned_mutex_recovers_on_subsequent_calls`.
+                let _ = engine
+                    .query_run::<_, Vec<f32>>(|_q| panic!("intentional test panic"))
+                    .await;
+
+                let paths = vec![
+                    std::path::PathBuf::from("a.txt"),
+                    std::path::PathBuf::from("b.txt"),
+                    std::path::PathBuf::from("c.txt"),
+                ];
+
+                let batch_get_results = engine.batch_get(paths.clone()).await;
+                assert_eq!(batch_get_results.len(), paths.len());
+                for r in &batch_get_results {
+                    assert!(
+                        matches!(
+                            r,
+                            Err(LocalFileCacheError::Poisoned {
+                                resource: "AsyncCacheEngine"
+                            })
+                        ),
+                        "batch_get: {r:?}"
+                    );
+                }
+
+                let batch_get_fresh_results = engine.batch_get_fresh(paths.clone()).await;
+                assert_eq!(batch_get_fresh_results.len(), paths.len());
+                for r in &batch_get_fresh_results {
+                    assert!(
+                        matches!(
+                            r,
+                            Err(LocalFileCacheError::Poisoned {
+                                resource: "AsyncCacheEngine"
+                            })
+                        ),
+                        "batch_get_fresh: {r:?}"
+                    );
+                }
+
+                let check_status_results = engine.check_status_batch(paths.clone()).await;
+                assert_eq!(check_status_results.len(), paths.len());
+                for r in &check_status_results {
+                    assert!(
+                        matches!(
+                            r,
+                            Err(LocalFileCacheError::Poisoned {
+                                resource: "AsyncCacheEngine"
+                            })
+                        ),
+                        "check_status_batch: {r:?}"
+                    );
+                }
+            });
+        }
+
+        #[test]
+        fn batch_get_returns_one_async_task_panicked_per_path_on_deserialize_panic() {
+            $block_on_fn(async {
+                let dir = TempDir::new().unwrap();
+                let engine = AsyncCacheEngine::<super::PanicOnDeserialize>::open(CacheOptions {
+                    database_path: ":memory:".into(),
+                    ..CacheOptions::default()
+                })
+                .await
+                .unwrap();
+
+                let paths: Vec<_> = (0..3)
+                    .map(|i| write_file(&dir, &format!("panic_deser_{i}.txt"), b"x"))
+                    .collect();
+                for p in &paths {
+                    engine
+                        .set(p.clone(), super::PanicOnDeserialize)
+                        .await
+                        .unwrap();
+                }
+
+                let results = engine.batch_get(paths.clone()).await;
+                assert_eq!(results.len(), paths.len());
+                for r in &results {
+                    assert!(
+                        matches!(r, Err(LocalFileCacheError::AsyncTaskPanicked)),
+                        "expected AsyncTaskPanicked for every path, got {r:?}"
+                    );
+                }
+            });
+        }
+    };
+    (tokio) => {
+        // Must fail on v0.21.3: each batch method returned 1 result, not 3.
+        #[tokio::test]
+        async fn batch_methods_return_one_poisoned_result_per_path() {
+            let engine = AsyncCacheEngine::<Vec<f32>>::open(CacheOptions {
+                database_path: ":memory:".into(),
+                ..CacheOptions::default()
+            })
+            .await
+            .unwrap();
+
+            let _ = engine
+                .query_run::<_, Vec<f32>>(|_q| panic!("intentional test panic"))
+                .await;
+
+            let paths = vec![
+                std::path::PathBuf::from("a.txt"),
+                std::path::PathBuf::from("b.txt"),
+                std::path::PathBuf::from("c.txt"),
+            ];
+
+            let batch_get_results = engine.batch_get(paths.clone()).await;
+            assert_eq!(batch_get_results.len(), paths.len());
+            for r in &batch_get_results {
+                assert!(
+                    matches!(
+                        r,
+                        Err(LocalFileCacheError::Poisoned {
+                            resource: "AsyncCacheEngine"
+                        })
+                    ),
+                    "batch_get: {r:?}"
+                );
+            }
+
+            let batch_get_fresh_results = engine.batch_get_fresh(paths.clone()).await;
+            assert_eq!(batch_get_fresh_results.len(), paths.len());
+            for r in &batch_get_fresh_results {
+                assert!(
+                    matches!(
+                        r,
+                        Err(LocalFileCacheError::Poisoned {
+                            resource: "AsyncCacheEngine"
+                        })
+                    ),
+                    "batch_get_fresh: {r:?}"
+                );
+            }
+
+            let check_status_results = engine.check_status_batch(paths.clone()).await;
+            assert_eq!(check_status_results.len(), paths.len());
+            for r in &check_status_results {
+                assert!(
+                    matches!(
+                        r,
+                        Err(LocalFileCacheError::Poisoned {
+                            resource: "AsyncCacheEngine"
+                        })
+                    ),
+                    "check_status_batch: {r:?}"
+                );
+            }
+        }
+
+        #[tokio::test]
+        async fn batch_get_returns_one_async_task_panicked_per_path_on_deserialize_panic() {
+            let dir = tempfile::TempDir::new().unwrap();
+            let engine = AsyncCacheEngine::<super::PanicOnDeserialize>::open(CacheOptions {
+                database_path: ":memory:".into(),
+                ..CacheOptions::default()
+            })
+            .await
+            .unwrap();
+
+            let paths: Vec<_> = (0..3)
+                .map(|i| super::write_file(&dir, &format!("panic_deser_{i}.txt"), b"x"))
+                .collect();
+            for p in &paths {
+                engine
+                    .set(p.clone(), super::PanicOnDeserialize)
+                    .await
+                    .unwrap();
+            }
+
+            let results = engine.batch_get(paths.clone()).await;
+            assert_eq!(results.len(), paths.len());
+            for r in &results {
+                assert!(
+                    matches!(r, Err(LocalFileCacheError::AsyncTaskPanicked)),
+                    "expected AsyncTaskPanicked for every path, got {r:?}"
+                );
+            }
+        }
+    };
+}
+
 // async-std backend tests (only when async-std is the active runtime,
 // i.e. async-std is enabled but Tokio is not).
 #[cfg(all(not(feature = "async"), feature = "async-std"))]
@@ -976,6 +1197,7 @@ mod rfc005_async_std {
     panic_inside_blocking_closure_yields_async_task_panicked_test!(
         block_on = async_std::task::block_on
     );
+    rfc022_r8_batch_results_test!(block_on = async_std::task::block_on);
 
     #[test]
     fn async_std_engine_set_get() {
@@ -1045,6 +1267,7 @@ mod rfc005_smol {
     use tempfile::TempDir;
 
     panic_inside_blocking_closure_yields_async_task_panicked_test!(block_on = smol::block_on);
+    rfc022_r8_batch_results_test!(block_on = smol::block_on);
 
     #[test]
     fn smol_engine_set_get() {
@@ -1116,6 +1339,7 @@ mod rfc015_tokio_async_engine {
     use localcache::{AsyncCacheEngine, CacheOptions, LocalFileCacheError};
 
     panic_inside_blocking_closure_yields_async_task_panicked_test!(tokio);
+    rfc022_r8_batch_results_test!(tokio);
 
     #[tokio::test]
     async fn poisoned_mutex_recovers_on_subsequent_calls() {
