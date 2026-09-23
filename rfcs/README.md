@@ -75,7 +75,9 @@ The "Background" section is optional in both templates.
 
 ### Proposed
 
-*(none)*
+| RFC | Title | Target |
+|-----|-------|--------|
+| [023](./proposed/023-msrv-policy.md) | MSRV Policy: When and How the Floor May Rise | policy (Phase 24 Q1); its slices ship in v0.21.5 and v0.22.0 |
 
 ### Archive
 

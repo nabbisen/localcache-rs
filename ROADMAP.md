@@ -1450,6 +1450,17 @@ are eviction 0.879 and `batch_set` 1.012, with the controls within 3.3%. **CI ru
 RFC 022 has moved to `rfcs/done/` as **Implemented (0.21.4)**. **Phase 24 Q0 is closed.** Next,
 per the authorized plan: **Q1**, the MSRV policy (RFC 023, design only).
 
+### Q1 progress — RFC 023 proposed (2026-09-23)
+
+`rfcs/proposed/023-msrv-policy.md` awaits the owner's review. Its measurements changed the
+question Q1 was given. **`rusqlite 0.40` no longer requires Rust 1.95:** `libsqlite3-sys 0.38.2`
+(2026-08-08) polyfills `cfg_select!`, and localcache on `rusqlite 0.40.2` passes all four MSRV
+rows on 1.85.0 and the full suite, with no source change. The move is still breaking (the public
+`rusqlite::Error`, and the `links` line), so the RFC proposes it for v0.22.0 with notice in v0.21.5.
+It also finds `docs/src/dependency_security.md` out of date and proposes correcting it at once.
+The MSRV stays 1.85. Three decisions go to the owner: the age floor (12 or 6 months), the
+previous-line commitment, and the `rusqlite` schedule.
+
 ### Deferred register — Phase 24
 
 | Item | Origin | Note |
