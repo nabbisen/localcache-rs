@@ -155,6 +155,16 @@ authorization, not before.
   that read 2025 are corrected to their actual tag date, 2026-05-03 — confirmed via
   `git tag --format='%(refname:short) %(creatordate:short)'`; the same check found two further
   stale dates outside that named set, 0.16.2 and 0.20.0, corrected the same way.
+- CI runtime hygiene (RFC 022 R3 items 6–7): every job in `.github/workflows/ci.yaml` and
+  `.github/workflows/docs.yaml` now runs on `ubuntu-24.04` instead of the floating
+  `ubuntu-latest` label, which would otherwise move to Ubuntu 26 on 2026-10-19 without a
+  corresponding change here. `actions/upload-artifact` and `actions/download-artifact` are
+  updated to v7.0.1 and v8.0.1 (from v4), both of which declare `runs.using: node24` — GitHub
+  removed the Node 20 runtime these pins previously targeted on 2026-09-23, and CI had been
+  running them under a forced-upgrade fallback since. Every `actions/cache` key now names
+  `ubuntu-24.04` instead of `${{ runner.os }}`, so a later, deliberate image move starts a
+  clean cache instead of restoring binaries built on another image. No artifact usage changed
+  (still downloaded by name, still a default zipped artifact); no other workflow change.
 
 ## [0.21.3] — 2026-08-04
 

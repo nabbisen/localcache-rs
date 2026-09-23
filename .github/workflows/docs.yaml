@@ -1,5 +1,9 @@
 name: Docs
 
+# RFC 022 R3 items 6-7 (Amendment 3): the runner image (ubuntu-24.04) changes
+# only by a deliberate, CI-verified change -- never silently via `ubuntu-latest`
+# drifting underneath us.
+
 on:
   push:
     branches:
@@ -30,7 +34,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       pages: read
@@ -71,7 +75,7 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: build
     permissions:
       pages: write
