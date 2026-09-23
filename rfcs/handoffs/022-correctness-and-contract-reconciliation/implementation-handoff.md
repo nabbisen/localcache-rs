@@ -2,7 +2,8 @@
 
 RFC: `rfcs/accepted/022-correctness-and-contract-reconciliation.md` (accepted 2026-09-23; R6
 amendment and Amendment 2 authorized the same day)
-Milestones: Phase 24 **Q0a–Q0e and Q0g–Q0j**. Q0f, the release, gets its own handoff later.
+Milestones: Phase 24 **Q0a–Q0e and Q0g–Q0j**. Q0f, the release, has its own handoff:
+`rfcs/handoffs/022-correctness-and-contract-reconciliation/q0f-release-preparation.md`.
 **Revised 2026-09-23 for Amendment 2:** § 2 gained Q0a's corrections, § 4 (Q0c) was re-specified,
 and §§ 4a–4c (Q0g, Q0h, Q0i) are new. If you read this handoff earlier, re-read §§ 1, 2, 4–4c, 6,
 and 7.
