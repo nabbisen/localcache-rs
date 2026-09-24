@@ -7,7 +7,51 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [Unreleased]
+## [0.21.5] — Unreleased
+
+*Date set at owner authorization.*
+
+Patch release for Phase 24's API-consistency step: RFC 024's additions and deprecations, RFC 025's
+expiry fix, and RFC 023's fresh-resolution check (release tooling only).
+
+**Not breaking.** Additions and deprecations only: no MSRV change, and no input v0.21.4 accepted now
+returns an error. The behaviour changes are the two TTL fixes, and `NO_COLOR=` (empty) no longer
+disabling CLI colour.
+
+What changes for you:
+- **Honest names.** Misleading names are deprecated, each pointing to its replacement: eight `bool`
+  sort methods give way to `order_by(SortKey, SortOrder)`, `ConnectionPool` becomes
+  `SyncCacheEngine`, `namespace_copy` is `import_from`, `watched_count` is `entry_count`, and the
+  path-index API is deprecated. The book's migration table lists every item:
+  `docs/src/api.md`, "Migrating from deprecated names".
+- **The wrappers offer the same surface.** `SyncCacheEngine`, `ReadPool` and `AsyncCacheEngine` now
+  delegate every public `CacheEngine` method they can, and a test keeps it that way.
+- **`QueryBuilder::run_report()`** returns the entries a query could not decode, with each error,
+  where `run()` leaves them out silently.
+- **CLI `copy --from-db`** copies a namespace between databases with a read-only source, and `migrate`
+  is deprecated in its favour.
+- **The TTL fixes.** A system clock stepped back no longer expires entries written in the last
+  seconds, and `explain()` no longer reports a fresh entry under a huge TTL as having 0 seconds left.
+
+**Look ahead: v0.22.0 (breaking), announced one release early.** Each item is decided in its RFC:
+- **Dependency:** `rusqlite` 0.39 → **0.40.2** (bundled SQLite 3.51.3 → 3.53.2). This is **not** an
+  MSRV change. A crate that depends on `rusqlite` directly must use 0.40.2 or later with localcache
+  0.22, because of `links = "sqlite3"` (RFC 023 R9).
+- **Errors:** `UnsupportedFeature` and `PayloadVersionMismatch` are removed. Seven purpose-named
+  variants replace them, and `Database` wraps an opaque `DatabaseError` instead of a
+  `rusqlite::Error` (RFC 025 R3–R5, R7).
+- **Newly rejected input:** `max_entries(0)`, a TTL under one second, and a `batch_set` or import
+  with more distinct entries than `max_entries` will return an error instead of being accepted
+  (RFC 025 R6; RFC 024 B3).
+- **Behaviour:** `QueryBuilder::run()` will return the first undecodable entry's error, and
+  `run_report()` is the way to tolerate them (RFC 024 B1). An engine that does not choose a journal
+  mode will leave an existing database's mode unchanged (B2). Imports will honour `max_entries` (B3).
+- **Removals:** everything deprecated in this release except `drop_path_index` and
+  `list_path_indexes`; the CLI's `migrate`; and the two observable strings that still name
+  `ConnectionPool` (the `Poisoned { resource }` value and the `ReadPool` open error) (RFC 024 B4).
+
+A later release (v0.23.0) is planned to replace the LRU eviction policy, with a schema change. It
+will be announced in detail one release ahead.
 
 ### Added
 
@@ -1246,7 +1290,8 @@ Namespaces, batch ops, TTL, PRAGMAs, schema migration.
 ## [0.1.0] — 2026-05-03
 Initial release.
 
-[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/0.21.4...HEAD
+[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/0.21.5...HEAD
+[0.21.5]: https://github.com/nabbisen/localcache-rs/compare/0.21.4...0.21.5
 [0.21.4]: https://github.com/nabbisen/localcache-rs/compare/0.21.3...0.21.4
 [0.21.3]: https://github.com/nabbisen/localcache-rs/compare/0.21.2...0.21.3
 [0.21.2]: https://github.com/nabbisen/localcache-rs/compare/0.21.1...0.21.2

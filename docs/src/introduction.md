@@ -4,7 +4,7 @@
 
 ```toml
 [dependencies]
-localcache = "0.21.4"
+localcache = "0.21.5"
 serde = { version = "1", features = ["derive"] }
 ```
 
