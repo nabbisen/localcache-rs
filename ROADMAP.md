@@ -693,6 +693,15 @@ Recorded findings not scheduled into a milestone. Each is tracked, none is lost.
 | **`path_in_dir` non-recursive cannot construct an indexable prefix** | N4 §7 ranking, item 4 | **Deferred with a reason, recorded at the Phase 23 exit review — it had been neither done nor explicitly deferred, which criterion 1 forbids.** N4 observed that `path_in_dir` grows with the namespace where a leading-literal glob stays flat, and suggested checking whether it can build a `path > ? AND path < ?` range the way the literal glob does. **Nobody checked.** RFC 021 improved it incidentally (1.11×) by removing the per-row fetch, but did not touch the plan shape: it still narrows on `namespace = ?` alone. The question is live and cheap to answer — a non-recursive directory scope *is* a prefix range, so the construction looks feasible — but it is a query-planner change landing immediately after one, and this phase has twice shown that the recorded remedy targeted a minority of the measured cost. **Measure `path_in_dir`'s share of a realistic workload before designing it.** Revisit when query work next opens. |
 | ~~`preload`, concurrent access, bincode codec at scale, watcher on large trees, cold-open cost~~ → **watcher on large trees, async-runtime concurrency** | N4 §6, narrowed by P1a | **Mostly closed.** P1a measured `preload` (71.5 µs/row at 1M), cold-open (622–799 ms), the bincode codec at scale, and `ReadPool` under 8 threads. Still unmeasured: **watcher behaviour on large trees** (needs sustained observation with induced filesystem events, not one-shot timing; RFC 015 already governs its failure behaviour) and **async-runtime backends** (tokio/async-std/smol — wiring three runtimes into a `harness = false` bench was judged disproportionate, and `ReadPool` already isolates the contended resource). Neither blocks P1b. |
 
+### Module-size register — after Q2b (2026-09-24)
+
+Production ELOC, measured as below. Q2b verified both splits as pure moves at token level (review 023).
+
+| File | Before | After | Outcome |
+|---|---|---|---|
+| `crates/localcache/src/cache/query.rs` | 809 | **345** | split at the builder/execution seam; execution is in `cache/query/execution.rs` (**479**) |
+| `crates/localcache/src/db/repository.rs` | 871 | **655** | the RFC 021 candidate queries (single consumer) are in `db/repository/candidates.rs` (**230**); the remainder shares SQL-construction helpers, which is N5's reasoned refusal, and still stands |
+
 ### Module-size register — after N5
 
 Production ELOC (non-blank, non-comment). **Measure production and test code
@@ -1492,7 +1501,14 @@ misleading names in favour of honest ones: the sort API, `ConnectionPool` → `S
 also adds `run_report`, and fixes CLI colour and the doc-name collision. Part B (v0.22.0) decides
 three register contracts: `run()` errors on undecodable entries, `JournalMode::Preserve`, and
 imports honouring `max_entries`. It also gives Q3 the removal list. Five decisions go to the owner.
-Proposed slice order: Q2c → Q2a → Q2d → Q2e → Q2b; then Q2f in v0.22.0. Its measurements changed the
+Proposed slice order: Q2c → Q2a → Q2d → Q2e → Q2b; then Q2f in v0.22.0.
+
+**Part A and Q2b are implemented, reviewed, and committed locally** (2026-09-24; reviews 019–023):
+Q2c `9a2a222`, Q2a `b60347d`, Q2d `3d450bd`, Q2e `d5343e6`, then Q2b as two pure-move commits.
+**RFC 024 Amendment 1:** CLI colour stays off on non-unix targets, since VT processing is not enabled.
+The test count went from 459 to 505. **Nothing is pushed**, because the book deploys from `main` (review
+019 § 4). The batch goes out at the v0.21.5 release preparation, which waits for RFC 025 (Q3) so that
+the v0.21.5 summary can announce every v0.22.0 change. Its measurements changed the
 question Q1 was given. **`rusqlite 0.40` no longer requires Rust 1.95:** `libsqlite3-sys 0.38.2`
 (2026-08-08) polyfills `cfg_select!`, and localcache on `rusqlite 0.40.2` passes all four MSRV
 rows on 1.85.0 and the full suite, with no source change. The move is still breaking (the public
