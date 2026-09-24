@@ -512,3 +512,17 @@ Slice letters are identifiers. `Q2b` was already the module split.
 ## Open questions
 
 None. The five decisions above are settled.
+
+## Amendment 1 (architect, 2026-09-24) — R11 narrowed
+
+Found in the Q2e review (`.git-exclude/reviewed/022-architect-q2e-cli-review-2026-09-24.md`,
+decision 10 of the dev request). R11's premise, that `std::io::IsTerminal` works on Windows, is true
+but incomplete. Rust's standard library does not enable Windows virtual-terminal processing, so on a
+console where it is off (for example, the default `cmd.exe` console on Windows 10), ANSI colour
+would print as raw escape sequences.
+
+**v0.21.5 therefore keeps colour off on non-unix targets, as before.** The `NO_COLOR` correction
+(disabled only when set and non-empty) and the single colour helper stand. Enabling Windows colour
+properly means switching VT processing on. That needs a platform dependency or `unsafe` FFI, a
+separate decision recorded in the Phase 24 register. Compatibility: v0.21.5's only intended
+behaviour change becomes `NO_COLOR=` (empty) no longer disabling colour.
