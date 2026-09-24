@@ -43,10 +43,11 @@ reconciliation pass (this page included). **No MSRV change, and no behaviour new
 error, shipped in this patch** — see [Error Handling](./errors.md) and the compatibility notes
 throughout this book for what each fix actually changes.
 
-Two further sub-phases are planned, not yet started: v0.21.5 (API consistency — additive names and
-deprecations only, no removals) and v0.22.0 (the first breaking release since v0.21.0: completing
-the error taxonomy, validating configuration that is silently accepted today, and a true
-least-recently-used eviction policy on a schema change). See the live
+Three further releases are planned: v0.21.5 (API consistency — additive names and deprecations
+only, no removals — plus two TTL correctness fixes), v0.22.0 (the first breaking release since
+v0.21.0: completing the error taxonomy, validating configuration that is silently accepted today,
+and removing what v0.21.5 deprecates), and v0.23.0 (a true least-recently-used eviction policy on a
+schema change). See the live
 [ROADMAP.md](https://github.com/nabbisen/localcache-rs/blob/main/ROADMAP.md) for the milestone
 table and RFC mapping.
 
