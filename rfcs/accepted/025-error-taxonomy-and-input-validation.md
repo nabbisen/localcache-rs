@@ -2,14 +2,14 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed (architect, 2026-09-24) |
+| Status | Accepted (owner, 2026-09-24), with all four requested decisions as recommended: `UnsupportedFeature` removed; `PayloadVersionMismatch` removed; opaque `DatabaseError` in v0.22.0; Part A (TTL fixes) in v0.21.5 |
 | Feature | *(core; `encryption`, `watching` for their variants)* |
 | Touches | `crates/localcache/src/error.rs` and every site in the inventory below; `crates/localcache/src/cache/engine.rs` (`is_expired`), `crates/localcache/src/cache/engine/diagnose.rs`, `crates/localcache/src/cache/builder.rs`, `crates/localcache/src/cache/options.rs`, `crates/localcache/src/read_pool.rs`, the wrappers' `open`, `crates/cli/src/commands/write.rs`, tests, `docs/src/errors.md`, `CHANGELOG.md` |
 | Finding | Phase 24 plan, milestone Q3; RFC 018 R6 (the split it deferred); RFC 023 R8.3; RFC 024 B3/B4; the Phase 24 register; **two TTL defects reproduced 2026-09-24** |
 | Milestone | Phase 24 Q3 |
 | Breaking | **Part A (v0.21.5): no**, two correctness fixes. **Part B (v0.22.0): yes**: variant changes, newly rejected input, removals |
 | Authorship | High-capability model; **reviewed by the owner** (arrangement of 2026-08-01) |
-| Handoffs | Created at acceptance (RFC 000, "Companion handoffs") |
+| Handoffs | [`../handoffs/025-error-taxonomy-and-input-validation/`](../handoffs/025-error-taxonomy-and-input-validation/implementation-handoff.md): the Part A (Q3a) handoff and QA checklist. Part B's handoff follows when v0.21.5 ships |
 
 ## Summary
 
@@ -92,6 +92,7 @@ alone (`.git-exclude/tmp/rfc025-ttl/out.txt`).
 | Case | Observed | Expected |
 |---|---|---|
 | TTL 3600 s; the clock steps back 1 s after the write (stored `updated_at` = now + 1) | `get_if_fresh` → `None`; `check_status` → `Stale`. The negative age wraps to about 1.8×10¹⁹ as `u64` | fresh: the entry is one second old at most |
+| The same entry: `explain()` and `cleanup_expired()` *(verified at acceptance, `run2.log`)* | `explain` reports `status: Stale` **and** `ttl_remaining_secs: Some(3601)` (a self-contradiction); `cleanup_expired` **deletes** it | fresh, 3600 s remaining, and not deleted |
 | TTL `Duration::MAX` | reads: fresh; `explain().status` = `Fresh`; **`explain().ttl_remaining_secs` = `Some(0)`**. The `as i64` wraps to −1 | the remaining time saturates at a large value, never 0 |
 
 The first defect matters in practice. NTP corrections, VM resumes, and manual clock changes all
@@ -350,6 +351,8 @@ removing its slices and its v0.21.5 notice. After v0.22.0, the variants are the 
 
 ## Decisions requested of the owner
 
+**Decided 2026-09-24: all four accepted as recommended.**
+
 1. **Remove `UnsupportedFeature`** after the split (recommended), or keep it for future use.
 2. **Remove `PayloadVersionMismatch`** (recommended), or return it from `get`.
 3. **Opaque `DatabaseError` in v0.22.0** (recommended), or keep `rusqlite::Error` public.
@@ -370,4 +373,4 @@ The slices, which the architect schedules and the owner authorizes with this RFC
 
 ## Open questions
 
-None beyond the four decisions above.
+None. The four decisions above are settled.
