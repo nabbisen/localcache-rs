@@ -714,7 +714,7 @@ Four decisions go to the owner.
 planned for v0.22.0, but RFC 026 is not drafted. The v0.21.5 summary can only announce decided
 changes. Either RFC 026 is drafted and accepted before the v0.21.5 release preparation, or Q5 moves
 to a later minor release. The architect recommends the move, so that v0.22.0 is not held for a
-schema change; the owner decides.
+schema change; the owner decides. **Decided 2026-09-24: Q5 moves to v0.23.0.**
 
 ### Module-size register — after Q2b (2026-09-24)
 
@@ -1276,7 +1276,7 @@ v0.21.0. Recorded here so it is in the RFC when written, rather than appended at
   N4 §6. What remains unmeasured (watcher on large trees, async-runtime concurrency) stays out of
   scope until something measured argues for it.
 
-## Phase 24 — Correctness, Contracts, and API Consistency (v0.21.4, v0.21.5, v0.22.0)
+## Phase 24 — Correctness, Contracts, and API Consistency (v0.21.4, v0.21.5, v0.22.0, v0.23.0)
 
 **Status: authorized by the owner 2026-09-23. Q0 was released as v0.21.4 the same day; Q1 is next.** RFC 022 was accepted the same day. Its
 **Amendment 2** was authorized the same day, after the architect's re-onboarding and the Q0a
@@ -1341,9 +1341,10 @@ below, the contents of each release, and the newly-rejected-input rule.
 |---|---|---|
 | **v0.21.4** | Q0: six correctness fixes (RFC 022 R1, R2, R6–R9), release-tooling repair, docs and records reconciliation | no |
 | **v0.21.5** | Q2 (RFC 024 Part A: slices Q2c → Q2a → Q2d → Q2e): API consistency, additions and deprecations only; plus the Q2b module split and any non-breaking outcome of Q4. Q1b: the fresh-resolution drift check (RFC 023 R6.2). Q3a: one expiry rule (RFC 025 Part A: two TTL correctness fixes). The CHANGELOG summary announces Q1c (RFC 023 R5, R9) | no |
-| **v0.22.0** | Q3: error-taxonomy completion, configuration and argument validation, and removal of anything Q2 deprecated. Q5: the LRU recency contract (schema v6). Q1c: `rusqlite 0.40.2` (RFC 023 R9; **not** an MSRV change). Q2f: RFC 024 Part B (B1 `run()` errors on undecodable entries, B2 `JournalMode::Preserve`, B3 imports honour `max_entries`). Q3 (RFC 025 Part B): Q3d opaque `DatabaseError`, Q3b seven purpose-named variants replacing `UnsupportedFeature` (removed, with `PayloadVersionMismatch`), Q3c the announced rejections, and Q3e RFC 024 B4's removals. No MSRV raise: RFC 023 finds no necessity | **yes** |
+| **v0.22.0** | Q3: error-taxonomy completion, configuration and argument validation, and removal of anything Q2 deprecated. Q1c: `rusqlite 0.40.2` (RFC 023 R9; **not** an MSRV change). Q2f: RFC 024 Part B (B1 `run()` errors on undecodable entries, B2 `JournalMode::Preserve`, B3 imports honour `max_entries`). Q3 (RFC 025 Part B): Q3d opaque `DatabaseError`, Q3b seven purpose-named variants replacing `UnsupportedFeature` (removed, with `PayloadVersionMismatch`), Q3c the announced rejections, and Q3e RFC 024 B4's removals. No MSRV raise: RFC 023 finds no necessity | **yes** |
+| **v0.23.0** | Q5: the LRU recency contract (RFC 026, schema v6), **moved from v0.22.0 by the owner on 2026-09-24**, so that v0.22.0 is not held for an undrafted schema change. RFC 026 is drafted after v0.22.0's scope is fixed, and the v0.22.0 summary announces it | **yes** |
 
-v0.22.0 is now certain. Q3 and Q5 both change observable behaviour.
+v0.22.0 is now certain: Q3 and RFC 024 Part B change observable behaviour. v0.23.0 carries Q5's schema change (owner decision, 2026-09-24).
 
 **Rule, set 2026-09-23 and authorized by the owner the same day: newly rejected input ships only
 in a minor release.** When the library
@@ -1390,7 +1391,7 @@ provisional until the file is created (RFC 000).
 | **Q3c — Announced rejections** | RFC 025 R6, R8; before Q2f | RFC 025 | Q3b |
 | **Q3e — RFC 024 B4 removals** | RFC 025 R9 | RFC 025 | Q2f |
 | **Q4 — `path_in_dir` share** | Measurement only: `path_in_dir`'s share of a realistic query workload, answering the question deferred at the Phase 23 exit review. An RFC follows only if the share justifies a query-planner change | — | Q0f |
-| **Q5 — LRU recency contract** | **RFC 026**: a true least-recently-used policy where reads **and writes** count, on a recency signal finer than one second. It is a schema change (v6), under RFC 010's migration discipline, with the export/import format decided in the RFC. The same migration evaluates dropping `idx_files_namespace_path`, which duplicates the `UNIQUE(namespace, path)` autoindex (see the register). Implemented after Q3, as its own review point, and shipped in the same v0.22.0, so users absorb one break | RFC 026 | Q3's variants |
+| **Q5 — LRU recency contract** | **RFC 026**: a true least-recently-used policy where reads **and writes** count, on a recency signal finer than one second. It is a schema change (v6), under RFC 010's migration discipline, with the export/import format decided in the RFC. The same migration evaluates dropping `idx_files_namespace_path`, which duplicates the `UNIQUE(namespace, path)` autoindex (see the register). Implemented after Q3, as its own review point. **Moved to v0.23.0** (owner, 2026-09-24): RFC 026 was undrafted, and v0.21.5 can only announce decided changes | RFC 026 | v0.22.0 released |
 
 Q0 runs one slice at a time, in this order: **Q0a → Q0b → Q0c → Q0g → Q0h → Q0i → Q0d → Q0e →
 Q0j → Q0f**. Q0j was added by RFC 022 Amendment 3 (owner approval, 2026-09-23). It comes before
