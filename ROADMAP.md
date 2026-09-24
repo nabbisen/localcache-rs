@@ -703,6 +703,9 @@ preparation (`rfcs/handoffs/024-api-consistency/v0.21.5-release-preparation.md`)
 Q2r Parts A and B were reviewed on 2026-09-24 (review 025). Part A is conditionally approved (K1: the summary's first sentence).
 In Part B, `path_in_dir` read 7.1% slower on single-sample runs, and every other row was within 5%. K2 re-measures the query
 rows with `LOCALCACHE_SCALE_QUERY_REPEATS=5` (20 samples per arm), which the handoff should have required.
+**K2 settled it (review 026):** on 20 samples per arm, every query row is within 1% (`path_in_dir` 1.006), and the
+controls are clean. Every published row stays. The Part A commit is `ff6dba7`, and the source gate passes (`0.21.5`).
+**The batch push is authorized.**
 - **Part A (v0.21.5)** fixes two TTL defects found while drafting it, both reproduced end to end
   (`.git-exclude/tmp/rfc025-ttl/`). A clock stepped back by one second expires every entry, and
   `explain()` reports `ttl_remaining_secs: Some(0)` for a `Duration::MAX` TTL that it calls fresh.
