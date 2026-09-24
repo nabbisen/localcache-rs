@@ -700,6 +700,9 @@ Recorded findings not scheduled into a milestone. Each is tracked, none is lost.
 Q3a was reviewed on 2026-09-24 (review 024): conditionally approved, with one condition (K1: one `now` per `explain`, for `status` too, through crate-private `_at` helpers).
 **Q3a is complete** (`f48faaa`, K1 applied, local). **All v0.21.5 code is committed.** Next is Q2r, the release
 preparation (`rfcs/handoffs/024-api-consistency/v0.21.5-release-preparation.md`).
+Q2r Parts A and B were reviewed on 2026-09-24 (review 025). Part A is conditionally approved (K1: the summary's first sentence).
+In Part B, `path_in_dir` read 7.1% slower on single-sample runs, and every other row was within 5%. K2 re-measures the query
+rows with `LOCALCACHE_SCALE_QUERY_REPEATS=5` (20 samples per arm), which the handoff should have required.
 - **Part A (v0.21.5)** fixes two TTL defects found while drafting it, both reproduced end to end
   (`.git-exclude/tmp/rfc025-ttl/`). A clock stepped back by one second expires every entry, and
   `explain()` reports `ttl_remaining_secs: Some(0)` for a `Duration::MAX` TTL that it calls fresh.
