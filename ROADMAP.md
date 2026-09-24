@@ -693,6 +693,28 @@ Recorded findings not scheduled into a milestone. Each is tracked, none is lost.
 | **`path_in_dir` non-recursive cannot construct an indexable prefix** | N4 §7 ranking, item 4 | **Deferred with a reason, recorded at the Phase 23 exit review — it had been neither done nor explicitly deferred, which criterion 1 forbids.** N4 observed that `path_in_dir` grows with the namespace where a leading-literal glob stays flat, and suggested checking whether it can build a `path > ? AND path < ?` range the way the literal glob does. **Nobody checked.** RFC 021 improved it incidentally (1.11×) by removing the per-row fetch, but did not touch the plan shape: it still narrows on `namespace = ?` alone. The question is live and cheap to answer — a non-recursive directory scope *is* a prefix range, so the construction looks feasible — but it is a query-planner change landing immediately after one, and this phase has twice shown that the recorded remedy targeted a minority of the measured cost. **Measure `path_in_dir`'s share of a realistic workload before designing it.** Revisit when query work next opens. |
 | ~~`preload`, concurrent access, bincode codec at scale, watcher on large trees, cold-open cost~~ → **watcher on large trees, async-runtime concurrency** | N4 §6, narrowed by P1a | **Mostly closed.** P1a measured `preload` (71.5 µs/row at 1M), cold-open (622–799 ms), the bincode codec at scale, and `ReadPool` under 8 threads. Still unmeasured: **watcher behaviour on large trees** (needs sustained observation with induced filesystem events, not one-shot timing; RFC 015 already governs its failure behaviour) and **async-runtime backends** (tokio/async-std/smol — wiring three runtimes into a `harness = false` bench was judged disproportionate, and `ReadPool` already isolates the contended resource). Neither blocks P1b. |
 
+### Q3 progress — RFC 025 proposed (2026-09-24)
+
+`rfcs/proposed/025-error-taxonomy-and-input-validation.md` awaits the owner's review.
+- **Part A (v0.21.5)** fixes two TTL defects found while drafting it, both reproduced end to end
+  (`.git-exclude/tmp/rfc025-ttl/`). A clock stepped back by one second expires every entry, and
+  `explain()` reports `ttl_remaining_secs: Some(0)` for a `Duration::MAX` TTL that it calls fresh.
+  The fix is one saturating expiry rule.
+- **Part B (v0.22.0):**
+  - seven purpose-named variants replace the 29 `UnsupportedFeature` sites;
+  - `UnsupportedFeature` and `PayloadVersionMismatch` are removed;
+  - the announced rejections land;
+  - `Database` wraps an opaque `DatabaseError`;
+  - RFC 024's removals are executed.
+
+Four decisions go to the owner.
+
+**Scheduling question (architect):** Q5 (RFC 026, the LRU recency contract with schema v6) is
+planned for v0.22.0, but RFC 026 is not drafted. The v0.21.5 summary can only announce decided
+changes. Either RFC 026 is drafted and accepted before the v0.21.5 release preparation, or Q5 moves
+to a later minor release. The architect recommends the move, so that v0.22.0 is not held for a
+schema change; the owner decides.
+
 ### Module-size register — after Q2b (2026-09-24)
 
 Production ELOC, measured as below. Q2b verified both splits as pure moves at token level (review 023).

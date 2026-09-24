@@ -78,7 +78,9 @@ The "Background" section is optional in both templates.
 
 ### Proposed
 
-*(none)*
+| RFC | Title | Target |
+|-----|-------|--------|
+| [025](./proposed/025-error-taxonomy-and-input-validation.md) | Error Taxonomy and Input Validation: Errors Callers Can Act On | v0.21.5 (Part A: TTL fixes), v0.22.0 (Part B) |
 
 ### Archive
 
