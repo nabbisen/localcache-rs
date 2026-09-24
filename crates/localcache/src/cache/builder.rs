@@ -88,8 +88,10 @@ where
         self
     }
 
-    /// Time-to-live for cache entries. See [`CacheOptions::ttl`] for the
-    /// one-second resolution and the v0.22.0 rejection plan.
+    /// Time-to-live for cache entries, measured from each entry's last write; a
+    /// system clock stepped back does not expire entries. See
+    /// [`CacheOptions::ttl`] for the one-second resolution and the v0.22.0
+    /// rejection plan.
     pub fn ttl(mut self, duration: Duration) -> Self {
         self.opts.ttl = Some(duration);
         self

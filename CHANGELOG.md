@@ -100,6 +100,16 @@ The deprecation note names the replacement (RFC 024 R4–R8). `docs/src/api.md` 
   the path-index sections of `docs/src/querying.md` and `docs/src/api.md` are replaced by one
   paragraph, and `docs/src/api.md` gains a migration table.
 
+### Fixed
+
+- A system clock stepped back expired entries written in the last seconds: `get_if_fresh` returned
+  `None`, `check_status` returned `Stale`, and `cleanup_expired` deleted them, because the entry's
+  age wrapped to a huge number. An entry stamped ahead of the clock now counts as age zero and stays
+  fresh (RFC 025 R1).
+- `explain()` reported `ttl_remaining_secs: 0` for an entry that was fresh under a very large TTL
+  (for example `Duration::MAX`). It now reports the remaining time, saturating at `i64::MAX`, and
+  derives its expired flag from the same rule the reads use (RFC 025 R1).
+
 ## [0.21.4] — 2026-09-23
 
 Patch release closing Phase 24 Q0 (RFC 022, correctness and contract reconciliation).

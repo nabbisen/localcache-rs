@@ -143,6 +143,10 @@ pub struct CacheOptions {
 
     /// Optional time-to-live for cache entries.
     ///
+    /// An entry's age is measured from its last write. A system clock that is
+    /// stepped back does not expire entries: an entry written "in the future"
+    /// counts as age zero, so it stays fresh.
+    ///
     /// Has **one-second resolution**: `updated_at` is stored in Unix seconds,
     /// so a duration under one second makes every entry immediately stale —
     /// even one read back in the same second it was written already exceeds

@@ -345,6 +345,93 @@ fn ttl_not_expired_entry_is_fresh() {
     assert!(engine.get_if_fresh(&path).unwrap().is_some());
 }
 
+// RFC 025 R1 — one expiry rule. A backward clock step leaves an entry with an
+// `updated_at` in the future; its age is zero, so it is fresh.
+
+/// An engine with a one-hour TTL, one entry, and that entry's `updated_at`
+/// moved `seconds_ahead` seconds past "now", as a clock stepped back leaves it.
+fn clock_stepped_back(
+    dir: &TempDir,
+    seconds_ahead: i64,
+) -> (CacheEngine<Vec<f32>>, std::path::PathBuf) {
+    let database = dir.path().join("clock-back.sqlite3");
+    let engine: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
+        database_path: database.clone(),
+        ttl: Some(Duration::from_secs(3600)),
+        ..CacheOptions::default()
+    })
+    .unwrap();
+    let path = write_file(dir, "clock-back.txt", b"content");
+    engine.set(&path, &vec![1.0_f32]).unwrap();
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    rusqlite::Connection::open(&database)
+        .unwrap()
+        .execute(
+            "UPDATE files SET updated_at = ?1",
+            rusqlite::params![now + seconds_ahead],
+        )
+        .unwrap();
+    (engine, path)
+}
+
+#[test]
+fn an_entry_written_in_the_future_is_fresh_not_expired() {
+    let dir = TempDir::new().unwrap();
+    let (engine, path) = clock_stepped_back(&dir, 1000);
+    assert!(
+        engine.get_if_fresh(&path).unwrap().is_some(),
+        "get_if_fresh must not treat a future updated_at as a wrapped huge age"
+    );
+    assert_eq!(engine.check_status(&path).unwrap(), CacheStatus::Fresh);
+}
+
+#[test]
+fn cleanup_expired_keeps_an_entry_written_in_the_future() {
+    let dir = TempDir::new().unwrap();
+    let (engine, path) = clock_stepped_back(&dir, 1000);
+    assert_eq!(engine.cleanup_expired().unwrap(), 0);
+    assert!(engine.contains(&path).unwrap(), "the entry must remain");
+}
+
+#[test]
+fn explain_agrees_with_the_reads_for_an_entry_written_in_the_future() {
+    let dir = TempDir::new().unwrap();
+    let (engine, path) = clock_stepped_back(&dir, 1000);
+    let diagnosis = engine.explain(&path).unwrap();
+    assert_eq!(diagnosis.status, CacheStatus::Fresh);
+    assert_eq!(
+        diagnosis.ttl_remaining_secs,
+        Some(3600),
+        "age counts as zero, so the whole TTL remains"
+    );
+}
+
+#[test]
+fn explain_with_a_huge_ttl_reports_a_huge_remaining_time_not_zero() {
+    let dir = TempDir::new().unwrap();
+    let engine: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
+        database_path: dir.path().join("huge-ttl.sqlite3"),
+        ttl: Some(Duration::MAX),
+        ..CacheOptions::default()
+    })
+    .unwrap();
+    let path = write_file(&dir, "huge-ttl.txt", b"content");
+    engine.set(&path, &vec![1.0_f32]).unwrap();
+
+    assert!(engine.get_if_fresh(&path).unwrap().is_some());
+    let diagnosis = engine.explain(&path).unwrap();
+    assert_eq!(diagnosis.status, CacheStatus::Fresh);
+    assert_eq!(
+        diagnosis.ttl_remaining_secs,
+        Some(i64::MAX),
+        "a remaining time too large for i64 saturates; it must never read 0 while the entry is fresh"
+    );
+}
+
 #[test]
 fn cleanup_expired_removes_old_entries() {
     let dir = TempDir::new().unwrap();

@@ -605,6 +605,20 @@ where
     where
         P: AsRef<Path>,
     {
+        self.check_status_at(path, repository::now_secs())
+    }
+
+    /// `check_status` at a given `now`, so a caller that reports several
+    /// facts about one entry (`explain`) judges expiry at one instant
+    /// (RFC 025 R1).
+    pub(crate) fn check_status_at<P>(
+        &self,
+        path: P,
+        now: i64,
+    ) -> Result<CacheStatus, LocalFileCacheError>
+    where
+        P: AsRef<Path>,
+    {
         #[cfg(feature = "tracing")]
         let _span = tracing::debug_span!(
             "localcache::check_status",
@@ -626,7 +640,7 @@ where
             tracing::debug!(status = "Missing");
             return Ok(CacheStatus::Missing);
         };
-        if is_expired(row.updated_at, self.ttl) {
+        if ttl_remaining(now, row.updated_at, self.ttl) == Some(0) {
             #[cfg(feature = "tracing")]
             tracing::debug!(status = "Stale", reason = "ttl_expired");
             return Ok(CacheStatus::Stale);
@@ -1296,12 +1310,21 @@ pub(crate) fn compute_hash_for_mode(
     }
 }
 
+/// Seconds an entry has left before its TTL expires, or `None` when there is
+/// no TTL. The one place TTL arithmetic happens (RFC 025 R1).
+///
+/// Age is clamped at zero: an `updated_at` in the future (the clock stepped
+/// back) counts as age 0, so the entry is fresh, never a wrapped huge age.
+/// Everything saturates, so no input panics or wraps.
+pub(crate) fn ttl_remaining(now: i64, updated_at: i64, ttl: Option<Duration>) -> Option<u64> {
+    let ttl = ttl?;
+    // Non-negative after the clamp, so `unsigned_abs` is the value itself.
+    let age = now.saturating_sub(updated_at).max(0).unsigned_abs();
+    Some(ttl.as_secs().saturating_sub(age))
+}
+
 pub(crate) fn is_expired(updated_at: i64, ttl: Option<Duration>) -> bool {
-    let Some(ttl) = ttl else {
-        return false;
-    };
-    let now = repository::now_secs();
-    now.saturating_sub(updated_at) as u64 >= ttl.as_secs()
+    ttl_remaining(repository::now_secs(), updated_at, ttl) == Some(0)
 }
 
 /// Percent-encode the characters that are significant inside a SQLite

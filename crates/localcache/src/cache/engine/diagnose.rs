@@ -16,7 +16,7 @@ use crate::db::repository;
 use crate::error::LocalFileCacheError;
 use crate::path::resolve_path_key;
 
-use super::CacheEngine;
+use super::{CacheEngine, ttl_remaining};
 
 impl<T> CacheEngine<T>
 where
@@ -33,6 +33,17 @@ where
     pub fn explain<P: AsRef<Path>>(
         &self,
         path: P,
+    ) -> Result<crate::cache::entry::Diagnosis, LocalFileCacheError> {
+        self.explain_at(path, repository::now_secs())
+    }
+
+    /// `explain` at a given `now`. The TTL fields, the expired flag, the
+    /// summary and `status` are all judged at this one instant, so they cannot
+    /// contradict each other at a second boundary (RFC 025 R1).
+    pub(crate) fn explain_at<P: AsRef<Path>>(
+        &self,
+        path: P,
+        now: i64,
     ) -> Result<crate::cache::entry::Diagnosis, LocalFileCacheError> {
         use crate::cache::entry::{Diagnosis, MetadataDiff, PayloadVersionInfo};
         use crate::detection::hash::{compute_full_hash, compute_partial_hash, is_partial_hash};
@@ -66,16 +77,13 @@ where
 
         let row = entry_row.unwrap();
 
-        // TTL check.
-        let ttl_remaining_secs = self.ttl.map(|ttl| {
-            let elapsed = repository::now_secs().saturating_sub(row.updated_at);
-            let ttl_secs = ttl.as_secs() as i64;
-            (ttl_secs - elapsed).max(0)
-        });
-        let ttl_expired = self
-            .ttl
-            .map(|_| ttl_remaining_secs == Some(0))
-            .unwrap_or(false);
+        // TTL check: `now` is the one instant this call uses, and both the
+        // reported remaining time and the expired flag come from
+        // `ttl_remaining`, the same rule `is_expired` applies (RFC 025 R1).
+        let remaining = ttl_remaining(now, row.updated_at, self.ttl);
+        // A remaining time too large for the public `i64` saturates.
+        let ttl_remaining_secs = remaining.map(|r| i64::try_from(r).unwrap_or(i64::MAX));
+        let ttl_expired = remaining == Some(0);
 
         // Version check.
         let pv_info = if self.payload_version > 0 {
@@ -118,7 +126,7 @@ where
         };
 
         // Overall status.
-        let status = self.check_status(path)?;
+        let status = self.check_status_at(path, now)?;
 
         // Build summary.
         let summary = if !file_exists {
@@ -126,7 +134,7 @@ where
         } else if ttl_expired {
             format!(
                 "TTL expired (entry is {} s old).",
-                repository::now_secs().saturating_sub(row.updated_at)
+                now.saturating_sub(row.updated_at)
             )
         } else if version_mismatch {
             format!(
