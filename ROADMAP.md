@@ -697,6 +697,7 @@ Recorded findings not scheduled into a milestone. Each is tracked, none is lost.
 
 `rfcs/accepted/025-error-taxonomy-and-input-validation.md` was accepted by the owner, with all four decisions as recommended.
 **Q3a is next** (`rfcs/handoffs/025-error-taxonomy-and-input-validation/implementation-handoff.md`). It is the last code slice of v0.21.5.
+Q3a was reviewed on 2026-09-24 (review 024): conditionally approved, with one condition (K1: one `now` per `explain`, for `status` too, through crate-private `_at` helpers).
 - **Part A (v0.21.5)** fixes two TTL defects found while drafting it, both reproduced end to end
   (`.git-exclude/tmp/rfc025-ttl/`). A clock stepped back by one second expires every entry, and
   `explain()` reports `ttl_remaining_secs: Some(0)` for a `Duration::MAX` TTL that it calls fresh.
