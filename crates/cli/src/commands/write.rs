@@ -122,18 +122,52 @@ pub(crate) fn cmd_import(opts: CacheOptions, args: ImportArgs) -> Result<(), Loc
 }
 pub(crate) fn cmd_copy(opts: CacheOptions, args: CopyArgs) -> Result<(), LocalFileCacheError> {
     let dst_ns = args.to.unwrap_or_else(|| opts.namespace.clone());
-
-    let dst: CacheEngine<Vec<u8>> = CacheEngine::open(CacheOptions {
+    let dst_options = CacheOptions {
         namespace: dst_ns.clone(),
         read_only: false,
         ..opts.clone()
-    })?;
+    };
 
-    let src: CacheEngine<Vec<u8>> = CacheEngine::open(CacheOptions {
-        namespace: args.from.clone(),
-        read_only: true,
-        ..opts
-    })?;
+    // `--from-db` naming the destination's own file is the same operation as
+    // omitting it, so it takes the same path: writing that file is inherent to
+    // the copy, and there is no separate source to protect. Compared only when
+    // both paths resolve; a destination that does not exist yet cannot be the
+    // same file as an existing source.
+    let from_db = args.from_db.filter(|from_db| {
+        !matches!(
+            (std::fs::canonicalize(from_db), std::fs::canonicalize(&opts.database_path)),
+            (Ok(source), Ok(destination)) if source == destination
+        )
+    });
+
+    let (src, dst) = match from_db {
+        // Without `--from-db` (or with it naming the destination's own file)
+        // the source is the destination's database, opened after it: exactly
+        // the behaviour `copy` has always had.
+        None => {
+            let dst = CacheEngine::<Vec<u8>>::open(dst_options)?;
+            let src = CacheEngine::<Vec<u8>>::open(CacheOptions {
+                namespace: args.from.clone(),
+                read_only: true,
+                ..opts
+            })?;
+            (src, dst)
+        }
+        // A different source database is opened first, so that a source that
+        // is refused leaves no destination file behind.
+        Some(from_db) => {
+            let src = open_copy_source(
+                CacheOptions {
+                    database_path: from_db,
+                    namespace: args.from.clone(),
+                    ..opts
+                },
+                args.upgrade_source,
+            )?;
+            let dst = CacheEngine::<Vec<u8>>::open(dst_options)?;
+            (src, dst)
+        }
+    };
 
     let copied = dst.import_from(&src)?;
     eprintln!(
@@ -145,10 +179,54 @@ pub(crate) fn cmd_copy(opts: CacheOptions, args: CopyArgs) -> Result<(), LocalFi
     );
     Ok(())
 }
+
+/// Opens the source database of `copy --from-db` **read-only**. When that
+/// fails only because its schema is not the current one, the source is left
+/// untouched and the flag that would allow an upgrade is named, unless
+/// `upgrade_source` was given: then, and only then, it is opened writable.
+/// A source that already has the current schema opens read-only either way,
+/// so `--upgrade-source` never modifies it.
+fn open_copy_source(
+    options: CacheOptions,
+    upgrade_source: bool,
+) -> Result<CacheEngine<Vec<u8>>, LocalFileCacheError> {
+    let read_only = CacheOptions {
+        read_only: true,
+        ..options.clone()
+    };
+    match CacheEngine::<Vec<u8>>::open(read_only) {
+        Err(LocalFileCacheError::UnsupportedFeature(message))
+            if message.starts_with(SCHEMA_NOT_CURRENT) =>
+        {
+            if upgrade_source {
+                return CacheEngine::<Vec<u8>>::open(CacheOptions {
+                    read_only: false,
+                    ..options
+                });
+            }
+            // The library's own message, then the way forward.
+            eprintln!("error: unsupported feature: {message}");
+            eprintln!(
+                "hint: to upgrade the source database to the current schema first, add --upgrade-source"
+            );
+            std::process::exit(1);
+        }
+        other => other,
+    }
+}
+
+/// The start of the library's read-only-open refusal for a database whose
+/// schema is not the current one (`localcache::db::schema`). It is matched by
+/// text because the library has no dedicated error for it.
+const SCHEMA_NOT_CURRENT: &str = "read-only open requires the current database schema";
+
 pub(crate) fn cmd_migrate(
     opts: CacheOptions,
     args: MigrateArgs,
 ) -> Result<(), LocalFileCacheError> {
+    eprintln!(
+        "warning: `migrate` is deprecated and will be removed in 0.22.0; use `copy --from-db`"
+    );
     let dst_db = args.dst_db.unwrap_or_else(|| opts.database_path.clone());
     let dst_ns = args.dst_ns.unwrap_or_else(|| opts.namespace.clone());
 

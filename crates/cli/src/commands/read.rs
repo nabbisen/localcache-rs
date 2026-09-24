@@ -12,7 +12,7 @@ use localcache::{
 
 use crate::text::{format_unix_nanoseconds, format_unix_seconds, truncate};
 use crate::{CheckArgs, ExportArgs, InspectArgs, ListArgs, QueryArgs, ScanArgs};
-use crate::{atty_check, fmt_bytes};
+use crate::{fmt_bytes, use_color};
 
 pub(crate) fn cmd_list(opts: CacheOptions, args: ListArgs) -> Result<(), LocalFileCacheError> {
     let engine = CacheEngine::<Vec<u8>>::open(opts)?;
@@ -147,8 +147,7 @@ pub(crate) fn cmd_scan(opts: CacheOptions, args: ScanArgs) -> Result<(), LocalFi
             }
         };
         // Only colour if stdout is a terminal.
-        let use_color = std::env::var("NO_COLOR").is_err() && atty_check();
-        if use_color {
+        if use_color() {
             println!("{c}{:<8}\x1b[0m  {}", label, path.display());
         } else {
             println!("{:<8}  {}", label, path.display());
@@ -232,8 +231,7 @@ pub(crate) fn cmd_query(opts: CacheOptions, args: QueryArgs) -> Result<(), Local
                 ("MISSING", "\x1b[31m")
             }
         };
-        let use_color = std::env::var("NO_COLOR").is_err() && atty_check();
-        if use_color {
+        if use_color() {
             println!("{c}{:<8}\x1b[0m  {}", label, path.display());
         } else {
             println!("{:<8}  {}", label, path.display());

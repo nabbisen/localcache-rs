@@ -48,7 +48,7 @@ println!("purged {purged} outdated entries");
 
 ## Migrating between databases
 
-Use `export` / `import` or `migrate`:
+Use `export` / `import` or `copy --from-db`:
 
 ```sh
 # Export from old database.
@@ -59,6 +59,9 @@ localcache -d new.sqlite3 import -i backup.jsonl
 
 # Or in one command:
 localcache -d old.sqlite3 export | localcache -d new.sqlite3 import
+
+# Or copy a namespace straight from the old file (the source is opened read-only):
+localcache -d new.sqlite3 copy --from-db old.sqlite3 --from default
 ```
 
 Programmatically:
@@ -157,9 +160,11 @@ configuration. Empty and recognized historical databases are therefore
 rejected with `UnsupportedFeature`; future and malformed schemas retain the
 normal fail-closed classifier error. A missing file remains missing.
 
-Use a writable open only when an upgrade is intentional. The CLI `migrate`
-command opens its source writable and may upgrade that source before copying,
-so apply the same backup and maintenance-window planning described above.
+Use a writable open only when an upgrade is intentional. The CLI's
+`copy --from-db` opens its source read-only and refuses an old-schema source;
+its `--upgrade-source` flag opens the source writable and upgrades it, so apply
+the same backup and maintenance-window planning described above. The deprecated
+`migrate` command always opens its source writable.
 
 ### Durability and runtime SQLite settings
 

@@ -48,6 +48,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - `tests/api_surface.rs` (RFC 024 R3): a test that reads the engine's and the wrappers' sources and
   fails when a public engine method is neither delegated by a wrapper nor recorded, with its reason,
   in the test's manifest, or when a manifest entry has gone stale.
+- CLI `copy --from-db <PATH>` (RFC 024 R10): copies a namespace from another database file. It
+  defaults to the `-d/--database` option, so `copy` without it is unchanged. The source is opened
+  **read-only**. A source with an older schema is refused with the library's message and a hint,
+  exits non-zero and is left unchanged; `--upgrade-source` opens it writable and upgrades it first.
+  It has no effect on a source that already has the current schema.
 
 ### Deprecated
 
@@ -70,8 +75,17 @@ The deprecation note names the replacement (RFC 024 R4–R8). `docs/src/api.md` 
   `(namespace, path)` and cannot speed up a query. No replacement; stop calling them.
 - `CacheEngine::drop_path_index` and `list_path_indexes` (and their async counterparts): kept only
   to remove or find indexes created by an earlier release; their future is decided with the next schema change.
+- CLI `migrate`: use `copy --from-db`. It behaves exactly as before, prints
+  ``warning: `migrate` is deprecated and will be removed in 0.22.0; use `copy --from-db` `` to stderr
+  first, and its `--help` says the same. Removed in v0.22.0.
 
 ### Changed
+
+- CLI colour (RFC 024 R11): `NO_COLOR` disables colour only when it is set and **non-empty**, per
+  <https://no-color.org>: `NO_COLOR=` (empty) no longer disables it. Colour still appears only when
+  stdout is a terminal, so piped output is unchanged.
+- `localcache-cli`'s binary target sets `doc = false` (RFC 024 R12), so `cargo doc --workspace` no
+  longer warns of an output filename collision with the library.
 
 - `docs/src/dependency_security.md` (RFC 023 R10): the MSRV and dependency page is corrected,
   and gains an "MSRV policy" section. It no longer says that `rusqlite 0.40` needs Rust 1.95:

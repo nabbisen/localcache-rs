@@ -12,6 +12,9 @@ repository.workspace    = true
 [[bin]]
 name = "localcache"
 path = "src/main.rs"
+# The library is also named `localcache`; without this, `cargo doc --workspace`
+# writes both to target/doc/localcache/ and warns of an output filename collision.
+doc  = false
 
 [features]
 watching = ["localcache/watching"]

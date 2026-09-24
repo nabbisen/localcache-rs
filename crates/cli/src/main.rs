@@ -84,17 +84,23 @@ enum Commands {
     /// can be overridden with `-n`.
     Import(ImportArgs),
 
-    /// Copy all entries from one namespace to another within the same database.
+    /// Copy all entries from one namespace to another, within a database or
+    /// from another database file (`--from-db`).
     ///
-    /// Uses the fast `import_from` path (no Base64 round-trip).
+    /// Uses the fast `import_from` path (no Base64 round-trip). The source is
+    /// opened read-only. A source database with an older schema is refused
+    /// and left untouched unless you pass `--upgrade-source`, which opens it
+    /// writable and upgrades it to the current schema first.
     Copy(CopyArgs),
 
+    /// Deprecated: will be removed in 0.22.0; use `copy --from-db`.
+    ///
     /// Migrate a namespace: export from the source database and import into a
     /// new database, optionally changing namespace.
     ///
-    /// Useful for moving data between database files or bumping schema versions.
     /// The source is opened writable and may be upgraded to the current
-    /// localcache schema before its entries are copied.
+    /// localcache schema before its entries are copied. `copy --from-db`
+    /// does the same copy, and leaves the source alone unless you ask.
     Migrate(MigrateArgs),
 
     /// Query cached entries by path prefix or suffix.
@@ -199,6 +205,18 @@ struct CopyArgs {
     /// Defaults to the `-n / --namespace` global option.
     #[arg(short, long)]
     to: Option<String>,
+
+    /// Source database file to copy from.
+    /// Defaults to the `-d / --database` global option, which is also the
+    /// destination database.
+    #[arg(long, value_name = "PATH")]
+    from_db: Option<PathBuf>,
+
+    /// Allow an old-schema source database to be upgraded to the current
+    /// schema. Without it, such a source is refused and not modified. Has no
+    /// effect on a source that already has the current schema.
+    #[arg(long)]
+    upgrade_source: bool,
 }
 
 #[derive(Args)]
@@ -331,17 +349,31 @@ fn fmt_bytes(n: u64) -> String {
     }
 }
 
-/// Very lightweight "is stdout a TTY" check that avoids extra dependencies.
+/// Whether stdout is a terminal, on every platform. (Colour additionally
+/// requires unix: see [`use_color`].)
 fn atty_check() -> bool {
-    #[cfg(unix)]
-    {
-        use std::io::IsTerminal;
-        std::io::stdout().is_terminal()
-    }
-    #[cfg(not(unix))]
-    {
-        false
-    }
+    use std::io::IsTerminal;
+    std::io::stdout().is_terminal()
+}
+
+/// The `NO_COLOR` convention (<https://no-color.org>): colour is disabled
+/// when the variable is present **and not empty**. `NO_COLOR=` (empty) does
+/// not disable it.
+fn no_color_requested(value: Option<std::ffi::OsString>) -> bool {
+    value.is_some_and(|value| !value.is_empty())
+}
+
+/// Whether to colour output: only on a terminal, and never when `NO_COLOR`
+/// asks otherwise. The one place this is decided.
+///
+/// Colour stays **off on non-unix targets** in v0.21.5 (RFC 024 Amendment 1).
+/// The standard library does not switch on Windows virtual-terminal
+/// processing, so on a console where nobody has enabled it (for example the
+/// default `cmd.exe` console on Windows 10) the escape sequences would print
+/// literally where users see clean text today. Enabling it properly needs a
+/// platform dependency or `unsafe` FFI, which is a separate decision.
+fn use_color() -> bool {
+    cfg!(unix) && !no_color_requested(std::env::var_os("NO_COLOR")) && atty_check()
 }
 
 #[cfg(test)]

@@ -76,15 +76,17 @@ println!("copied {copied} entries");
 # Copy within the same database (namespace to namespace).
 localcache -d cache.sqlite3 copy --from old_ns --to new_ns
 
-# Migrate to a new database.
-localcache migrate \
-    --src-db old.sqlite3 --src-ns embeddings \
-    --dst-db new.sqlite3 --dst-ns embeddings
+# Copy from another database file.
+localcache -d new.sqlite3 copy --from-db old.sqlite3 --from embeddings --to embeddings
 ```
 
-`copy` opens its source read-only and its destination writable. `migrate`
-opens both sides writable and may upgrade its source schema before copying;
-back up the source and plan migration downtime accordingly.
+`copy` opens its source read-only and its destination writable, so it never
+modifies the source. A source with an older schema is refused and left
+unchanged; add `--upgrade-source` to upgrade it first, after backing it up.
+
+`localcache migrate` does the same copy but opens both sides writable and may
+upgrade its source. It is deprecated, will be removed in 0.22.0, and prints a
+warning; use `copy --from-db`.
 
 ## Preloading a directory
 
