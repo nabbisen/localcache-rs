@@ -698,6 +698,8 @@ Recorded findings not scheduled into a milestone. Each is tracked, none is lost.
 `rfcs/accepted/025-error-taxonomy-and-input-validation.md` was accepted by the owner, with all four decisions as recommended.
 **Q3a is next** (`rfcs/handoffs/025-error-taxonomy-and-input-validation/implementation-handoff.md`). It is the last code slice of v0.21.5.
 Q3a was reviewed on 2026-09-24 (review 024): conditionally approved, with one condition (K1: one `now` per `explain`, for `status` too, through crate-private `_at` helpers).
+**Q3a is complete** (`f48faaa`, K1 applied, local). **All v0.21.5 code is committed.** Next is Q2r, the release
+preparation (`rfcs/handoffs/024-api-consistency/v0.21.5-release-preparation.md`).
 - **Part A (v0.21.5)** fixes two TTL defects found while drafting it, both reproduced end to end
   (`.git-exclude/tmp/rfc025-ttl/`). A clock stepped back by one second expires every entry, and
   `explain()` reports `ttl_remaining_secs: Some(0)` for a `Duration::MAX` TTL that it calls fresh.
@@ -1391,6 +1393,7 @@ provisional until the file is created (RFC 000).
 | **Q3b — Variants and mapping** | RFC 025 R3–R5, R10 | RFC 025 | Q3d |
 | **Q3c — Announced rejections** | RFC 025 R6, R8; before Q2f | RFC 025 | Q3b |
 | **Q3e — RFC 024 B4 removals** | RFC 025 R9 | RFC 025 | Q2f |
+| **Q2r — Release v0.21.5** | Housekeeping; the v0.22.0 notice in the release summary; a paired re-measurement of the query rows (Q2d/Q2b/Q3a touched their path); then the batched push, CI on the exact tip, the RC production run (the first with `msrv --fresh`), the release decision, and the owner's tag and publish. Handoff: `rfcs/handoffs/024-api-consistency/v0.21.5-release-preparation.md` | owner | Q3a |
 | **Q4 — `path_in_dir` share** | Measurement only: `path_in_dir`'s share of a realistic query workload, answering the question deferred at the Phase 23 exit review. An RFC follows only if the share justifies a query-planner change | — | Q0f |
 | **Q5 — LRU recency contract** | **RFC 026**: a true least-recently-used policy where reads **and writes** count, on a recency signal finer than one second. It is a schema change (v6), under RFC 010's migration discipline, with the export/import format decided in the RFC. The same migration evaluates dropping `idx_files_namespace_path`, which duplicates the `UNIQUE(namespace, path)` autoindex (see the register). Implemented after Q3, as its own review point. **Moved to v0.23.0** (owner, 2026-09-24): RFC 026 was undrafted, and v0.21.5 can only announce decided changes | RFC 026 | v0.22.0 released |
 
