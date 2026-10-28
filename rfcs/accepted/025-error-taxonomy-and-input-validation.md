@@ -374,3 +374,63 @@ The slices, which the architect schedules and the owner authorizes with this RFC
 ## Open questions
 
 None. The four decisions above are settled.
+
+## Amendment 1 (architect, 2026-10-29) — R4 covers the CLI; configuration is checked before any side effect
+
+### R4 covers the CLI
+
+Found by the dev team's restart review, and confirmed by the architect with `git grep`
+(`.git-exclude/reviewed/027-architect-dev-restart-onboarding-review-2026-10-29.md`). R4's inventory
+was taken over `crates/localcache/src` and is exact for the library: 29 sites. `localcache-cli` also
+constructs `UnsupportedFeature` in two places that R4 does not map. R5 removes the variant, so Q3b
+would not compile without a decision.
+
+| Site | Today | Variant |
+|---|---|---|
+| `crates/cli/src/commands/read.rs`, `export`: `serde_json::to_string(record)` fails | `UnsupportedFeature("json serialisation: …")` | `Serialization("json serialisation: …")` |
+| `crates/cli/src/commands/write.rs`, `import`: a record line does not parse | `UnsupportedFeature("json parse error at line N: …")` | `InvalidArgument { argument: "records", reason: "json parse error at line N: …" }` |
+
+**Why these two.**
+- A JSON failure is `Serialization`. RFC 018 already moved the library's JSON codec failures there.
+- A line of the import file that is not a valid record is the condition R4 already maps for
+  `import_entries`' base64 error: a malformed record, `InvalidArgument { argument: "records" }`.
+  `records` is already in the fixed set, so this needs no new name.
+- The line number stays in the message. The exit status is unchanged, and the stderr prefix changes
+  from `unsupported feature:` to `serialization error:` or `invalid argument: records:`. No CLI test
+  asserts either text.
+
+**The third CLI hit is not a construction.** `crates/cli/src/commands/write.rs`, in `open_copy_source`,
+*matches* `UnsupportedFeature` by message text. That is the match R4 and R10 already replace with
+`SchemaNotCurrent`.
+
+**R5's gate widens from the library to the workspace.** After Q3b,
+`git grep -n "UnsupportedFeature" -- crates` returns nothing outside `CHANGELOG.md`-style history.
+The Q3b handoff states this as a required check.
+
+No decision changes: the variant set, the removals, and v0.22.0 are as accepted. A CLI-private error
+type was considered and not taken. `run` returns `LocalFileCacheError` throughout the CLI, and a
+second error type is a larger change than two mappings. It is not registered as debt; revisit it
+only if the CLI gains a failure that no library variant describes.
+
+### Configuration is checked before any side effect
+
+Found by the architect's re-onboarding probe of 2026-10-29 and reproduced through the public API
+(`.git-exclude/tmp/arch-probe-2026-10-29/`, mode `key`). `CacheEngine::open` runs in this order:
+it opens the connection (which creates the file), initializes or migrates the schema, applies the
+journal and `synchronous` settings, and only then checks that `encryption_key` has 32 bytes. A
+31-byte key returns `Err`, and the database file already exists. By reading the code, an older-schema
+database would also have been migrated, and its journal mode switched, before the `Err`.
+
+R6 says "before any write", but only for the rejections it announces, and R4 maps the key-length row
+to `InvalidConfiguration` without fixing where the check runs. **Rule, for Part B and for the code
+today:** every configuration check in `open`, `build`, `build_read_pool` and each wrapper's `open`
+runs before the first side effect, which is the first of: creating the file, opening a connection to
+an existing file, migrating, or changing a pragma. A rejected configuration leaves the filesystem and
+the database exactly as it found them.
+
+- **The reorder changes no accepted or rejected input,** so it is not a "newly rejected input" under
+  the Phase 24 rule and does not wait for v0.22.0. It is Q8(a) in v0.21.6 (the ROADMAP, Phase 24).
+  Q3b then changes the variant, not the order.
+- **Test:** a rejected `open` on a path that does not exist leaves it absent; on an existing database
+  it leaves the file byte-identical, `user_version` unchanged, and the journal mode as it was. Write
+  it failing-before, as the Phase 24 rule requires.

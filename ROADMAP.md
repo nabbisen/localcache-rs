@@ -690,51 +690,13 @@ Recorded findings not scheduled into a milestone. Each is tracked, none is lost.
 | `namespace_copy`'s body is byte-identical to `import_from`'s in `cache/engine/portable.rs` | N5 review §2 | Verified identical (184 chars each). Became visible once the concern was isolated in one file. Reported and deliberately **not** fixed during a move commit. **✅ Closed — fixed in P0b, shipped in v0.21.1**; `namespace_copy` delegates to `import_from`. |
 | The exhaustiveness `compile_fail,E0004` annotation is **documentation-only** | P0 review §3.1 | **Rustdoc does not verify a `compile_fail` block's error code against the actual diagnostic.** Confirmed by mutation from both sides: a block annotated `E0004` that fails with an unresolved-path error, a type mismatch, or `E0425` all still report `ok`. The guarantee that the match is genuinely non-exhaustive rests on mutation testing at review time, not on the annotation. `trybuild` or a custom `rustc --error-format=json` harness would enforce it; neither judged proportionate for one assertion. |
 | **`rusqlite` held at `^0.39`, and the conditions that would change it** | orbok/arama requests, 2026-08-01 | Not a defect to fix — a standing external constraint to **re-evaluate at each replanning**. `rusqlite 0.40` needs `libsqlite3-sys 0.38.x`, which needs **Rust 1.95** (measured: 1.94 fails, 1.95.0 passes), so adopting it would move this crate's floor from 1.85 to 1.95. Cost of holding: bundled SQLite stays at 3.51.3 rather than 3.53.2, and a consumer pinning `rusqlite 0.40` directly cannot use this crate at all — `links = "sqlite3"` makes that a hard resolution failure with no downstream remedy. **Revisit if any of:** `libsqlite3-sys` declares `rust-version` (then MSRV-aware resolution serves both audiences and no choice falls to us); the `cfg_select!` dependency goes away; 1.95 stops being a recent floor; or a consumer confirms a parallel line would unblock them. User-facing detail in `docs/src/dependency_security.md`. **✅ Resolved 2026-09-23 by RFC 023:** the `cfg_select!` condition was met. `libsqlite3-sys 0.38.2` (2026-08-08) polyfills it, and localcache on `rusqlite 0.40.2` passes the 1.85 rows. Adoption is scheduled as Q1c in v0.22.0 (breaking: the public `rusqlite::Error` and `links`). |
-| **`path_in_dir` non-recursive cannot construct an indexable prefix** | N4 §7 ranking, item 4 | **Deferred with a reason, recorded at the Phase 23 exit review — it had been neither done nor explicitly deferred, which criterion 1 forbids.** N4 observed that `path_in_dir` grows with the namespace where a leading-literal glob stays flat, and suggested checking whether it can build a `path > ? AND path < ?` range the way the literal glob does. **Nobody checked.** RFC 021 improved it incidentally (1.11×) by removing the per-row fetch, but did not touch the plan shape: it still narrows on `namespace = ?` alone. The question is live and cheap to answer — a non-recursive directory scope *is* a prefix range, so the construction looks feasible — but it is a query-planner change landing immediately after one, and this phase has twice shown that the recorded remedy targeted a minority of the measured cost. **Measure `path_in_dir`'s share of a realistic workload before designing it.** Revisit when query work next opens. |
+| **`path_in_dir` non-recursive cannot construct an indexable prefix** | N4 §7 ranking, item 4 | **Deferred with a reason, recorded at the Phase 23 exit review — it had been neither done nor explicitly deferred, which criterion 1 forbids.** N4 observed that `path_in_dir` grows with the namespace where a leading-literal glob stays flat, and suggested checking whether it can build a `path > ? AND path < ?` range the way the literal glob does. **Nobody checked.** RFC 021 improved it incidentally (1.11×) by removing the per-row fetch, but did not touch the plan shape: it still narrows on `namespace = ?` alone. The question is live and cheap to answer — a non-recursive directory scope *is* a prefix range, so the construction looks feasible — but it is a query-planner change landing immediately after one, and this phase has twice shown that the recorded remedy targeted a minority of the measured cost. **Measure `path_in_dir`'s share of a realistic workload before designing it.** Revisit when query work next opens. **Superseded 2026-10-29 by Phase 24 Q7:** the cause is not a missing construction. `path_in_dir` is written with SQL `LIKE`, which ignores ASCII case and cannot use a binary-collation index, so the plan narrows on `namespace = ?` alone *and* the query returns entries of case-variant sibling directories. A binary range fixes both. See Phase 24, "Q7". |
 | ~~`preload`, concurrent access, bincode codec at scale, watcher on large trees, cold-open cost~~ → **watcher on large trees, async-runtime concurrency** | N4 §6, narrowed by P1a | **Mostly closed.** P1a measured `preload` (71.5 µs/row at 1M), cold-open (622–799 ms), the bincode codec at scale, and `ReadPool` under 8 threads. Still unmeasured: **watcher behaviour on large trees** (needs sustained observation with induced filesystem events, not one-shot timing; RFC 015 already governs its failure behaviour) and **async-runtime backends** (tokio/async-std/smol — wiring three runtimes into a `harness = false` bench was judged disproportionate, and `ReadPool` already isolates the contended resource). Neither blocks P1b. |
 
-### Q3 progress — RFC 025 accepted (2026-09-24)
-
-`rfcs/accepted/025-error-taxonomy-and-input-validation.md` was accepted by the owner, with all four decisions as recommended.
-**Q3a is next** (`rfcs/handoffs/025-error-taxonomy-and-input-validation/implementation-handoff.md`). It is the last code slice of v0.21.5.
-Q3a was reviewed on 2026-09-24 (review 024): conditionally approved, with one condition (K1: one `now` per `explain`, for `status` too, through crate-private `_at` helpers).
-**Q3a is complete** (`f48faaa`, K1 applied, local). **All v0.21.5 code is committed.** Next is Q2r, the release
-preparation (`rfcs/handoffs/024-api-consistency/v0.21.5-release-preparation.md`).
-Q2r Parts A and B were reviewed on 2026-09-24 (review 025). Part A is conditionally approved (K1: the summary's first sentence).
-In Part B, `path_in_dir` read 7.1% slower on single-sample runs, and every other row was within 5%. K2 re-measures the query
-rows with `LOCALCACHE_SCALE_QUERY_REPEATS=5` (20 samples per arm), which the handoff should have required.
-**K2 settled it (review 026):** on 20 samples per arm, every query row is within 1% (`path_in_dir` 1.006), and the
-controls are clean. Every published row stays. The Part A commit is `ff6dba7`, and the source gate passes (`0.21.5`).
-**The batch push is authorized.**
-- **Part A (v0.21.5)** fixes two TTL defects found while drafting it, both reproduced end to end
-  (`.git-exclude/tmp/rfc025-ttl/`). A clock stepped back by one second expires every entry, and
-  `explain()` reports `ttl_remaining_secs: Some(0)` for a `Duration::MAX` TTL that it calls fresh.
-  The fix is one saturating expiry rule.
-- **Part B (v0.22.0):**
-  - seven purpose-named variants replace the 29 `UnsupportedFeature` sites;
-  - `UnsupportedFeature` and `PayloadVersionMismatch` are removed;
-  - the announced rejections land;
-  - `Database` wraps an opaque `DatabaseError`;
-  - RFC 024's removals are executed.
-
-Four decisions go to the owner.
-
-**Scheduling question (architect):** Q5 (RFC 026, the LRU recency contract with schema v6) is
-planned for v0.22.0, but RFC 026 is not drafted. The v0.21.5 summary can only announce decided
-changes. Either RFC 026 is drafted and accepted before the v0.21.5 release preparation, or Q5 moves
-to a later minor release. The architect recommends the move, so that v0.22.0 is not held for a
-schema change; the owner decides. **Decided 2026-09-24: Q5 moves to v0.23.0.**
-
-### Module-size register — after Q2b (2026-09-24)
-
-Production ELOC, measured as below. Q2b verified both splits as pure moves at token level (review 023).
-
-| File | Before | After | Outcome |
-|---|---|---|---|
-| `crates/localcache/src/cache/query.rs` | 809 | **345** | split at the builder/execution seam; execution is in `cache/query/execution.rs` (**479**) |
-| `crates/localcache/src/db/repository.rs` | 871 | **655** | the RFC 021 candidate queries (single consumer) are in `db/repository/candidates.rs` (**230**); the remainder shares SQL-construction helpers, which is N5's reasoned refusal, and still stands |
-
 ### Module-size register — after N5
+
+*Phase 22's figures. For `query.rs` and `repository.rs` after RFC 021 and Q2b, see Phase 24,
+"Module-size register — after Q2b".*
 
 Production ELOC (non-blank, non-comment). **Measure production and test code
 separately**: `indexes.rs`'s original 914 was mostly an embedded `#[cfg(test)]`
@@ -1285,9 +1247,9 @@ v0.21.0. Recorded here so it is in the RFC when written, rather than appended at
   N4 §6. What remains unmeasured (watcher on large trees, async-runtime concurrency) stays out of
   scope until something measured argues for it.
 
-## Phase 24 — Correctness, Contracts, and API Consistency (v0.21.4, v0.21.5, v0.22.0, v0.23.0)
+## Phase 24 — Correctness, Contracts, and API Consistency (v0.21.4, v0.21.5, v0.21.6, v0.22.0, v0.23.0)
 
-**Status: authorized by the owner 2026-09-23. Q0 was released as v0.21.4 the same day; Q1 is next.** RFC 022 was accepted the same day. Its
+**Status, 2026-10-29: authorized by the owner 2026-09-23. v0.21.4 (Q0) was released that day. Q1, Q2 and Q3a are complete, and v0.21.5 is prepared and pushed (tip `24544bc`, CI green) but not released: the advisory gate fails, so Q6, an advisory refresh authorized on 2026-10-29, comes first. See "Q2r and Q6 progress — 2026-10-29".** RFC 022 was accepted on 2026-09-23. Its
 **Amendment 2** was authorized the same day, after the architect's re-onboarding and the Q0a
 review. It corrects R1, re-scopes R6, and adds R7–R9 (see "Amendment 2" below). The owner set two
 standing principles for this phase:
@@ -1349,11 +1311,12 @@ below, the contents of each release, and the newly-rejected-input rule.
 | Release | Contents | Breaking? |
 |---|---|---|
 | **v0.21.4** | Q0: six correctness fixes (RFC 022 R1, R2, R6–R9), release-tooling repair, docs and records reconciliation | no |
-| **v0.21.5** | Q2 (RFC 024 Part A: slices Q2c → Q2a → Q2d → Q2e): API consistency, additions and deprecations only; plus the Q2b module split and any non-breaking outcome of Q4. Q1b: the fresh-resolution drift check (RFC 023 R6.2). Q3a: one expiry rule (RFC 025 Part A: two TTL correctness fixes). The CHANGELOG summary announces Q1c (RFC 023 R5, R9) | no |
+| **v0.21.5** | Q2 (RFC 024 Part A: slices Q2c → Q2a → Q2d → Q2e): API consistency, additions and deprecations only; plus the Q2b module split. Q1b: the fresh-resolution drift check (RFC 023 R6.2). Q3a: one expiry rule (RFC 025 Part A: two TTL correctness fixes). **Q6 (added 2026-10-29): the advisory refresh (`zstd` 0.14, `tokio` 1.53.3) and a weekly advisory scan, because the release gate fails without them.** The CHANGELOG summary announces Q1c (RFC 023 R5, R9) | no |
+| **v0.21.6** | Q7: `path_in_dir` exactness (RFC 006 Erratum 2), with the documentation corrections registered on 2026-10-29. Q8 (**proposed, awaiting the owner's authorization**): robustness hygiene. Both are non-breaking; neither is announced in v0.21.5 | no |
 | **v0.22.0** | Q3: error-taxonomy completion, configuration and argument validation, and removal of anything Q2 deprecated. Q1c: `rusqlite 0.40.2` (RFC 023 R9; **not** an MSRV change). Q2f: RFC 024 Part B (B1 `run()` errors on undecodable entries, B2 `JournalMode::Preserve`, B3 imports honour `max_entries`). Q3 (RFC 025 Part B): Q3d opaque `DatabaseError`, Q3b seven purpose-named variants replacing `UnsupportedFeature` (removed, with `PayloadVersionMismatch`), Q3c the announced rejections, and Q3e RFC 024 B4's removals. No MSRV raise: RFC 023 finds no necessity | **yes** |
 | **v0.23.0** | Q5: the LRU recency contract (RFC 026, schema v6), **moved from v0.22.0 by the owner on 2026-09-24**, so that v0.22.0 is not held for an undrafted schema change. RFC 026 is drafted after v0.22.0's scope is fixed, and the v0.22.0 summary announces it | **yes** |
 
-v0.22.0 is now certain: Q3 and RFC 024 Part B change observable behaviour. v0.23.0 carries Q5's schema change (owner decision, 2026-09-24).
+v0.22.0 is now certain: Q3 and RFC 024 Part B change observable behaviour. v0.23.0 carries Q5's schema change (owner decision, 2026-09-24). v0.21.6 is a patch between v0.21.5 and v0.22.0 (owner, 2026-10-29): non-breaking fixes ship before the breaking release.
 
 **Rule, set 2026-09-23 and authorized by the owner the same day: newly rejected input ships only
 in a minor release.** When the library
@@ -1399,9 +1362,12 @@ provisional until the file is created (RFC 000).
 | **Q3b — Variants and mapping** | RFC 025 R3–R5, R10 | RFC 025 | Q3d |
 | **Q3c — Announced rejections** | RFC 025 R6, R8; before Q2f | RFC 025 | Q3b |
 | **Q3e — RFC 024 B4 removals** | RFC 025 R9 | RFC 025 | Q2f |
-| **Q2r — Release v0.21.5** | Housekeeping; the v0.22.0 notice in the release summary; a paired re-measurement of the query rows (Q2d/Q2b/Q3a touched their path); then the batched push, CI on the exact tip, the RC production run (the first with `msrv --fresh`), the release decision, and the owner's tag and publish. Handoff: `rfcs/handoffs/024-api-consistency/v0.21.5-release-preparation.md` | owner | Q3a |
-| **Q4 — `path_in_dir` share** | Measurement only: `path_in_dir`'s share of a realistic query workload, answering the question deferred at the Phase 23 exit review. An RFC follows only if the share justifies a query-planner change | — | Q0f |
+| **Q2r — Release v0.21.5** | Housekeeping; the v0.22.0 notice in the release summary; a paired re-measurement of the query rows (Q2d/Q2b/Q3a touched their path); then the batched push, CI on the exact tip, the RC production run (the first with `msrv --fresh`), the release decision, and the owner's tag and publish. Handoff: `rfcs/handoffs/024-api-consistency/v0.21.5-release-preparation.md`. **Parts A and B and the push are done (2026-09-24); the RC production run, the decision and the publish wait for Q6** | owner | Q3a, **Q6** |
+| **Q4 — `path_in_dir` share** — *superseded by Q7 (2026-10-29)* | ~~Measurement only: `path_in_dir`'s share of a realistic query workload.~~ The question is moot: the cause is a correctness defect and a plan-shape defect at once (see Q7), and Q7 re-measures the row | — | — |
 | **Q5 — LRU recency contract** | **RFC 026**: a true least-recently-used policy where reads **and writes** count, on a recency signal finer than one second. It is a schema change (v6), under RFC 010's migration discipline, with the export/import format decided in the RFC. The same migration evaluates dropping `idx_files_namespace_path`, which duplicates the `UNIQUE(namespace, path)` autoindex (see the register). Implemented after Q3, as its own review point. **Moved to v0.23.0** (owner, 2026-09-24): RFC 026 was undrafted, and v0.21.5 can only announce decided changes | RFC 026 | v0.22.0 released |
+| **Q6 — Advisory refresh** (v0.21.5) | Added 2026-10-29. On `24544bc` the advisory gate denies 15 findings published 2026-10-16 (`zstd` 0.13.3, `zstd-safe` 7.2.4, `zstd-sys` 2.0.16, `tokio` 1.52.3), so `release` cannot pass. **Q6a:** `zstd = "0.14"` and `tokio` 1.53.3, with no other lockfile change but six Windows-only `windows-sys` edges; no MSRV change, no API change, no wire-format change. **Q6b:** `.github/workflows/advisories.yaml`, the same gate weekly and on request (the `msrv-fresh` pattern). Reproduced end to end by the architect before delegation. Handoff: `.git-exclude/reviewed/028-architect-q6-advisory-refresh-handoff-2026-10-29.md` | owner (authorized 2026-10-29); RFC 014, RFC 023 R6, RFC 009 R16 | — |
+| **Q7 — `path_in_dir` exactness** (v0.21.6) | `path_in_dir` is written with SQL `LIKE`. It ignores ASCII case (public-API probe on Linux: `path_in_dir(…/Docs)` also returned entries of `docs/`), and a `LIKE` on a binary-collation column cannot use the `(namespace, path)` index. Replace it with a binary range plus a case-sensitive non-recursive exclusion, re-measure the row, and document that `path_like` and `keys` are `LIKE` and ignore ASCII case. Needs **RFC 006 Erratum 2** (its premise that `LIKE` is case-sensitive and index-eligible is false) and a handoff, both after Q6. Also carries the documentation corrections in the Phase 24 register | owner (authorized 2026-10-29) | v0.21.5 released |
+| **Q8 — Robustness hygiene** (v0.21.6; **proposed, awaiting the owner's authorization**) | (a) `CacheEngine::open` validates every configuration value before its first side effect: a wrong-length encryption key returns `Err` only after the database file exists, and by reading an old-schema database would be migrated first (RFC 025 Amendment 1). (b) One schema-version constant instead of two constants and five literals (`db/schema.rs`, `db/schema/classifier.rs`, `db/schema/migration.rs`), which RFC 026's schema v6 needs. (c) No `unwrap()` in library code, enforced by `#![cfg_attr(not(test), deny(clippy::unwrap_used))]`; two guarded sites in `engine/diagnose.rs` today. All three are non-breaking, and (a) changes no accepted or rejected input | architect proposal; found by the 2026-10-29 re-onboarding and the dev team's startup review | Q7 |
 
 Q0 runs one slice at a time, in this order: **Q0a → Q0b → Q0c → Q0g → Q0h → Q0i → Q0d → Q0e →
 Q0j → Q0f**. Q0j was added by RFC 022 Amendment 3 (owner approval, 2026-09-23). It comes before
@@ -1545,8 +1511,9 @@ Proposed slice order: Q2c → Q2a → Q2d → Q2e → Q2b; then Q2f in v0.22.0.
 **Part A and Q2b are implemented, reviewed, and committed locally** (2026-09-24; reviews 019–023):
 Q2c `9a2a222`, Q2a `b60347d`, Q2d `3d450bd`, Q2e `d5343e6`, then Q2b as two pure-move commits.
 **RFC 024 Amendment 1:** CLI colour stays off on non-unix targets, since VT processing is not enabled.
-The test count went from 459 to 505. **Nothing is pushed**, because the book deploys from `main` (review
-019 § 4). The batch goes out at the v0.21.5 release preparation, which waits for RFC 025 (Q3) so that
+The test count went from 459 to 505. **Nothing was pushed** until the v0.21.5 release preparation,
+because the book deploys from `main` (review 019 § 4); the batch went out on 2026-09-24 (see "Q3 and
+Q2r progress"). The release preparation waited for RFC 025 (Q3) so that
 the v0.21.5 summary can announce every v0.22.0 change. Its measurements changed the
 question Q1 was given. **`rusqlite 0.40` no longer requires Rust 1.95:** `libsqlite3-sys 0.38.2`
 (2026-08-08) polyfills `cfg_select!`, and localcache on `rusqlite 0.40.2` passes all four MSRV
@@ -1555,6 +1522,86 @@ rows on 1.85.0 and the full suite, with no source change. The move is still brea
 It also finds `docs/src/dependency_security.md` out of date and proposes correcting it at once.
 The MSRV stays 1.85. Three decisions go to the owner: the age floor (12 or 6 months), the
 previous-line commitment, and the `rusqlite` schedule.
+
+### Q3 and Q2r progress — through 2026-09-24
+
+RFC 025 was accepted by the owner on 2026-09-24, with all four decisions as recommended.
+- **Part A (v0.21.5)** fixes two TTL defects found while drafting the RFC, both reproduced end to end
+  (`.git-exclude/tmp/rfc025-ttl/`): a clock stepped back by one second expires every entry, and
+  `explain()` reports `ttl_remaining_secs: Some(0)` for a `Duration::MAX` TTL that it calls fresh.
+  The fix is one saturating expiry rule.
+- **Part B (v0.22.0):** seven purpose-named variants replace the 29 `UnsupportedFeature` sites;
+  `UnsupportedFeature` and `PayloadVersionMismatch` are removed; the announced rejections land;
+  `Database` wraps an opaque `DatabaseError`; and RFC 024's removals are executed. On 2026-10-29,
+  Amendment 1 extended R4 to the two CLI construction sites its inventory had missed.
+
+**Q3a is complete** (`f48faaa`). Review 024 approved it conditionally, with one condition (K1: one
+`now` per `explain`, for `status` too, through crate-private `_at` helpers), which was applied. All
+v0.21.5 code was then committed.
+
+**Q2r** is `rfcs/handoffs/024-api-consistency/v0.21.5-release-preparation.md`. Parts A and B were
+reviewed on 2026-09-24 (review 025). Part A: conditionally approved (K1: the summary's first
+sentence). Part B: `path_in_dir` read 7.1% slower on single-sample runs and every other row was within
+5%, so K2 re-measured the query rows with `LOCALCACHE_SCALE_QUERY_REPEATS=5` (20 samples per arm),
+which the handoff should have required. **K2 settled it (review 026):** every query row is within 1%
+(`path_in_dir` 1.006) and the controls are clean, so every published row stays. Part A is `ff6dba7`,
+and the source gate passes (`0.21.5`).
+
+**The batch was pushed on 2026-09-24:** `c6d36c5..24544bc`, a fast-forward. CI run 35955497848 is 26/26
+green, Docs run 35955497870 is green, and the `msrv-fresh.yaml` run the architect dispatched,
+35955771683, is green, with no annotation on any job. The live book serves the v0.21.5 content.
+
+**Scheduling question (architect, 2026-09-24):** Q5 (RFC 026, the LRU recency contract with schema v6)
+was planned for v0.22.0, but RFC 026 is not drafted, and the v0.21.5 summary can only announce decided
+changes. The architect recommended moving it so that v0.22.0 is not held for a schema change.
+**Decided 2026-09-24: Q5 moves to v0.23.0.**
+
+### Q2r and Q6 progress — 2026-10-29
+
+**The project paused for 35 days after the push.** Nothing was committed after `24544bc`
+(2026-09-24 13:15 JST), and the RC production run was never started. The architect re-onboarded on
+2026-10-29 and verified against GitHub and crates.io: the tip equals `origin/main`; crates.io is still
+at 0.21.4 for both crates; there is no `0.21.5` tag; there are no open issues or pull requests; and
+the five weekly `msrv-fresh` runs since then (2026-09-28 to 2026-10-26) are green. The live book has
+shown `0.21.5` install lines since 2026-09-24, so a copy-paste of one fails until 0.21.5 is published.
+
+**The advisory gate now fails.** `python3 scripts/check_advisories.py` on `24544bc` exits 1 with
+`findings=17 warnings=2 exceptions=0 denied=15`. All fifteen were published on 2026-10-16, after the last
+green run: four vulnerabilities (RUSTSEC-2026-0391 `zstd` 0.13.3; -0403 and -0398 `zstd-safe` 7.2.4;
+-0410 `zstd-sys` 2.0.16, wasm32 only) and eleven unsound reports (RUSTSEC-2026-0386 `tokio` 1.52.3;
+-0395 to -0397, -0399 to -0402, and -0404 to -0406 `zstd-safe`). By the architect's reading,
+localcache calls only `zstd::encode_all`/`decode_all` and `tokio::task::spawn_blocking`, and
+RUSTSEC-2026-0403's text says `decode_all` is unaffected, so none looks reachable. The gate is
+fail-closed regardless, and `release` runs it last, so an RC run on `24544bc` would have failed after
+the other three gates. CI runs the gate only on a push or a pull request, and `msrv-fresh.yaml` is the
+only scheduled workflow, so nothing ran it between 2026-10-16 and 2026-10-29.
+
+**Decisions of 2026-10-29** (owner: "Authorized"), on the architect's recommendation:
+1. **Q6, in v0.21.5.** Refresh `zstd` to 0.14 and `tokio` to 1.53.3, and add the weekly scan. The
+   patched versions exist and declare Rust 1.64 and 1.71. The architect reproduced the remedy on an
+   exported copy of `24544bc`: the gate exits 0 (`denied=0`), the four locked MSRV rows pass on 1.85.0,
+   516 tests pass, and a consumer that also depends on `zstd = "0.13"` resolves with one `zstd-sys`.
+   Evidence: `.git-exclude/tmp/q6-remedy-evidence-2026-10-29/`. The alternative, expiring exceptions
+   for fifteen findings while a compatible fix exists, was rejected. **Review 026's instruction to
+   start the RC run on `24544bc` is withdrawn:** the RC run follows Q6, on the new tip.
+2. **Q7, in a patch (v0.21.6) after v0.21.5.** `path_in_dir` exactness; see the milestone table.
+   Q4 is superseded.
+3. The architect repairs this file and registers the smaller findings, below.
+
+**Dev-team startup review, 2026-10-29**
+(`.git-exclude/reviewed/027-architect-dev-restart-onboarding-review-2026-10-29.md`): approved. Two
+findings are real and now scheduled. RFC 025 R4 missed two CLI construction sites of
+`UnsupportedFeature` (RFC 025 Amendment 1). The schema version is hard-coded in five places beside two
+constants (Q8, which RFC 026 needs). Their `unwrap()` finding matches the architect's (Q8).
+
+### Module-size register — after Q2b (2026-09-24)
+
+Production ELOC, measured as below. Q2b verified both splits as pure moves at token level (review 023).
+
+| File | Before | After | Outcome |
+|---|---|---|---|
+| `crates/localcache/src/cache/query.rs` | 809 | **345** | split at the builder/execution seam; execution is in `cache/query/execution.rs` (**479**) |
+| `crates/localcache/src/db/repository.rs` | 871 | **655** | the RFC 021 candidate queries (single consumer) are in `db/repository/candidates.rs` (**230**); the remainder shares SQL-construction helpers, which is N5's reasoned refusal, and still stands |
 
 ### Deferred register — Phase 24
 
@@ -1580,6 +1627,16 @@ previous-line commitment, and the `rusqlite` schedule.
 | `cargo doc --workspace` warns of an output-filename collision: the CLI binary and the library are both named `localcache` | Q0e review, N2 | Pre-existing and harmless to the published library docs (docs.rs builds the library alone). Resolve when the CLI is next touched: either document only the library in the workspace doc task, or set `doc = false` on the binary target. **Q2**. **✅ RFC 024 R12** (Q2e). |
 | Tokio's `JoinError` on runtime shutdown (cancellation) is reported as `AsyncTaskPanicked` | 2026-09-23 re-onboarding | Mislabelled, but only on shutdown. **Q3** (RFC 025), with the rest of the error taxonomy. |
 | `TERMS_OF_USE.md` says `NOTICE` summarizes third-party dependencies; `NOTICE` contains only the project's own copyright and licence notice | 2026-09-23 re-onboarding | **✅ Closed 2026-09-23.** The owner delegated both files to the architect. `TERMS_OF_USE.md` now points to the binding `LICENSE` text section by section, states where the license and notices live for the repository and for crates.io, and describes third-party components factually. `NOTICE` names both crates. `NOTICE`'s copyright year 2026 was checked against git history and tag dates; the CHANGELOG's 2025 dates are typos, now scheduled in Q0e. |
+| `path_in_dir` returns entries of case-variant sibling directories, and cannot use the path index | 2026-10-29 re-onboarding (reproduced through the public API) | SQL `LIKE` ignores ASCII case, and with a binary-collation column it cannot use the index. RFC 006's open question 1 and its claim that a constant-prefix `LIKE` is index-eligible are both false. **Scheduled as Q7** (v0.21.6, RFC 006 Erratum 2). `path_like` and `keys` are user-facing `LIKE`: their docs must say that ASCII letters match case-insensitively (Q7). |
+| `CacheEngine::open` validates the encryption key length after it has created, migrated and configured the database | 2026-10-29 re-onboarding (reproduced: the file exists after the `Err`; the migration case is by reading) | **Scheduled as Q8(a)**. RFC 025 Amendment 1 adds the rule to Part B: every configuration check precedes the first side effect. |
+| The schema version is hard-coded as `5` in five places beside two `CURRENT_VERSION` constants | dev-team startup review, 2026-10-29 (confirmed by the architect: `db/schema.rs` lines 49, 91, 128, 146; `db/schema/migration.rs` line 393; constants in `db/schema.rs` and `db/schema/classifier.rs`) | RFC 026's schema v6 would otherwise edit seven places by hand. **Scheduled as Q8(b)**, before Q5. |
+| Two guarded `unwrap()` calls in library code (`crates/localcache/src/cache/engine/diagnose.rs` lines 78 and 149); the "no `unwrap()` in library code" convention survives only in historical documents and nothing enforces it | architect and dev-team reviews, 2026-10-29 | **Ruled 2026-10-29:** the convention stands for library code, because the owner's standing principle is a robust design. It is enforced by a lint, not by review (**Q8(c)**). It does not extend to the CLI crate, tests, benches or examples. |
+| `scan_dir`, `preload` and `localcache scan` silently skip symlinked files and symlinked directories | 2026-10-29 re-onboarding (confirmed with the CLI) | A symlink canonicalizes to its target's key, so following links would add duplicate-key and cycle questions; skipping may be the right rule, but no document or test says so. Document the skip in `ScanOptions`, `scan_dir_filtered`, `preload` and the book unless a consumer asks to follow links. Carried by Q7's documentation corrections. |
+| There is no consolidated threat model; payload encryption gives confidentiality only | 2026-10-29 re-onboarding (by reading) | `.git-exclude/rules/project-instructions-general-common.md` requires the threat model to be updated at each release, and none exists beyond the per-RFC "Security considerations". Facts to record: AES-256-GCM is used with no associated data, so a payload is not bound to its row; an engine that holds a key still decodes plaintext-tagged entries; `import_entries` stores records verbatim; `zstd::decode_all` has no output cap (not probed). Guarantees such as AAD binding or a require-encryption mode change the stored format, so they belong with a schema migration: evaluate them with RFC 026's v6. **The architect drafts a security-model page for the book (documentation only) after Q6.** |
+| `zstd` is built with its default features (`legacy`, `arrays`, `zdict_builder`), and localcache uses none of them | Q6, 2026-10-29 | RUSTSEC-2026-0403 concerns legacy-frame decoding, which is on by default. `default-features = false` would shrink the attack surface, but it decides which frames decode, so it is not part of Q6. Decide it with the security-model page. |
+| `CacheOptions` has public fields gated by Cargo features and is not `#[non_exhaustive]`; `ScanOptions` has the same shape without the gates | 2026-10-29 re-onboarding (by language semantics; not probed) | Features unify across a dependency graph, so a crate that builds `CacheOptions { … }` listing every field, without `..Default::default()`, stops compiling when any crate in the graph enables `encryption`, `compression` or `watching`. Adding any field is also a breaking change. v0.22.0 is the breaking release: decide `#[non_exhaustive]`, with the builder and `Default` as the way to construct, in RFC 024/025's family. |
+| Documentation nits: `docs/src/cookbook.md` Recipe 9 calls `provider.tracer(..)` without `use opentelemetry::trace::TracerProvider as _;` (not compiled); Recipe 2 and `docs/src/async.md` wrap the already-`Clone` `SyncCacheEngine` in an `Arc` | 2026-10-29 re-onboarding | Carried by Q7's documentation corrections. Compile Recipe 9 against the pinned `opentelemetry` 0.32 before changing it. |
+| `.git-exclude/tasks/architect/001-prepare.md` and `.git-exclude/tasks/dev-team/001-prepare.md` still name `.git-exclude/specs/handoff/`, which has been `.git-exclude/specs/old/handoff-v0.20.0/` since 2026-09-23 | review 001 (2026-09-23), dev-team startup review (2026-10-29) | Owner-owned files; not edited. Suggested replacement for the first list item: `.git-exclude/specs/old/README.md` (historical, not current guidance), then the live sources of truth `ROADMAP.md`, `rfcs/README.md`, `docs/src/` and `CHANGELOG.md`. |
 
 ## Future / Unscheduled
 
