@@ -1318,7 +1318,7 @@ below, the contents of each release, and the newly-rejected-input rule.
 
 v0.22.0 is now certain: Q3 and RFC 024 Part B change observable behaviour. v0.23.0 carries Q5's schema change (owner decision, 2026-09-24). v0.21.6 is a patch between v0.21.5 and v0.22.0 (owner, 2026-10-29): non-breaking fixes ship before the breaking release.
 
-**Versioning policy (owner instruction, 2026-10-29): standard Semantic Versioning 2.0.0.**
+**Versioning policy (owner instruction and authorization, 2026-10-29): standard Semantic Versioning 2.0.0.**
 - **Patch** (`z`): backward-compatible bug fixes only, with dependency updates and documentation. No new public API, no new functionality.
 - **Minor** (`y`): new backward-compatible functionality. Deprecating an API is a minor change.
 - **Major** (`x`): incompatible changes.
@@ -1326,6 +1326,8 @@ v0.22.0 is now certain: Q3 and RFC 024 Part B change observable behaviour. v0.23
   frozen at 0. Such a change therefore takes a minor bump (`0.22.0`), and is announced one release ahead, as Phase 24 already does.
   **Whether a breaking release should instead be `1.0.0` is the owner's decision,** and is raised at each breaking release.
   v0.22.0 is scheduled as `0.22.0` unless the owner decides otherwise.
+- **Real SemVer needs 1.0,** because only then does a minor bump mean "compatible additions" to a resolver. Until then, a release that
+  only adds functionality is also a `y` bump, and the cost is that `^0.21` consumers do not receive it automatically.
 - **v0.21.5 breached this policy.** It added public API (`SortKey`, `SyncCacheEngine`, `run_report`, `copy --from-db`) and
   deprecations in a patch. It breaks nothing and is not yanked, and its release notes stand as published. From now on additive
   work waits for a minor release. v0.21.6 (Q7, Q8) contains fixes only and is a true patch.
