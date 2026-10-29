@@ -217,7 +217,7 @@ Wire up Prometheus to monitor cache performance:
 
 ```toml
 [dependencies]
-localcache         = { version = "0.21.5", features = ["metrics"] }
+localcache         = { version = "0.21.6", features = ["metrics"] }
 metrics-exporter-prometheus = "0.16"
 ```
 
@@ -242,7 +242,7 @@ OTel-compatible backend:
 
 ```toml
 [dependencies]
-localcache          = { version = "0.21.5", features = ["opentelemetry"] }
+localcache          = { version = "0.21.6", features = ["opentelemetry"] }
 opentelemetry       = { version = "0.32", features = ["trace"] }
 tracing-opentelemetry = "0.33"
 tracing-subscriber  = { version = "0.3", features = ["registry"] }

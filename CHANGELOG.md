@@ -7,7 +7,27 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [Unreleased]
+## [0.21.6] — Unreleased
+
+*Date set at owner authorization.*
+
+**A fix release. Not breaking.** No public signature, schema, wire-format, dependency or MSRV change,
+and no input v0.21.5 accepted is now rejected.
+
+What changes for you:
+- **`path_in_dir` is exact and fast.** It no longer returns case-variant sibling directories, and an
+  index range answers it instead of a scan of the whole namespace (**Fixed**).
+- **A rejected configuration leaves nothing behind.** `open` and its wrappers no longer create the
+  file, migrate an older schema or switch the journal mode before returning the error (**Fixed**).
+- **Documentation corrections:** the case-sensitivity of path matching, symlinks in the scan
+  functions, two cookbook recipes, and a performance page rebuilt from one profile session
+  (**Documentation**).
+- **Internal hygiene:** one schema-version constant, and the library's own code is now linted
+  against `unwrap()` (**Internal**).
+
+**Look ahead: v0.22.0.** A `zstd`-compressed payload that expands very far can make `get` abort the
+process by allocating that much memory. A bounded decode with a configurable limit and a typed error
+ships in v0.22.0 (see **Known issues**).
 
 ### Fixed
 
@@ -1377,7 +1397,8 @@ Namespaces, batch ops, TTL, PRAGMAs, schema migration.
 ## [0.1.0] — 2026-05-03
 Initial release.
 
-[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/0.21.5...HEAD
+[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/0.21.6...HEAD
+[0.21.6]: https://github.com/nabbisen/localcache-rs/compare/0.21.5...0.21.6
 [0.21.5]: https://github.com/nabbisen/localcache-rs/compare/0.21.4...0.21.5
 [0.21.4]: https://github.com/nabbisen/localcache-rs/compare/0.21.3...0.21.4
 [0.21.3]: https://github.com/nabbisen/localcache-rs/compare/0.21.2...0.21.3
