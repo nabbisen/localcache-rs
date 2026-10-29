@@ -205,6 +205,10 @@ It records the raw audit reports, RustSec Git identity, registry responses and
 manifest digest, lockfile and policy digests, scan time, summary, and exit
 status beneath the supplied output directory.
 
+The same gate also runs weekly and on request, in
+`.github/workflows/advisories.yaml`, separately from the push-time CI. A failure
+there means a new advisory or yank has reached the locked dependency graph.
+
 Vulnerabilities, unsoundness, yanked packages, unknown findings, malformed
 input, and stale or expired policy entries are denied by default. A zero exit
 status means every current finding exactly matches reviewed policy; it does

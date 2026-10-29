@@ -1,0 +1,57 @@
+name: Dependency advisories
+
+# Phase 24 Q6: the RFC 014 / RFC 009 R13 fail-closed advisory gate, on a
+# schedule. `ci.yaml` runs the same gate only on a push or a pull request, so
+# an advisory published against the locked graph between two pushes went
+# unnoticed until someone ran the gate by hand.
+#
+# This is its own workflow, not a `schedule:` on ci.yaml: a failure caused by
+# an upstream publication must not turn unrelated pushes red, and must not run
+# the whole CI weekly. It is deliberately NOT part of `aggregate-ci`, and not a
+# `needs:` of `release-gate`. The same gate also runs inside the `security`
+# step of `scripts/release.py release`, where it blocks a release.
+#
+# A failure here means a new advisory or a yank has reached the locked graph.
+# The gate fails closed: there is no `continue-on-error`, and the exit status of
+# `scripts/release.py security` is the job's. GitHub then notifies the
+# repository owner.
+#
+# Read-only, no secrets, no `pull_request_target`, actions pinned by full SHA
+# with the same pins as ci.yaml (RFC 009 R16). The runner image and the pins
+# change only by a deliberate, CI-verified change (RFC 022 R3 items 6-7).
+#
+# Deliberately no cache step: a cached advisory database would hide exactly
+# what this workflow exists to find.
+
+on:
+  schedule:
+    - cron: "11 4 * * 1" # Mondays, 04:11 UTC (after msrv-fresh's 03:17)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  advisories:
+    name: Dependency advisories
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - name: Install pinned cargo-audit
+        run: cargo install cargo-audit --version 0.22.2 --locked
+      - name: Run fail-closed advisory policy (RFC 009 R13)
+        run: >-
+          python3 scripts/release.py security
+          --output-dir "$RUNNER_TEMP/localcache-advisory-evidence"
+      - name: Preserve advisory evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dependency-security-evidence
+          path: ${{ runner.temp }}/localcache-advisory-evidence
+          if-no-files-found: error

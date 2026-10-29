@@ -12,7 +12,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 *Date set at owner authorization.*
 
 Patch release for Phase 24's API-consistency step: RFC 024's additions and deprecations, RFC 025's
-expiry fix, and RFC 023's fresh-resolution check (release tooling only).
+expiry fix, RFC 023's fresh-resolution check (release tooling only), and a dependency security refresh.
 
 **Not breaking.** Additions and deprecations only: no MSRV change, and no input v0.21.4 accepted now
 returns an error. The behaviour changes are the two TTL fixes, and `NO_COLOR=` (empty) no longer
@@ -32,6 +32,14 @@ What changes for you:
   is deprecated in its favour.
 - **The TTL fixes.** A system clock stepped back no longer expires entries written in the last
   seconds, and `explain()` no longer reports a fresh entry under a huge TTL as having 0 seconds left.
+- **Dependency refresh.** `zstd` 0.13 → 0.14 (with `zstd-safe` 8 and `zstd-sys` 2.1) and `tokio` →
+  1.53.3 resolve fifteen RustSec advisories published 2026-10-16 (listed under `### Security`).
+  localcache calls none of the functions they name. The only affected names it reaches are
+  `zstd-safe` calls made inside `zstd::encode_all` and `zstd::decode_all`, and the conditions those
+  advisories require (a multithreaded context, `StableInBuffer`, swapping a dictionary on an
+  unfinished frame) do not occur here; RUSTSEC-2026-0403 itself states that `decode_all` is not
+  affected. Existing databases read unchanged, and a crate that depends on `zstd` 0.13 directly keeps
+  working beside it. Not an MSRV change.
 
 **Look ahead: v0.22.0 (breaking), announced one release early.** Each item is decided in its RFC:
 - **Dependency:** `rusqlite` 0.39 → **0.40.2** (bundled SQLite 3.51.3 → 3.53.2). This is **not** an
@@ -55,6 +63,13 @@ will be announced in detail one release ahead.
 
 ### Added
 
+- Release tooling (Phase 24 Q6): a scheduled advisory scan. `.github/workflows/advisories.yaml` runs the
+  same fail-closed advisory gate as `ci.yaml` and the `release` gate (`scripts/release.py security`)
+  every Monday and on request. CI runs that gate only on a push or a pull request, so an advisory
+  published between two pushes went unnoticed until someone ran it by hand, which is how the fifteen
+  listed under `### Security` were found, thirteen days after publication. It is its own workflow and
+  is not part of `aggregate-ci`, so an upstream publication cannot turn unrelated pushes red. No
+  library change.
 - Release tooling (RFC 023 R6.2): a fresh-resolution drift check. `scripts/release.py msrv --fresh`
   copies the tracked tree without any `Cargo.lock`, resolves it with the declared-MSRV Cargo (so
   `resolver = "3"`'s MSRV-aware fallback applies exactly as for a consumer), then runs the same four
@@ -153,6 +168,16 @@ The deprecation note names the replacement (RFC 024 R4–R8). `docs/src/api.md` 
 - `explain()` reported `ttl_remaining_secs: 0` for an entry that was fresh under a very large TTL
   (for example `Duration::MAX`). It now reports the remaining time, saturating at `i64::MAX`, and
   derives its expired flag from the same rule the reads use (RFC 025 R1).
+
+### Security
+
+Fifteen RustSec advisories, all published 2026-10-16, are resolved by the dependency refresh above:
+
+- `tokio` (fixed in 1.53.3): RUSTSEC-2026-0386.
+- `zstd` (fixed in 0.14.3): RUSTSEC-2026-0391.
+- `zstd-safe` (fixed in 8.2.0): RUSTSEC-2026-0395, -0396, -0397, -0398, -0399, -0400, -0401, -0402,
+  -0403, -0404, -0405, -0406.
+- `zstd-sys` (fixed in 2.1.2): RUSTSEC-2026-0410.
 
 ## [0.21.4] — 2026-09-23
 

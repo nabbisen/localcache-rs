@@ -44,7 +44,7 @@ error, shipped in this patch** — see [Error Handling](./errors.md) and the com
 throughout this book for what each fix actually changes.
 
 Three further releases are planned: v0.21.5 (API consistency — additive names and deprecations
-only, no removals — plus two TTL correctness fixes), v0.22.0 (the first breaking release since
+only, no removals — plus two TTL correctness fixes and a dependency security refresh), v0.22.0 (the first breaking release since
 v0.21.0: completing the error taxonomy, validating configuration that is silently accepted today,
 and removing what v0.21.5 deprecates), and v0.23.0 (a true least-recently-used eviction policy on a
 schema change). See the live
