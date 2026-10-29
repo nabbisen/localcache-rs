@@ -7,9 +7,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [0.21.6] — Unreleased
+## [0.21.6] — 2026-10-29
 
-*Date set at owner authorization.*
+Release candidate `4129618`, accepted by the v0.21.6 release decision on 2026-10-29 with a **Go**
+recommendation, and authorized by the project owner the same day.
 
 **A fix release. Not breaking.** No public signature, schema, wire-format, dependency or MSRV change,
 and no input v0.21.5 accepted is now rejected.
