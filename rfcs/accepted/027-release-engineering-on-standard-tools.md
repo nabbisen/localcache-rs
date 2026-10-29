@@ -79,6 +79,23 @@ truth") without a runner.
 - **Version consistency (R10, R11):** the existing checks, extracted to one short script (about 100
   lines).
 
+**Q9a findings (architect review 040, 2026-10-30), recorded so Q9b's deletions are not read as silent
+narrowings:**
+
+- *A stale ignore stays fatal.* `cargo deny --locked check -D advisory-not-detected advisories sources`
+  turns the warning into an error (verified by a run). The "stale ignore entry is denied" behaviour is
+  therefore **preserved**, not lost (see Security considerations).
+- *A failed advisory fetch fails closed* (exit 1, with or without a cached database), as the old gate does.
+  Only an explicit `--offline` passes from a cache, and no CI command passes it.
+- *The scanned set is narrower and more precise.* The old gate counted all 233 locked crates.io packages;
+  `cargo deny` scans the 214-crate graph that can be built with every feature, all targets and
+  dev-dependencies (21 locked packages are optional dependencies of dependencies that no feature of this
+  workspace enables, and cannot appear in any build).
+- *The feature-list assertion guards the two hand-written suite rows.* `--each-feature` takes its features
+  from `Cargo.toml` and cannot miss one; the suite rows name their companions by hand.
+- The three tool versions (`cargo-make`, `cargo-hack`, `cargo-deny`) are pinned in `Makefile.toml` and
+  `ci.yaml`. Dependabot does not track `cargo install` pins; updating them is manual, documented by Q9b.
+
 ### R3 — The archive is `git archive` of the tag
 
 The project source archive is `git archive --format=tar.gz`, from the release tag, named
