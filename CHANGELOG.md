@@ -7,12 +7,12 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [0.21.5] — Unreleased
-
-*Date set at owner authorization.*
+## [0.21.5] — 2026-10-29
 
 Patch release for Phase 24's API-consistency step: RFC 024's additions and deprecations, RFC 025's
 expiry fix, RFC 023's fresh-resolution check (release tooling only), and a dependency security refresh.
+Release candidate `a3cfcfd`, accepted by the v0.21.5 release decision on 2026-10-29 with a **Go**
+recommendation, and authorized by the project owner the same day.
 
 **Not breaking.** Additions and deprecations only: no MSRV change, and no input v0.21.4 accepted now
 returns an error. The behaviour changes are the two TTL fixes, and `NO_COLOR=` (empty) no longer
