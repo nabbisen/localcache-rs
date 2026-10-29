@@ -7,6 +7,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [Unreleased]
+
+---
+
 ## [0.21.5] — 2026-10-29
 
 Patch release for Phase 24's API-consistency step: RFC 024's additions and deprecations, RFC 025's
