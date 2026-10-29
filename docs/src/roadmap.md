@@ -32,6 +32,13 @@ on GitHub for the full backlog with implementation notes.
 | 22 | 0.21.0 | Consolidation and measurement — truthful error taxonomy, first at-scale profile |
 | 23 | 0.21.1–0.21.3 | Measured performance — maintenance-delete batching, query execution redesign |
 
+## Versioning
+
+`localcache` follows [Semantic Versioning 2.0.0](https://semver.org/). A patch release holds bug fixes only. A minor release adds
+backward-compatible functionality. A major release is incompatible. While the major version is 0, SemVer allows anything to change,
+so a breaking change takes a minor bump and is announced in the release before it. v0.21.5 added API in a patch release, which
+this policy does not allow; it breaks nothing and stands as published.
+
 ## Phase 24 — Correctness, Contracts, and API Consistency (in progress)
 
 **Authorized by the owner 2026-09-23**, immediately after Phase 23 closed. RFC 022 (accepted the
