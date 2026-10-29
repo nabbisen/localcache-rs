@@ -29,6 +29,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     `remove` and `explain` already require the exact stored spelling after deletion. An existing
     directory is canonicalized to its on-disk casing first, so it is unaffected on case-insensitive
     filesystems.
+- A rejected configuration no longer leaves anything behind (RFC 025 Amendment 1). `CacheEngine::open`
+  checked the encryption key's length only after it had created the database file, migrated an older
+  schema and switched the journal mode, so `open` returned an error and the file existed, was already
+  at the current schema, and was in a different journal mode. Every check that needs only the options
+  now runs first, in `CacheEngine::open`, the builder's `build` and `build_read_pool`,
+  `AsyncCacheEngine::open`, `SyncCacheEngine::open` and `ReadPool::open`. The error is unchanged;
+  only the side effects before it are gone, and no input that was accepted is now rejected.
 
 ### Documentation
 
@@ -44,6 +51,14 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `Arc`.
 - The performance page was rebuilt from one profile session (10k, 100k and 1M entries, 147-character
   stored paths, five query repeats): `path_in_dir` is now flat.
+
+### Internal
+
+- The schema version is written once (`CURRENT_VERSION` in `db/schema.rs`); the pragma, the
+  postcondition message and the version checks read it, and one test pins its value, so raising it is
+  a deliberate edit.
+- The library denies `clippy::unwrap_used` outside tests (`#![cfg_attr(not(test), deny(clippy::unwrap_used))]`).
+  The two `unwrap()` calls in `explain` were restructured; behaviour is unchanged.
 
 ### Known issues
 

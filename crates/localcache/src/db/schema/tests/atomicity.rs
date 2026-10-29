@@ -6,6 +6,7 @@ use tempfile::TempDir;
 use crate::LocalFileCacheError;
 
 use super::super::{
+    CURRENT_VERSION,
     classifier::{self, SchemaState},
     initialize, initialize_with_hook,
     migration::MigrationPoint,
@@ -64,7 +65,10 @@ fn every_required_failpoint_rolls_back_and_retry_succeeds() {
         assert!(outcome.schema_migration_committed);
         assert!(matches!(
             classifier::classify(&conn, classifier::read_user_version(&conn).unwrap()).unwrap(),
-            SchemaState::Version { version: 5, .. }
+            SchemaState::Version {
+                version: CURRENT_VERSION,
+                ..
+            }
         ));
         assert_eq!(
             conn.query_row(
@@ -160,7 +164,7 @@ fn authoritative_read_supersedes_stale_preliminary_version() {
     assert_eq!(first.total_changes(), first_changes);
     assert_eq!(
         classifier::read_user_version(&first).unwrap(),
-        5,
+        i64::from(CURRENT_VERSION),
         "the authoritative transaction must observe the concurrent migration"
     );
     assert_no_migration_objects(&first);

@@ -149,11 +149,13 @@ where
     pub fn open(options: CacheOptions) -> Result<Self, LocalFileCacheError> {
         let is_memory = is_memory_path(&options.database_path);
 
-        if options.read_only && is_memory {
-            return Err(LocalFileCacheError::UnsupportedFeature(
-                "read-only mode does not support in-memory databases".into(),
-            ));
-        }
+        // Every check that needs only `options` runs before the first side
+        // effect below: creating the file, opening a connection, migrating,
+        // changing a pragma (RFC 025 Amendment 1).
+        #[cfg(feature = "encryption")]
+        let encryption_key = check_configuration(&options, is_memory)?;
+        #[cfg(not(feature = "encryption"))]
+        check_configuration(&options, is_memory)?;
 
         // `shared_cache` on a file-backed database implies read-only.
         // On `:memory:` it opens a named shared in-memory database in
@@ -220,20 +222,6 @@ where
             #[cfg(not(feature = "compression"))]
             {
                 false
-            }
-        };
-
-        #[cfg(feature = "encryption")]
-        let encryption_key: Option<[u8; 32]> = match options.encryption_key {
-            None => None,
-            Some(ref k) => {
-                let arr: [u8; 32] = k.as_slice().try_into().map_err(|_| {
-                    LocalFileCacheError::UnsupportedFeature(format!(
-                        "encryption key must be exactly 32 bytes, got {}",
-                        k.len()
-                    ))
-                })?;
-                Some(arr)
             }
         };
 
@@ -1336,6 +1324,49 @@ pub(crate) fn ttl_remaining(now: i64, updated_at: i64, ttl: Option<Duration>) ->
 
 pub(crate) fn is_expired(updated_at: i64, ttl: Option<Duration>) -> bool {
     ttl_remaining(repository::now_secs(), updated_at, ttl) == Some(0)
+}
+
+/// What [`check_configuration`] derives from the options and `open` keeps.
+#[cfg(feature = "encryption")]
+type CheckedConfiguration = Option<[u8; 32]>;
+#[cfg(not(feature = "encryption"))]
+type CheckedConfiguration = ();
+
+/// The configuration checks that need nothing but `options`.
+///
+/// `open` calls this before it creates a file, opens a connection, migrates
+/// or changes a pragma, so a rejected configuration leaves the filesystem and
+/// the database as they were (RFC 025 Amendment 1). Checks that need the
+/// connection, such as read-only schema validation, stay with the connection.
+fn check_configuration(
+    options: &CacheOptions,
+    is_memory: bool,
+) -> Result<CheckedConfiguration, LocalFileCacheError> {
+    if options.read_only && is_memory {
+        return Err(LocalFileCacheError::UnsupportedFeature(
+            "read-only mode does not support in-memory databases".into(),
+        ));
+    }
+
+    #[cfg(feature = "encryption")]
+    {
+        match options.encryption_key {
+            None => Ok(None),
+            Some(ref k) => {
+                let arr: [u8; 32] = k.as_slice().try_into().map_err(|_| {
+                    LocalFileCacheError::UnsupportedFeature(format!(
+                        "encryption key must be exactly 32 bytes, got {}",
+                        k.len()
+                    ))
+                })?;
+                Ok(Some(arr))
+            }
+        }
+    }
+    #[cfg(not(feature = "encryption"))]
+    {
+        Ok(())
+    }
 }
 
 /// Percent-encode the characters that are significant inside a SQLite

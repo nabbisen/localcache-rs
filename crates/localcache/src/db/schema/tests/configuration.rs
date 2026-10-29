@@ -6,7 +6,8 @@ use tempfile::TempDir;
 use crate::{JournalMode, SynchronousMode};
 
 use super::super::{
-    apply_runtime_configuration, configuration as runtime_configuration, initialize,
+    CURRENT_VERSION, apply_runtime_configuration, configuration as runtime_configuration,
+    initialize,
 };
 use super::helpers::{open_v1, snapshot_v1};
 
@@ -142,7 +143,7 @@ fn post_commit_configuration_error_reports_stable_recovery_fields() {
     assert_eq!(
         conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        5
+        i64::from(CURRENT_VERSION)
     );
 }
 
@@ -212,6 +213,6 @@ fn journal_failure_after_synchronous_change_reports_committed_state() {
     assert_eq!(
         conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        5
+        i64::from(CURRENT_VERSION)
     );
 }

@@ -11,7 +11,9 @@ mod migration;
 use classifier::SchemaState;
 use migration::{MigrationPoint, StartingSnapshot};
 
-const CURRENT_VERSION: i64 = 5;
+/// The one place the current schema version is written. The classifier and the
+/// migration code reach it as `super::CURRENT_VERSION`.
+const CURRENT_VERSION: u8 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct InitializationOutcome {
@@ -46,7 +48,10 @@ pub(crate) fn validate_read_only(conn: &mut Connection) -> Result<(), LocalFileC
     let transaction = conn.transaction_with_behavior(TransactionBehavior::Deferred)?;
     let physical_version = classifier::read_user_version(&transaction)?;
     match classifier::classify(&transaction, physical_version)? {
-        SchemaState::Version { version: 5, .. } => transaction.commit()?,
+        SchemaState::Version {
+            version: CURRENT_VERSION,
+            ..
+        } => transaction.commit()?,
         SchemaState::Fresh | SchemaState::Version { .. } => {
             return Err(LocalFileCacheError::UnsupportedFeature(
                 "read-only open requires the current database schema; initialization or migration is not permitted; database was not modified"
@@ -67,13 +72,13 @@ fn initialize_with_hook(
     let preliminary_version = classifier::read_user_version(conn)?;
     hook(MigrationPoint::AfterPreliminaryVersionRead)?;
 
-    if preliminary_version == CURRENT_VERSION {
+    if preliminary_version == i64::from(CURRENT_VERSION) {
         validate_current_read_snapshot(conn)?;
         return Ok(InitializationOutcome {
             schema_migration_committed: false,
         });
     }
-    if !(0..CURRENT_VERSION).contains(&preliminary_version) {
+    if !(0..i64::from(CURRENT_VERSION)).contains(&preliminary_version) {
         // Reuse the classifier's stable fail-closed error contract.
         classifier::classify(conn, preliminary_version)?;
         unreachable!("unsupported version unexpectedly classified")
@@ -88,7 +93,13 @@ fn initialize_with_hook(
     let state = classifier::classify(&transaction, authoritative_version)?;
     hook(MigrationPoint::AfterAuthoritativeClassification)?;
 
-    if matches!(state, SchemaState::Version { version: 5, .. }) {
+    if matches!(
+        state,
+        SchemaState::Version {
+            version: CURRENT_VERSION,
+            ..
+        }
+    ) {
         hook(MigrationPoint::ImmediatelyBeforeCommit)?;
         transaction.commit()?;
         return Ok(InitializationOutcome {
@@ -125,7 +136,7 @@ fn initialize_with_hook(
         }
     }
 
-    transaction.execute_batch("PRAGMA user_version = 5;")?;
+    transaction.execute_batch(&format!("PRAGMA user_version = {CURRENT_VERSION};"))?;
     hook(MigrationPoint::AfterFinalUserVersionWrite)?;
 
     snapshot.validate_and_remove(&transaction)?;
@@ -143,7 +154,10 @@ fn validate_current_read_snapshot(conn: &mut Connection) -> Result<(), LocalFile
     let transaction = conn.transaction_with_behavior(TransactionBehavior::Deferred)?;
     let version = classifier::read_user_version(&transaction)?;
     match classifier::classify(&transaction, version)? {
-        SchemaState::Version { version: 5, .. } => transaction.commit()?,
+        SchemaState::Version {
+            version: CURRENT_VERSION,
+            ..
+        } => transaction.commit()?,
         _ => {
             return Err(LocalFileCacheError::UnsupportedFeature(
                 "database changed while current schema was being validated; database was not modified"

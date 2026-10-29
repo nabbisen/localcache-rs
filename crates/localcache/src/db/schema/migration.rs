@@ -4,6 +4,7 @@ use rusqlite::{Transaction, params};
 
 use crate::error::LocalFileCacheError;
 
+use super::CURRENT_VERSION;
 use super::classifier::{self, SchemaState};
 
 const MTIME_SECONDS_MIN: i64 = -9_223_372_036;
@@ -390,8 +391,13 @@ pub(super) fn validate_final_postconditions(
 ) -> Result<(), LocalFileCacheError> {
     let version = classifier::read_user_version(transaction)?;
     match classifier::classify(transaction, version)? {
-        SchemaState::Version { version: 5, .. } => Ok(()),
-        _ => Err(migration_invariant("final schema is not exact version 5")),
+        SchemaState::Version {
+            version: CURRENT_VERSION,
+            ..
+        } => Ok(()),
+        _ => Err(migration_invariant(&format!(
+            "final schema is not exact version {CURRENT_VERSION}"
+        ))),
     }
 }
 

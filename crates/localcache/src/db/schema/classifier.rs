@@ -7,7 +7,7 @@ use rusqlite::{Connection, OptionalExtension, types::Value};
 use crate::db::indexes::{main_file_indexes, main_index_xinfo, validate_index_terms};
 use crate::error::LocalFileCacheError;
 
-const CURRENT_VERSION: i64 = 5;
+use super::CURRENT_VERSION;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SchemaState {
@@ -48,7 +48,7 @@ pub(super) fn classify(
     conn: &Connection,
     physical_version: i64,
 ) -> Result<SchemaState, LocalFileCacheError> {
-    if !(0..=CURRENT_VERSION).contains(&physical_version) {
+    if !(0..=i64::from(CURRENT_VERSION)).contains(&physical_version) {
         return Err(unrecognized(physical_version, "unsupported schema version"));
     }
 

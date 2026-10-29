@@ -55,9 +55,7 @@ where
         let canonical = resolved.path();
         let entry_row = repository::find_file(&self.conn, &self.namespace, resolved.key())?;
 
-        let entry_exists = entry_row.is_some();
-
-        if !entry_exists {
+        let Some(row) = entry_row else {
             return Ok(Diagnosis {
                 path: canonical.to_path_buf(),
                 status: CacheStatus::Missing,
@@ -73,9 +71,7 @@ where
                     "File does not exist on disk and has no cache entry.".into()
                 },
             });
-        }
-
-        let row = entry_row.unwrap();
+        };
 
         // TTL check: `now` is the one instant this call uses, and both the
         // reported remaining time and the expired flag come from
@@ -128,6 +124,18 @@ where
         // Overall status.
         let status = self.check_status_at(path, now)?;
 
+        // What differs in the metadata, if anything. `None` covers both "the
+        // file is gone" and "mtime and size both match".
+        let metadata_change =
+            metadata_diff
+                .as_ref()
+                .and_then(|d| match (d.mtime_changed, d.size_changed) {
+                    (true, true) => Some("Both mtime and file_size differ."),
+                    (true, false) => Some("mtime changed; file_size unchanged."),
+                    (false, true) => Some("file_size changed; mtime unchanged."),
+                    (false, false) => None,
+                });
+
         // Build summary.
         let summary = if !file_exists {
             "Source file no longer exists on disk.".into()
@@ -141,18 +149,8 @@ where
                 "Payload version mismatch: stored={}, expected={}.",
                 row.payload_version, self.payload_version
             )
-        } else if metadata_diff
-            .as_ref()
-            .map(|d| d.mtime_changed || d.size_changed)
-            .unwrap_or(false)
-        {
-            let d = metadata_diff.as_ref().unwrap();
-            match (d.mtime_changed, d.size_changed) {
-                (true, true) => "Both mtime and file_size differ.".into(),
-                (true, false) => "mtime changed; file_size unchanged.".into(),
-                (false, true) => "file_size changed; mtime unchanged.".into(),
-                (false, false) => unreachable!(),
-            }
+        } else if let Some(change) = metadata_change {
+            change.into()
         } else if hash_match == Some(false) {
             "File content changed (hash mismatch).".into()
         } else {
@@ -162,7 +160,7 @@ where
         Ok(Diagnosis {
             path: canonical.to_path_buf(),
             status,
-            entry_exists,
+            entry_exists: true,
             file_exists,
             ttl_remaining_secs,
             hash_match,
