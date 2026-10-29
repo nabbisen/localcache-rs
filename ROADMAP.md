@@ -1591,6 +1591,14 @@ only scheduled workflow, so nothing ran it between 2026-10-16 and 2026-10-29.
    the same day). `open` validates before any side effect, one schema-version constant, and a lint
    against `unwrap()` in library code. Q8 follows Q7.
 
+**Q6 is complete** (`35bfa38`, local; review 029, Approved). The lockfile is byte-identical to the
+architect's reproduction, the gate exits 0 (`denied=0`), the four locked MSRV rows and the fresh
+resolution pass on 1.85.0 (the fresh run resolved `tokio` 1.54.1 and `zstd` 0.14.3), and 516 tests
+pass. The dev team's reading of `zstd` 0.13.3 corrected the architect's "none reachable": the crate
+calls none of the affected functions, but `encode_all`/`decode_all` reach three affected names
+internally, and each advisory's precondition does not occur. The CHANGELOG says so. Next: the push,
+CI on the exact tip, one dispatch each of `advisories.yaml` and `msrv-fresh.yaml`, then the RC run.
+
 **Dev-team startup review, 2026-10-29**
 (`.git-exclude/reviewed/027-architect-dev-restart-onboarding-review-2026-10-29.md`): approved. Two
 findings are real and now scheduled. RFC 025 R4 missed two CLI construction sites of
