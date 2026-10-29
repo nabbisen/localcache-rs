@@ -149,7 +149,8 @@ struct PurgeVersionArgs {
 
 #[derive(Args)]
 struct ScanArgs {
-    /// Directory to scan.
+    /// Directory to scan. Symbolic links are not followed: a symlinked file
+    /// or directory is neither listed nor descended into.
     directory: PathBuf,
 
     /// Descend into subdirectories.
@@ -244,6 +245,7 @@ struct MigrateArgs {
 struct QueryArgs {
     /// SQL LIKE pattern matched against stored paths.
     /// Use `%` for any sequence, `_` for one character.
+    /// ASCII letters match case-insensitively.
     /// Example: `%/docs/%`
     /// `\` is the escape character: write a literal `%`, `_`, or `\` as
     /// `\%`, `\_`, or `\\` (this matters for Windows paths).

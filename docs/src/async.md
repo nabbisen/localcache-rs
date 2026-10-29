@@ -93,16 +93,16 @@ Rayon workers) where you don't want an async runtime, use `SyncCacheEngine` — 
 behind a mutex, the synchronous counterpart of `AsyncCacheEngine`:
 
 ```rust
-use std::{sync::Arc, thread};
+use std::thread;
 use localcache::{SyncCacheEngine, CacheOptions};
 
-let engine = Arc::new(SyncCacheEngine::<Vec<f32>>::open(CacheOptions {
+let engine = SyncCacheEngine::<Vec<f32>>::open(CacheOptions {
     database_path: "cache.sqlite3".into(),
     ..Default::default()
-})?);
+})?;
 
 let handles: Vec<_> = (0..8).map(|_| {
-    let engine = Arc::clone(&engine);
+    let engine = engine.clone();
     thread::spawn(move || {
         let _ = engine.get_if_fresh("some_file.txt");
     })

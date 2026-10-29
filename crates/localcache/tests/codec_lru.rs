@@ -308,6 +308,37 @@ fn scan_dir_filtered_by_extension() {
     assert!(!paths.iter().any(|p| p == &rs));
 }
 
+/// The rustdoc and the book say symlinks are skipped; this pins it.
+#[cfg(unix)]
+#[test]
+fn scan_dir_skips_symlinked_files_and_directories() {
+    let dir = TempDir::new().unwrap();
+    let outside = dir.path().join("outside");
+    let root = dir.path().join("root");
+    fs::create_dir(&outside).unwrap();
+    fs::create_dir(&root).unwrap();
+    fs::write(outside.join("hidden.txt"), b"h").unwrap();
+    fs::write(outside.join("target.txt"), b"t").unwrap();
+    fs::write(root.join("real.txt"), b"r").unwrap();
+    std::os::unix::fs::symlink(outside.join("target.txt"), root.join("link.txt")).unwrap();
+    std::os::unix::fs::symlink(&outside, root.join("linkdir")).unwrap();
+
+    let engine: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
+        database_path: ":memory:".into(),
+        ..CacheOptions::default()
+    })
+    .unwrap();
+
+    for recursive in [false, true] {
+        let results = engine.scan_dir(&root, recursive).unwrap();
+        let names: Vec<_> = results
+            .iter()
+            .map(|(p, _)| p.file_name().unwrap().to_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(names, vec!["real.txt"], "recursive = {recursive}");
+    }
+}
+
 #[test]
 fn scan_dir_filtered_max_depth() {
     let dir = TempDir::new().unwrap();

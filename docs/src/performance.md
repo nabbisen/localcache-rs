@@ -6,8 +6,8 @@ not scale.
 > **How to read these numbers.** They come from a single host — Linux x86_64,
 > release profile, database on **real storage (btrfs on a LUKS-encrypted volume)**,
 > entries stored at **147-character absolute paths**, with every entry in **one
-> namespace** and the JSON codec. All figures below come from one profile run at one
-> path length — see "Limits of these numbers" for why that matters. Treat the
+> namespace** and the JSON codec. All figures below come from one profile session at
+> one path length — see "Limits of these numbers" for why that matters. Treat the
 > **shape** of each curve as the finding and the absolute figures as indicative.
 > Your hardware, storage, path depth, and namespace layout will shift the
 > constants.
@@ -30,6 +30,8 @@ not scale.
   entries is about 1.2 GB. Shorter or longer stored paths shift this — see below.
 - **In `path_glob`, start the pattern with a literal.** A leading literal stays flat
   at any size; a leading `*` grows with the namespace.
+- **`path_in_dir` is flat too.** It is answered by a range on the stored path, so its
+  cost follows the size of the directory's subtree, not of the namespace.
 - **A JSON field query sorted by `SortKey::Field` is the most expensive query shape** —
   roughly 2.1 seconds per million entries, even with a small `limit`, because
   every candidate's field must still be extracted.
@@ -38,27 +40,31 @@ not scale.
 
 ## Measured scaling
 
-Time per operation at three namespace sizes, from one profile run at a
+Time per operation at three namespace sizes, from one profile session at a
 **147-character** stored path:
 
 | Operation | 10k | 100k | 1M | Growth |
 |---|---|---|---|---|
-| `get` (warm hit) | 9.84 µs | 10.76 µs | 10.22 µs | **flat** |
-| `get_if_fresh` (metadata mode) | 10.25 µs | 10.77 µs | 10.69 µs | **flat** |
-| `path_glob`, leading literal | 1.40 ms | 1.59 ms | 1.46 ms | **flat** |
-| `batch_set`, per entry | 15.05 µs | 15.43 µs | 15.34 µs | flat per entry |
-| **`limit(25)`, no field predicate** | 2.17 ms | 23.5 ms | **216 ms** | ~100× |
-| `cleanup_missing_files` (10% absent) | 11.4 ms | 134 ms | 1.23 s | linear |
-| `cleanup_expired` (whole namespace) | 46.4 ms | 630 ms | 5.81 s | linear |
-| LRU eviction, per evicted entry | 5.17 µs | 4.08 µs | 4.15 µs | flat per entry |
-| `path_in_dir`, non-recursive | 2.63 ms | 15.6 ms | 120 ms | ~46× |
-| `path_glob`, **leading wildcard** | 2.40 ms | 13.0 ms | 108 ms | ~45× |
-| `field_gt` + sort by `SortKey::Field` + `limit 25` | 21.7 ms | 224 ms | **2.11 s** | **~98×** |
+| `get` (warm hit) | 9.19 µs | 9.47 µs | 9.58 µs | **flat** |
+| `get_if_fresh` (metadata mode) | 9.57 µs | 9.88 µs | 9.91 µs | **flat** |
+| `path_glob`, leading literal | 1.32 ms | 1.35 ms | 1.54 ms | **flat** |
+| `batch_set`, per entry | 19.6 µs | 18.4 µs | 25.2 µs | roughly flat per entry |
+| **`limit(25)`, no field predicate** | 1.71 ms | 19.2 ms | **198 ms** | ~116× |
+| `cleanup_missing_files` (10% absent) | 9.07 ms | 135 ms | 1.40 s | linear |
+| `cleanup_expired` (whole namespace) | 82.6 ms | 1.08 s | 6.99 s | linear |
+| LRU eviction, per evicted entry | 8.17 µs | 4.98 µs | 6.29 µs | flat per entry |
+| `path_in_dir`, non-recursive | 1.46 ms | 1.58 ms | 1.78 ms | **flat** |
+| `path_glob`, **leading wildcard** | 2.29 ms | 11.9 ms | 105 ms | ~46× |
+| `field_gt` + sort by `SortKey::Field` + `limit 25` | 20.4 ms | 208 ms | **2.10 s** | **~103×** |
 
-The `limit(25)` row is new — see "Why a `limit`-only query is not flat" below for
-why it grows with the namespace despite never decoding more than 25 payloads. The
-1M figures for it and for the `field_gt` row are the median of three repeats
-(spread 1.08× and 1.01×); every other figure above is a single run.
+`path_in_dir` was ~46× (2.63 ms to 120 ms) in releases up to v0.21.5, which matched case-insensitively
+and scanned the whole namespace; v0.21.6 answers it with a range on the stored path, so its time
+follows the directory's subtree (1000 rows at every size here). See "Why glob prefixes matter".
+
+The five query rows are the median of five repeats of the whole-namespace query block (spread at
+1M: `limit(25)` 1.10×, `field_gt` 1.01×, `path_in_dir` 1.04×). Every other figure above is a single
+run, and the `batch_set`, `cleanup_*` and eviction rows in particular move by tens of percent between
+sessions (see "Limits of these numbers").
 
 Storage grows at roughly **1247 / 1281 / 1292 bytes per entry** at the three sizes
 above, at this run's 147-character path length, including the payload, path, and
@@ -111,7 +117,7 @@ and re-serializing (that cost is gone), but via SQLite's own `json_extract`. Tha
 function is not a streaming parser: it parses the whole stored JSON document on
 every call, regardless of where the target field sits in it, so its cost scales
 with the number of candidates the same way the plain scan above does. That is why
-the `limit`-only row and this row grow at almost the same rate (~100× and ~98×)
+the `limit`-only row and this row grow at almost the same rate (~116× and ~103×)
 despite a very different cost per row — and why a small `limit` does not reduce
 the work here either: every candidate's field has to be extracted and compared
 before the winners are known.
@@ -141,7 +147,8 @@ SEARCH main.files USING COVERING INDEX idx_files_namespace_path (namespace=? AND
 ```
 
 A leading wildcard cannot, so the pattern is tested against every entry in the
-namespace.
+namespace. `path_in_dir` uses the same kind of range: its plan is
+`(namespace=? AND path>? AND path<?)` for both the recursive and the non-recursive form.
 
 ```rust
 // Flat regardless of cache size — the literal prefix bounds the scan.
@@ -153,13 +160,14 @@ engine.query().path_glob("*/embeddings/*.json").run()?;
 
 Both returned the same 1000 rows in the measurements above; the only difference is
 the prefix. At ten thousand entries the wildcard is already 1.7× the literal's
-time, growing to 74× at a million — easy to miss in a small test, and severe at
+time, growing to 68× at a million — easy to miss in a small test, and severe at
 scale.
 
 ## Namespaces are the main scaling lever
 
-Every operation whose plan narrows by `namespace=?` scans the whole namespace. The
-measurements above are the pessimistic case because they place all entries in one.
+Every operation whose plan narrows only by `namespace=?` scans the whole namespace (a
+`limit`-only query, a leading-wildcard glob, a field query). The measurements above are
+the pessimistic case because they place all entries in one.
 Splitting unrelated data across namespaces makes that predicate do real work and is
 the cheapest structural improvement available.
 
@@ -169,15 +177,16 @@ the cheapest structural improvement available.
   filesystem events, not one-shot timing — a fundamentally different harness shape
   from everything else on this page.
 - **Async-runtime backends under concurrent load.** `ReadPool` under 8 threads was
-  measured (aggregate ~5.4 µs/call at 1M); tokio, async-std, and smol under
+  measured (aggregate ~2.6 µs/call at 1M); tokio, async-std, and smol under
   concurrent access were not.
 
 Two more operations have been measured, as single-run figures — treat them as
 indicative, not as precise as the replicated table above:
 
-- `preload` costs roughly **83.7 µs per entry** at 1M, at this run's 147-character
+- `preload` costs roughly **235 µs per entry** at 1M, at this session's 147-character
   path length (a directory scan plus a `stat` and a factory call per file, so it
-  costs more than `batch_set`, which accepts pre-built payloads).
+  costs more than `batch_set`, which accepts pre-built payloads). An earlier session
+  measured about 84 µs at a 152-character path, and the difference is not explained.
 - A cold `CacheEngine::open` against an existing 1M-entry database — the cost a
   process pays on start, with the page cache empty — measured **roughly 0.6–0.8
   seconds** across two runs. Not re-measured this pass; from an earlier run at a

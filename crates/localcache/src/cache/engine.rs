@@ -665,6 +665,10 @@ where
     // Directory scan
     // ------------------------------------------------------------------
 
+    /// Scan `dir` and return each file's path and cache status.
+    ///
+    /// Symbolic links are not followed: a symlinked file or a symlinked
+    /// directory is neither listed nor descended into.
     pub fn scan_dir<P: AsRef<Path>>(
         &self,
         dir: P,
@@ -684,6 +688,9 @@ where
     /// Supports extension filtering, `max_depth`, and case-sensitive glob
     /// patterns on file names (`*`, `?`, and nested/multiple `{a,b}` groups).
     /// Wildcards operate on Unicode scalar values on every platform.
+    ///
+    /// Symbolic links are not followed: a symlinked file or a symlinked
+    /// directory is neither listed nor descended into.
     pub fn scan_dir_filtered<P: AsRef<Path>>(
         &self,
         dir: P,
@@ -933,6 +940,9 @@ where
     /// files are processed.  Pass `force = true` to recompute every file
     /// regardless.
     ///
+    /// Symbolic links are not followed: a symlinked file or a symlinked
+    /// directory is neither visited nor descended into.
+    ///
     /// Returns a [`PreloadReport`] with counts of stored, skipped, and already
     /// fresh entries.
     ///
@@ -1088,7 +1098,8 @@ where
     /// path string (`%` matches any sequence, `_` matches one character).
     /// `\` is the pattern's escape character: a literal `%`, `_`, or `\`
     /// must be written as `\%`, `\_`, or `\\`. This matters for Windows
-    /// paths, whose separator is `\`.
+    /// paths, whose separator is `\`. As with SQL `LIKE`, ASCII letters match
+    /// **case-insensitively**.
     ///
     /// # Example
     ///

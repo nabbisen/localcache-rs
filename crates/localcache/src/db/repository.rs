@@ -11,6 +11,8 @@ use crate::detection::metadata::FileMetadata;
 use crate::error::LocalFileCacheError;
 
 mod candidates;
+#[cfg(test)]
+mod tests;
 #[cfg(feature = "json")]
 pub(crate) use candidates::{
     namespace_all_json, query_candidates_json_pushdown, query_candidates_with_payloads,
@@ -809,18 +811,27 @@ fn path_filter_clauses(
         params.push(pat.to_owned());
     }
 
-    // path_in_dir — exact prefix LIKE, optionally excluding sub-subdirectories.
+    // path_in_dir — an exact, binary-collated range on `path`, optionally
+    // excluding sub-subdirectories. `LIKE` is not used: it ignores ASCII case
+    // and cannot use the binary-collated index, so it returned case-variant
+    // directories and scanned the whole namespace (RFC 006 Erratum 1).
     if let Some((prefix, recursive)) = path_in_dir {
-        let escaped = escape_like(prefix);
-        // Recursive: all paths that start with the directory prefix.
-        clauses.push("path LIKE ? ESCAPE '\\'".to_owned());
-        params.push(format!("{escaped}%"));
+        // Recursive: every path in `[prefix, upper)`, i.e. every path that
+        // starts with the prefix. `upper` is the prefix with its last char
+        // (the separator, one ASCII byte) replaced by the next code point, so
+        // the bound is exact under byte-wise UTF-8 comparison.
+        clauses.push("path >= ? AND path < ?".to_owned());
+        params.push(prefix.to_owned());
+        params.push(range_upper_bound(prefix));
         if !recursive {
-            // Non-recursive: exclude paths that contain another separator
-            // after the prefix (i.e. paths deeper than one level).
-            let sep_esc = escape_like(std::path::MAIN_SEPARATOR_STR);
-            clauses.push("path NOT LIKE ? ESCAPE '\\'".to_owned());
-            params.push(format!("{escaped}%{sep_esc}%"));
+            // Non-recursive: the text after the prefix holds no further
+            // separator. `substr` and `instr` count characters on TEXT, so
+            // the offset is the prefix length in Unicode scalar values plus
+            // one. Every value is bound: the SQL text never varies with the
+            // directory.
+            clauses.push("instr(substr(path, CAST(? AS INTEGER)), ?) = 0".to_owned());
+            params.push((prefix.chars().count() + 1).to_string());
+            params.push(std::path::MAIN_SEPARATOR_STR.to_owned());
         }
     }
 
@@ -836,22 +847,18 @@ fn path_filter_clauses(
     (clauses, params)
 }
 
-/// Escape characters that are special in a SQL `LIKE` expression when using
-/// backslash as the `ESCAPE` character: `\`, `%`, `_`.
-///
-/// The result is safe to embed in a `LIKE` pattern where literal prefix/suffix
-/// characters must not act as wildcards.
-fn escape_like(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '\\' => out.push_str("\\\\"),
-            '%' => out.push_str("\\%"),
-            '_' => out.push_str("\\_"),
-            c => out.push(c),
-        }
+/// The exclusive upper bound of the range of strings that start with `prefix`:
+/// `prefix` with its last character replaced by the next code point
+/// (`/` becomes `0`, `\` becomes `]`). `prefix` ends in a path separator, a
+/// single ASCII byte, so no carry and no surrogate gap can arise.
+fn range_upper_bound(prefix: &str) -> String {
+    let mut upper = prefix.to_owned();
+    if let Some(last) = upper.pop() {
+        // The successor of an ASCII separator is always a valid `char`; the
+        // fallback only keeps this function total, it is never taken.
+        upper.push(char::from_u32(u32::from(last) + 1).unwrap_or(char::MAX));
     }
-    out
+    upper
 }
 
 // ---------------------------------------------------------------------------

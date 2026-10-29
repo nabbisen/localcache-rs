@@ -114,6 +114,9 @@ Glob matching is case-sensitive on every platform. `*` and `?` operate on
 Unicode scalar values, and nested/multiple `{a,b}` alternatives are supported.
 Malformed or over-limit patterns produce an error without starting the scan.
 
+Symbolic links are not followed: a symlinked file or a symlinked directory is
+neither listed nor descended into.
+
 `list` truncates long paths at Unicode scalar boundaries. `inspect` renders
 file modification times as UTC nanoseconds with nine fractional digits;
 entry update/access times remain Unix-second timestamps.
@@ -123,7 +126,8 @@ entry update/access times remain Unix-second timestamps.
 List cached entries matching a SQL `LIKE` path pattern
 (`%` = any sequence, `_` = one character). `\` is the pattern's escape
 character: write a literal `%`, `_`, or `\` as `\%`, `\_`, or `\\` (this
-matters for Windows paths).
+matters for Windows paths). As with SQL `LIKE`, ASCII letters match
+case-insensitively.
 
 ```sh
 localcache -d cache.sqlite3 query --path-like "%/docs/%"

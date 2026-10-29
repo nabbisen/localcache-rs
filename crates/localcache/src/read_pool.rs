@@ -290,7 +290,8 @@ where
         self.checkout()?.explain(path)
     }
 
-    /// Return all cached paths, optionally filtered by a LIKE pattern.
+    /// Return all cached paths, optionally filtered by a LIKE pattern. As with
+    /// SQL `LIKE`, ASCII letters match case-insensitively.
     pub fn keys(&self, path_like: Option<&str>) -> Result<Vec<PathBuf>, LocalFileCacheError> {
         self.checkout()?.keys(path_like)
     }
@@ -331,6 +332,8 @@ where
     }
 
     /// Scan a directory and return each file's path and cache status.
+    /// Symbolic links are not followed: a symlinked file or directory is
+    /// neither listed nor descended into.
     pub fn scan_dir<P: AsRef<Path>>(
         &self,
         dir: P,
@@ -339,7 +342,9 @@ where
         self.checkout()?.scan_dir(dir, recursive)
     }
 
-    /// Scan with extension, glob, and depth filters.
+    /// Scan with extension, glob, and depth filters. Symbolic links are not
+    /// followed: a symlinked file or directory is neither listed nor descended
+    /// into.
     pub fn scan_dir_filtered<P: AsRef<Path>>(
         &self,
         dir: P,

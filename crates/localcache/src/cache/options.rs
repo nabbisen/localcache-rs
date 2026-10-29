@@ -88,6 +88,9 @@ pub enum SynchronousMode {
 // ---------------------------------------------------------------------------
 
 /// Options for [`crate::CacheEngine::scan_dir_filtered`].
+///
+/// Symbolic links are not followed: a symlinked file or a symlinked directory
+/// is neither listed nor descended into, whatever these options say.
 #[derive(Debug, Clone, Default)]
 pub struct ScanOptions {
     /// Descend into subdirectories.

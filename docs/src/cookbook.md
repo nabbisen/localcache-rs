@@ -42,9 +42,8 @@ Share one cache engine across Actix-web request handlers:
 ```rust
 use actix_web::{web, App, HttpServer};
 use localcache::{SyncCacheEngine, CacheOptions};
-use std::sync::Arc;
 
-type Pool = Arc<SyncCacheEngine<Vec<f32>>>;
+type Pool = SyncCacheEngine<Vec<f32>>;
 
 async fn handle(pool: web::Data<Pool>, path: web::Path<String>)
     -> impl actix_web::Responder
@@ -55,16 +54,14 @@ async fn handle(pool: web::Data<Pool>, path: web::Path<String>)
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    let pool = Arc::new(
-        SyncCacheEngine::<Vec<f32>>::open(CacheOptions {
-            database_path: "cache.sqlite3".into(),
-            ..Default::default()
-        }).unwrap()
-    );
+    let pool = SyncCacheEngine::<Vec<f32>>::open(CacheOptions {
+        database_path: "cache.sqlite3".into(),
+        ..Default::default()
+    }).unwrap();
 
     HttpServer::new(move || {
         App::new()
-            .app_data(web::Data::new(Arc::clone(&pool)))
+            .app_data(web::Data::new(pool.clone()))
             .route("/cache/{path}", web::get().to(handle))
     })
     .bind("0.0.0.0:8080")?
@@ -256,6 +253,7 @@ opentelemetry-stdout = { version = "0.32" }
 ```rust
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use opentelemetry::global;
+use opentelemetry::trace::TracerProvider as _;
 use tracing_subscriber::{layer::SubscriberExt, Registry};
 use tracing_opentelemetry::OpenTelemetryLayer;
 

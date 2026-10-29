@@ -31,7 +31,7 @@ let statuses = engine.check_status_batch(&paths);
 // All stored paths, sorted alphabetically.
 let paths: Vec<PathBuf> = engine.keys(None)?;
 
-// Filter with a SQL LIKE pattern.
+// Filter with a SQL LIKE pattern (ASCII letters match case-insensitively).
 let docs = engine.keys(Some("/data/docs/%"))?;
 
 // Full metadata for all entries (no payload loaded).
@@ -75,8 +75,8 @@ let results = engine.query()
 
 | Method | Description |
 |---|---|
-| `.path_like(pattern)` | SQL `LIKE` pattern on stored path (`%` = any sequence, `_` = one char) |
-| `.path_in_dir(dir, recursive)` | Exact directory scoping — no over-fetch, metacharacter-safe |
+| `.path_like(pattern)` | SQL `LIKE` pattern on stored path (`%` = any sequence, `_` = one char); ASCII letters match case-insensitively |
+| `.path_in_dir(dir, recursive)` | Exact, case-sensitive directory scoping — an index range on the path, metacharacter-safe |
 | `.path_glob(pattern)` | Case-sensitive Unicode-scalar glob on stored path: `*`, `?`, nested/multiple `{a,b}` alternatives |
 | `.dry_run()` | Return `EXPLAIN QUERY PLAN` output, plus which execution path `run()` would take, without loading payloads |
 

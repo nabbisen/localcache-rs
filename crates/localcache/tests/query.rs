@@ -1529,6 +1529,81 @@ mod rfc006_dir_predicates {
         assert!(results.is_empty());
     }
 
+    // ── path_in_dir is exact and case-sensitive (RFC 006 Erratum 1) ───────
+
+    #[test]
+    fn path_in_dir_does_not_return_case_variant_directories() {
+        let dir = TempDir::new().unwrap();
+        let upper = dir.path().join("Docs");
+        let lower = dir.path().join("docs");
+        fs::create_dir(&upper).unwrap();
+        // A case-folding filesystem makes `docs` the same directory as `Docs`;
+        // there is no second directory to tell apart, so the test has no subject.
+        if fs::create_dir(&lower).is_err() || !upper.exists() || fs::read_dir(&upper).is_err() {
+            return;
+        }
+        let a = write_file_at(&upper, "a.txt", b"a");
+        let b = write_file_at(&lower, "b.txt", b"b");
+        if a.canonicalize().unwrap().parent() == b.canonicalize().unwrap().parent() {
+            return;
+        }
+
+        let engine: CacheEngine<Vec<f32>> = CacheEngine::builder()
+            .database(dir.path().join("case.sqlite3"))
+            .build()
+            .unwrap();
+        engine.set(&a, &vec![1.0]).unwrap();
+        engine.set(&b, &vec![2.0]).unwrap();
+
+        for recursive in [false, true] {
+            let results = engine.query().path_in_dir(&upper, recursive).run().unwrap();
+            assert_eq!(
+                sorted_paths(results),
+                vec![a.canonicalize().unwrap()],
+                "recursive = {recursive}"
+            );
+        }
+    }
+
+    #[test]
+    fn path_in_dir_for_a_deleted_directory_needs_the_stored_spelling() {
+        let dir = TempDir::new().unwrap();
+        let gone = dir.path().join("Gone");
+        fs::create_dir(&gone).unwrap();
+        let f = write_file_at(&gone, "x.txt", b"x");
+        let engine: CacheEngine<Vec<f32>> = CacheEngine::builder()
+            .database(dir.path().join("gone.sqlite3"))
+            .build()
+            .unwrap();
+        engine.set(&f, &vec![1.0]).unwrap();
+        let stored = engine.keys(None).unwrap();
+        assert_eq!(stored.len(), 1);
+
+        fs::remove_file(&f).unwrap();
+        fs::remove_dir(&gone).unwrap();
+
+        // The directory no longer exists, so the path is used as written: the
+        // stored spelling matches, a different ASCII casing does not.
+        let exact = stored[0].parent().unwrap().to_path_buf();
+        for recursive in [false, true] {
+            let count = |d: &std::path::Path| {
+                engine
+                    .query()
+                    .path_in_dir(d, recursive)
+                    .run()
+                    .unwrap()
+                    .len()
+            };
+            assert_eq!(count(&exact), 1, "exact spelling, recursive = {recursive}");
+            let other = exact.with_file_name("gone");
+            assert_eq!(
+                count(&other),
+                0,
+                "different casing, recursive = {recursive}"
+            );
+        }
+    }
+
     // ── path_glob ─────────────────────────────────────────────────────────
 
     #[test]
@@ -1612,7 +1687,7 @@ mod rfc006_dir_predicates {
             .path_in_dir(&fix.root, false)
             .dry_run()
             .unwrap();
-        // Plan must be non-empty — the LIKE clause shows up in the scan.
+        // Plan must be non-empty — the range on `path` shows up in the search.
         assert!(!plan.is_empty(), "dry_run must return a plan");
     }
 

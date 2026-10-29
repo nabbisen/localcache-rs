@@ -9,6 +9,49 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed
+
+- `QueryBuilder::path_in_dir` (RFC 006 Erratum 1) had two defects, both fixed without any change to a
+  signature, to the schema or to the stored format.
+  - It returned **case-variant directories**. It was built on SQL `LIKE`, which ignores ASCII case,
+    so on a case-sensitive filesystem `path_in_dir("…/Docs", …)` also returned the entries of
+    `…/docs` and `…/DOCS`, against its documented contract (a non-recursive match has a parent that
+    *equals* `dir`) and against the rule that path matching is case-sensitive. It now compares the
+    stored path as an exact string.
+  - It had **no index range**. `LIKE` cannot use the binary-collated `path` index, so every
+    `path_in_dir` query read the whole namespace. The query is now a range on `path`, in both the
+    recursive and the non-recursive form, and with `index_hint`. At 1M entries the non-recursive
+    query measured 128.0 ms before and 1.9 ms after, in a paired, interleaved comparison of v0.21.5
+    and this tree; the measured row no longer grows with the namespace.
+  - **Results change in exactly two cases.** (a) Case-variant directories on a case-sensitive
+    filesystem are no longer returned: that is the defect. (b) A directory that no longer exists,
+    queried with a different ASCII casing from its stored key, no longer matches. `get`, `contains`,
+    `remove` and `explain` already require the exact stored spelling after deletion. An existing
+    directory is canonicalized to its on-disk casing first, so it is unaffected on case-insensitive
+    filesystems.
+
+### Documentation
+
+- `path_like` and `keys(Some(pattern))` now say that ASCII letters match case-insensitively (SQL
+  `LIKE`), and that `path_in_dir` and `path_glob` are case-sensitive: rustdoc, the book, and the
+  `localcache query --path-like` help.
+- `scan_dir`, `scan_dir_filtered`, `preload`, `ScanOptions` and `localcache scan` now say that
+  symbolic links are not followed: a symlinked file or a symlinked directory is neither listed nor
+  descended into. This is the existing behaviour; a test now pins it.
+- Cookbook Recipe 9 gained the missing `use opentelemetry::trace::TracerProvider as _;`; it did not
+  compile against `opentelemetry` 0.32 without it.
+- Cookbook Recipe 2 and the async chapter no longer wrap the already-`Clone` `SyncCacheEngine` in an
+  `Arc`.
+- The performance page was rebuilt from one profile session (10k, 100k and 1M entries, 147-character
+  stored paths, five query repeats): `path_in_dir` is now flat.
+
+### Known issues
+
+- A `zstd`-compressed payload that expands very far makes `get` try to allocate that much memory and
+  can abort the process; this needs write access to the database or an export that is imported.
+  Reading an untrusted database read-only does not prevent it. A bounded decode with a configurable
+  limit and a typed error ships in v0.22.0.
+
 ---
 
 ## [0.21.5] — 2026-10-29

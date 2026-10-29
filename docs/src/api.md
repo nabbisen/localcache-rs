@@ -173,7 +173,9 @@ same read-only contract.
 
 ## `ScanOptions`
 
-Controls directory scanning in `scan_dir_filtered()` and `preload()`.
+Controls directory scanning in `scan_dir_filtered()` and `preload()`. Symbolic
+links are not followed: a symlinked file or a symlinked directory is neither
+listed nor descended into (`scan_dir` and `localcache scan` behave the same).
 
 ```rust
 ScanOptions {

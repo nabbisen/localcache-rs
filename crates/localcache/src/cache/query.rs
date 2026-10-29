@@ -280,6 +280,10 @@ where
 
     /// Restrict to entries whose stored path matches a SQL LIKE pattern.
     ///
+    /// As with SQL `LIKE`, ASCII letters match **case-insensitively**.
+    /// [`path_in_dir`](Self::path_in_dir) and [`path_glob`](Self::path_glob)
+    /// are case-sensitive.
+    ///
     /// `\` is the pattern's escape character: a literal `%`, `_`, or `\`
     /// must be written as `\%`, `\_`, or `\\`. This matters for Windows
     /// paths, whose separator is `\`.
@@ -298,8 +302,9 @@ where
     /// entries remain queryable. Other I/O failures propagate, and paths that
     /// cannot be represented as valid UTF-8 return `InvalidPath`.
     ///
-    /// Characters that are special in SQL `LIKE` (backslash, `%`, `_`) are
-    /// escaped automatically — directory names containing those characters
+    /// The match is an exact, **case-sensitive** comparison of the stored path
+    /// string, answered by an index range on `path`: `Docs` and `docs` are
+    /// different directories, and directory names containing `%`, `_` or `\`
     /// match **literally**.
     ///
     /// # Example
