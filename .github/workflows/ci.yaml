@@ -91,6 +91,69 @@ jobs:
       - name: Run matrix row (clippy -D warnings + test)
         run: python3 scripts/feature_matrix.py --run "${{ matrix.row }}"
 
+  # RFC 027 Q9a: the standard gates, beside the RFC 009 matrix above. They run
+  # the Makefile.toml tasks, so the local command is the CI command. Parity
+  # with the old gates is proven first; Q9b removes the old ones and adds these
+  # jobs to `release-gate`. Until then they are deliberately NOT in its `needs`.
+  # Same R16 posture as every job here: read-only, no secrets, pinned actions.
+  standard-gates:
+    name: Standard gates (feature matrix)
+    needs: source-integrity
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          components: clippy
+      - name: Cache cargo registry
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ubuntu-24.04-cargo-standard-gates-${{ hashFiles('**/Cargo.lock') }}
+      - name: Cache pinned gate tools
+        id: tools
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/bin/cargo-make
+            ~/.cargo/bin/cargo-hack
+          key: ubuntu-24.04-gate-tools-make-0.37.24-hack-0.6.45
+      - name: Install pinned gate tools
+        if: steps.tools.outputs.cache-hit != 'true'
+        run: |
+          cargo install cargo-make --version 0.37.24 --locked
+          cargo install cargo-hack --version 0.6.45 --locked
+      - name: Feature matrix (assertion, clippy, tests)
+        run: cargo make gate-features
+
+  standard-deny:
+    name: Standard gates (dependency security)
+    needs: source-integrity
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - name: Cache pinned gate tools
+        id: tools
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/bin/cargo-make
+            ~/.cargo/bin/cargo-deny
+          key: ubuntu-24.04-gate-tools-make-0.37.24-deny-0.20.2
+      - name: Install pinned gate tools
+        if: steps.tools.outputs.cache-hit != 'true'
+        run: |
+          cargo install cargo-make --version 0.37.24 --locked
+          cargo install cargo-deny --version 0.20.2 --locked
+      # Deliberately no advisory-database cache: a cached database would hide
+      # exactly what this gate exists to find. A failed fetch fails the job.
+      - name: cargo deny (advisories and sources, a stale ignore fails)
+        run: cargo make gate-deny
+
   bench-compile:
     name: Bench (compile-only)
     needs: source-integrity

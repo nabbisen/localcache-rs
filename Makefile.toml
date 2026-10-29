@@ -271,3 +271,67 @@ args = [
     "--output-dir",
     ".git-exclude/release-output",
 ]
+
+# ---------------------------------------------------------------------------
+# RFC 027 Q9a — standard gates, beside the RFC 009 gates above
+#
+# Each gate is the literal command; CI (`.github/workflows/ci.yaml`, job
+# "Standard gates") runs these same tasks. Q9b removes the RFC 009 gates they
+# replace. Pinned tools (installed with `cargo install <tool> --version <v>
+# --locked`): cargo-make 0.37.24, cargo-hack 0.6.45, cargo-deny 0.20.2.
+# ---------------------------------------------------------------------------
+
+[tasks.gate-features-assert]
+description = "Fail if a localcache Cargo feature is missing from the list the gate rows name"
+# Every library feature. `--each-feature` below covers each one alone; the two
+# suite rows combine the runtime features with the companions named in them.
+# Adding a feature means adding it here and deciding whether the suites need it.
+env = { GATE_LIBRARY_FEATURES = "async async-std smol compression json encryption tracing watching metrics opentelemetry" }
+script = [
+    '''
+    declared=$(python3 -c "import tomllib; print(*sorted(tomllib.load(open('crates/localcache/Cargo.toml','rb'))['features']))")
+    named=$(printf '%s\n' $GATE_LIBRARY_FEATURES | sort | tr '\n' ' ' | sed 's/ $//')
+    if [ "$declared" != "$named" ]; then
+        echo "ERROR: features declared in crates/localcache/Cargo.toml: $declared"
+        echo "       features the gate rows name:                       $named"
+        exit 1
+    fi
+    echo "OK: the gate rows name every localcache feature"
+    '''
+]
+
+[tasks.gate-clippy]
+description = "Clippy (-D warnings) on every feature row: library each-feature, the two runtime suites, the CLI"
+script = [
+    '''
+    set -e
+    cargo hack clippy -p localcache --each-feature --all-targets --locked -- -D warnings
+    cargo clippy -p localcache --all-targets --no-default-features --features async-std,compression,json,encryption,tracing,watching,metrics --locked -- -D warnings
+    cargo clippy -p localcache --all-targets --no-default-features --features smol,compression,json,encryption,tracing,watching,metrics --locked -- -D warnings
+    cargo clippy -p localcache-cli --all-targets --locked -- -D warnings
+    cargo clippy -p localcache-cli --all-targets --all-features --locked -- -D warnings
+    '''
+]
+
+[tasks.gate-test]
+description = "Tests on every feature row, and the workspace doctests"
+script = [
+    '''
+    set -e
+    cargo hack test -p localcache --each-feature --all-targets --locked
+    cargo test -p localcache --all-targets --no-default-features --features async-std,compression,json,encryption,tracing,watching,metrics --locked
+    cargo test -p localcache --all-targets --no-default-features --features smol,compression,json,encryption,tracing,watching,metrics --locked
+    cargo test -p localcache-cli --all-targets --locked
+    cargo test -p localcache-cli --all-targets --all-features --locked
+    cargo test --workspace --doc --all-features --locked
+    '''
+]
+
+[tasks.gate-features]
+description = "The feature matrix: assertion, clippy, tests"
+dependencies = ["gate-features-assert", "gate-clippy", "gate-test"]
+
+[tasks.gate-deny]
+description = "Dependency security: advisories and sources (deny.toml); a stale ignore fails"
+command = "cargo"
+args = ["deny", "--locked", "check", "-D", "advisory-not-detected", "advisories", "sources"]
