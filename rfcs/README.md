@@ -76,12 +76,11 @@ The "Background" section is optional in both templates.
 | [023](./accepted/023-msrv-policy.md) | MSRV Policy: When and How the Floor May Rise | policy (Phase 24 Q1); slices Q1a (docs, on push), Q1b (v0.21.5), Q1c (v0.22.0) |
 | [024](./accepted/024-api-consistency.md) | API Consistency: One Surface, Honest Names | Part A: slices Q2c, Q2a, Q2d, Q2e (v0.21.5); Part B: Q2f (v0.22.0) |
 | [025](./accepted/025-error-taxonomy-and-input-validation.md) | Error Taxonomy and Input Validation: Errors Callers Can Act On | Part A: slice Q3a (v0.21.5); Part B: Q3d, Q3b, Q3c, Q3e (v0.22.0) |
+| [027](./accepted/027-release-engineering-on-standard-tools.md) | Release Engineering on Standard Tools (amends RFC 009) | Phase 24 Q9 (Q9a, Q9b, Q9c); Q9c before the v0.22.0 release candidate |
 
 ### Proposed
 
-| RFC | Title | Target |
-|-----|-------|--------|
-| [027](./proposed/027-release-engineering-on-standard-tools.md) | Release Engineering on Standard Tools (amends RFC 009) | Phase 24 Q9, after v0.21.6 and before the v0.22.0 release candidate |
+*(none)*
 
 ### Archive
 

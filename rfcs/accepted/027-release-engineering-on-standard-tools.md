@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Proposed |
+| Status | Accepted (owner, 2026-10-29), with both requested decisions as recommended: Trusted Publishing behind an owner-approved `release` Environment (R5); a per-release `localcache-vX.Y.Z.tar.gz` kept as a plain `git archive` (R3) |
 | Feature | *(release engineering; no Cargo feature)* |
 | Touches | `scripts/`, `.github/workflows/`, `Makefile.toml`, `security/`, `deny.toml` (new), `docs/src/source_archives.md`, `docs/src/dependency_security.md`, `README.md` |
 | Amends | [RFC 009](../done/009-reproducible-source-archives-and-release-gates.md) (R3, R5, R6, R7, R12, R13, R14, R15: the mechanisms; their goals stand) and [RFC 017](../done/017-content-reproducible-archives-without-a-container-producer.md) |
@@ -176,10 +176,10 @@ exists.
 
 ## Decisions requested of the owner
 
-1. **Adopt Trusted Publishing** with an owner-approved `release` Environment (R5), or keep local publishing.
-   Recommended: adopt.
-2. **Is a per-release `localcache-vX.Y.Z.tar.gz` still a deliverable?** The README promises it. Recommended:
-   keep it, as a plain `git archive` attached to a GitHub Release by `release.yaml`, with an attestation.
+1. **Adopt Trusted Publishing** with an owner-approved `release` Environment (R5), or keep local
+   publishing. **Decided 2026-10-29: adopt.**
+2. **Is a per-release `localcache-vX.Y.Z.tar.gz` still a deliverable?** **Decided 2026-10-29: keep it**, as a
+   plain `git archive` attached to a GitHub Release by `release.yaml`, with an attestation.
 
 ## Open questions
 
