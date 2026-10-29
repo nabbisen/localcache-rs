@@ -79,7 +79,9 @@ The "Background" section is optional in both templates.
 
 ### Proposed
 
-*(none)*
+| RFC | Title | Target |
+|-----|-------|--------|
+| [027](./proposed/027-release-engineering-on-standard-tools.md) | Release Engineering on Standard Tools (amends RFC 009) | Phase 24 Q9, after v0.21.6 and before the v0.22.0 release candidate |
 
 ### Archive
 

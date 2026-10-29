@@ -1,0 +1,23 @@
+# Keeps the SHA-pinned third-party actions current (RFC 009 R16 requires the pins;
+# nothing else updated them, so they went stale silently until Q0j fixed one by hand).
+#
+# GitHub-Actions ecosystem only. Cargo dependency updates are deliberately not
+# enabled here: the dependency graph is governed by RFC 014 and RFC 023 (an MSRV
+# and `links` policy that an automatic bump would not know about). Security
+# alerts for Cargo dependencies come from Dependabot alerts, a repository setting.
+#
+# Every update arrives as a pull request. The architect reviews it: the new SHA
+# must be the commit of the tagged release named in the version comment.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore"
