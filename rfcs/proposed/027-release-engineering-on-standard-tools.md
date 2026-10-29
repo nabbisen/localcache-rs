@@ -81,7 +81,8 @@ truth") without a runner.
 ### R3 — The archive is `git archive` of the tag
 
 The project source archive is `git archive --format=tar.gz`, from the release tag, named
-`localcache-vX.Y.Z.tar.gz`, with files at the archive root (RFC 009 R4). The structured tar parser, the
+`localcache-vX.Y.Z.tar.gz`, with files at the archive root (RFC 009 R4). The `v` in the **archive file name** is RFC 009 R4's deliberate exception;
+tags and release names never have it. The structured tar parser, the
 export-manifest comparison and the hostile-archive fixtures (RFC 009 R5) are deleted: nothing untrusted
 produces or supplies the file. The extracted-archive smoke gate (R6) stays as **one CI job**: extract the
 archive into an empty directory, run `cargo metadata --locked`, `cargo check --workspace --all-targets
@@ -103,6 +104,9 @@ implementation shows which.
 A new `.github/workflows/release.yaml`:
 
 - **Trigger:** `workflow_dispatch` with the version as input, run from a signed tag the owner has pushed.
+  **Tags carry no `v` prefix** (`0.22.0`, never `v0.22.0`), as `.git-exclude/rules/project-instructions-rust.md`
+  requires. The gate job compares the tag with the workspace version for exact equality, so a `v`-prefixed tag
+  fails before anything is built. The GitHub Release is named by the tag, also without `v`.
 - **Gate job:** read-only. It checks that the tag is on `main`, that the tag equals the workspace version,
   and that CI is green on that commit, then builds the archive and attests it.
 - **Publish job:** the only job with `id-token: write`. It runs in a GitHub **Environment** named
