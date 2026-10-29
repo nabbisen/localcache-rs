@@ -10,6 +10,7 @@
 | Milestone | Phase 24 Q9 |
 | Breaking | **No.** No library, CLI, schema or wire-format change. The archive filename and root layout (RFC 009 R4) are kept |
 | Authorship | High-capability model; **reviewed by the owner** (arrangement of 2026-08-01). The author also wrote RFC 009, and says so |
+| Handoffs | [`../handoffs/027-release-engineering-on-standard-tools/`](../handoffs/027-release-engineering-on-standard-tools/q9a-standard-gates-beside-the-old.md): Q9a (Q9b and Q9c follow, each after the previous slice's review) |
 
 ## Summary
 

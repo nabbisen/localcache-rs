@@ -260,6 +260,20 @@ run.
 
 ## 4. Q1c — `rusqlite 0.40.2` (RFC 023 R8, R9), in v0.22.0
 
+> **Amended 2026-10-29 (architect).** Q1c now follows **Q3d** (opaque `DatabaseError`,
+> `rfcs/handoffs/025-error-taxonomy-and-input-validation/q3d-opaque-database-error.md`) and Q9a to Q9c, and
+> the architect has opened it with the v0.22.0 scope. Consequences for the steps below:
+> - Step 6's second bullet (`LocalFileCacheError::Database` now wraps `rusqlite` 0.40's `Error`) is
+>   **dropped**: after Q3d no `rusqlite` type is public. The CHANGELOG keeps the first and third bullets.
+> - Section 5's "No change to `LocalFileCacheError`" no longer applies to Q3d, which owns that change;
+>   Q1c itself still changes no error type.
+> - `rusqlite` 0.41.x exists and needs Rust 1.89. It is **not** adopted (RFC 023 R3: no necessity). The
+>   requirement stays exactly `"0.40.2"`.
+> - `docs/src/dependency_security.md` also says (near line 78) that `rusqlite::Error` is part of the
+>   public API: rewrite that sentence in the past tense with the section, since Q3d removed it.
+> - Read the upstream notes for `rusqlite` 0.40.2 only if anything newer than the 0.40.2 notes you read in
+>   the v0.21.5 cycle has appeared; say what you read.
+
 **Do not start until the architect opens it after v0.21.5 ships.** It is written down now so the
 v0.21.5 notice and the slice agree.
 
