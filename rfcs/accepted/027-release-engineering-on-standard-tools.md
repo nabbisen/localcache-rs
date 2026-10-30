@@ -138,6 +138,14 @@ A new `.github/workflows/release.yaml`:
 - **No long-lived publish token** remains in the repository, in CI, or (after the first success) on a
   workstation. The tag stays a local, GPG-signed action by the owner.
 
+**Q9c design (architect, 2026-10-30; handoff `../handoffs/027-release-engineering-on-standard-tools/q9c-release-workflow.md`).**
+Verified against the crates.io source: a token lives 30 minutes and covers every crate whose record matches the
+repository, workflow file and environment, so one exchange publishes both crates. The attestation job also needs
+`id-token: write`; the control is that the crates.io records require the `release` Environment, so only the job
+in that Environment can obtain a registry token. The workflow has no version input (the tag is the version) and
+a `dry_run` mode, default `true`, that exercises the OIDC exchange and `cargo publish --dry-run` without
+publishing. `advisories.yaml` and `msrv-fresh.yaml` are called as reusable workflows from `release.yaml`.
+
 RFC 009 R15 is amended from "CI never publishes" to "nothing publishes without an explicit, recorded
 owner approval, and no long-lived credential exists in CI".
 
