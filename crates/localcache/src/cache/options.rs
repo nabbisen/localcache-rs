@@ -150,11 +150,13 @@ pub struct CacheOptions {
     /// stepped back does not expire entries: an entry written "in the future"
     /// counts as age zero, so it stays fresh.
     ///
-    /// Has **one-second resolution**: `updated_at` is stored in Unix seconds,
-    /// so a duration under one second makes every entry immediately stale —
-    /// even one read back in the same second it was written already exceeds
-    /// it. Not rejected in this release; **from v0.22.0** a sub-second TTL
-    /// will be rejected at open instead of silently accepted.
+    /// Has **one-second resolution**: `updated_at` is stored in Unix seconds.
+    /// A fractional TTL of one second or more is truncated to whole seconds
+    /// (`1500 ms` behaves as `1 s`). A TTL **under one second**, including
+    /// zero, is rejected when the engine is opened, with
+    /// [`LocalFileCacheError::InvalidConfiguration`](crate::LocalFileCacheError::InvalidConfiguration)
+    /// and `option: "ttl"`, before the database is touched. Use `None` for
+    /// entries that never expire by age.
     pub ttl: Option<Duration>,
 
     /// Logical namespace for cache entries.  Defaults to `"default"`.
@@ -180,11 +182,17 @@ pub struct CacheOptions {
     /// entries it just wrote** — `set`'s own row, or every row a
     /// `batch_set` call wrote, is excluded from that call's own eviction.
     ///
-    /// Nothing here is rejected as an error in this release: `max_entries(0)`
-    /// keeps only the most recently written entry, and a `batch_set` larger
-    /// than `max_entries` stores every entry it reports as succeeded — the
-    /// *next* write is what brings the namespace back within the bound.
-    /// Rejecting these cases with an error is planned for v0.22.0.
+    /// `Some(0)` is rejected when the engine is opened, with
+    /// [`LocalFileCacheError::InvalidConfiguration`](crate::LocalFileCacheError::InvalidConfiguration)
+    /// and `option: "max_entries"`, before the database is touched; use `None`
+    /// for no limit. A `batch_set` that would hold more **distinct** paths
+    /// than `max_entries` is rejected before anything is written, with
+    /// [`LocalFileCacheError::InvalidArgument`](crate::LocalFileCacheError::InvalidArgument)
+    /// and `argument: "items"`; split the batch or raise the bound. Distinct
+    /// means after canonicalization, the key the database uses: duplicates
+    /// count once, and an item that fails preparation (a missing file, an
+    /// invalid path) occupies no row and is not counted. A batch of exactly
+    /// `max_entries` distinct paths is accepted.
     ///
     /// The bound is enforced by `set`/`batch_set` only — not by
     /// `import_entries` or `import_from`.

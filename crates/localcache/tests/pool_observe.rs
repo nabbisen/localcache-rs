@@ -488,14 +488,16 @@ fn explain_ttl_expired() {
     #[allow(unused_imports)]
     use std::time::Duration;
     let dir = TempDir::new().unwrap();
+    let db = dir.path().join("diag_ttl.sqlite3");
     let engine: CacheEngine<Vec<f32>> = CacheEngine::builder()
-        .database(":memory:")
-        .ttl(Duration::from_secs(0))
+        .database(&db)
+        .ttl(Duration::from_secs(1))
         .build()
         .unwrap();
 
     let path = write_file(&dir, "diag_ttl.txt", b"content");
     engine.set(&path, &vec![1.0_f32]).unwrap();
+    common::age_entries(&db, 100);
 
     let diag = engine.explain(&path).unwrap();
     assert_eq!(diag.status, CacheStatus::Stale);

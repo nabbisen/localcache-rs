@@ -218,10 +218,11 @@ fn max_entries_does_not_evict_when_within_limit() {
 
 // RFC 022 R6: this test's original assertion, `entry_count() <= 2`, encoded
 // the pre-R6 defect -- three of the five entries the batch reported as
-// stored were silently gone. Nothing is rejected in v0.21.4 (that is
-// RFC 025, in v0.22.0): an oversized `batch_set` stores everything it
-// reports, and the *next* write is what brings the namespace back within
-// `max_entries`.
+// stored were silently gone. v0.21.4 to v0.21.6 stored everything the batch
+// reported and let the *next* write bring the namespace back to the bound. Since
+// v0.22.0 (RFC 025 R6) a batch with more distinct paths than `max_entries` is
+// rejected before anything is written, so one call can no longer exceed the
+// bound; a batch within it is stored whole.
 #[test]
 fn batch_set_respects_max_entries() {
     let dir = TempDir::new().unwrap();
@@ -239,18 +240,29 @@ fn batch_set_respects_max_entries() {
         })
         .collect();
 
-    let report = engine.batch_set(&items).unwrap();
-    assert_eq!(report.succeeded, 5, "an oversized batch stores everything");
-    assert_eq!(
-        engine.entry_count().unwrap(),
-        5,
-        "nothing is silently evicted by the batch that wrote it"
+    // Five distinct paths against a bound of two: rejected, nothing written.
+    let error = engine.batch_set(&items).unwrap_err();
+    assert!(
+        matches!(
+            error,
+            localcache::LocalFileCacheError::InvalidArgument {
+                argument: "items",
+                ..
+            }
+        ),
+        "{error:?}"
     );
-    for (p, _) in &items {
+    assert_eq!(engine.entry_count().unwrap(), 0);
+
+    // A batch within the bound is stored whole and nothing it wrote is evicted.
+    let report = engine.batch_set(&items[..2]).unwrap();
+    assert_eq!(report.succeeded, 2);
+    assert_eq!(engine.entry_count().unwrap(), 2);
+    for (p, _) in &items[..2] {
         assert!(engine.get(p).unwrap().is_some(), "{p:?} must be present");
     }
 
-    // The next write is what brings the namespace back within the bound.
+    // The next write evicts back down to the bound.
     let p_next = write_file(&dir, "bs_next.txt", b"x");
     engine.set(&p_next, &vec![99.0_f32]).unwrap();
     assert_eq!(engine.entry_count().unwrap(), 2);
@@ -1001,12 +1013,15 @@ fn on_evict_receives_exactly_the_deleted_paths() {
     assert!(engine.contains(&pc).unwrap());
 }
 
+// `max_entries(0)` used to keep only the latest write; since v0.22.0 (RFC 025
+// R6) it is rejected at open. The smallest bound that remains, 1, keeps exactly
+// that behaviour.
 #[test]
-fn max_entries_zero_keeps_only_the_latest_write() {
+fn max_entries_one_keeps_only_the_latest_write() {
     let dir = TempDir::new().unwrap();
     let engine: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
         database_path: ":memory:".into(),
-        max_entries: Some(0),
+        max_entries: Some(1),
         ..CacheOptions::default()
     })
     .unwrap();

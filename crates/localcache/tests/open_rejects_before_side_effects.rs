@@ -2,75 +2,149 @@
 //! the first side effect. Creating the file, opening a connection to an
 //! existing file, migrating and changing a pragma all come later.
 //!
-//! The rejected configuration here is an encryption key of the wrong length,
-//! the one `CacheOptions`-only check that is not already first in `open`.
-
-#![cfg(feature = "encryption")]
+//! Every rejection the library makes from the options alone is run through
+//! every entry point: an encryption key of the wrong length (with the
+//! `encryption` feature), `max_entries(0)`, and a TTL under one second (RFC 025
+//! R6, v0.22.0).
 
 mod common;
 
 use std::fs;
 use std::path::Path;
+use std::time::Duration;
 
-use localcache::{CacheEngine, CacheOptions, JournalMode, LocalFileCacheError, SyncCacheEngine};
+use localcache::{
+    CacheEngine, CacheEngineBuilder, CacheOptions, JournalMode, LocalFileCacheError,
+    SyncCacheEngine,
+};
 use rusqlite::{Connection, OpenFlags};
 use tempfile::TempDir;
 
 use common::write_file;
 
-type EntryPoint = fn(&Path) -> Result<(), LocalFileCacheError>;
-
-const SHORT_KEY_LEN: usize = 31;
-
-fn short_key() -> Vec<u8> {
-    vec![0x5A; SHORT_KEY_LEN]
+/// A configuration that must be rejected before anything is touched.
+#[derive(Clone, Copy, Debug)]
+enum Rejection {
+    ZeroMaxEntries,
+    ZeroTtl,
+    SubSecondTtl,
+    #[cfg(feature = "encryption")]
+    ShortKey,
 }
 
-fn rejected_options(database: &Path) -> CacheOptions {
-    CacheOptions {
-        database_path: database.to_path_buf(),
-        encryption_key: Some(short_key()),
-        ..CacheOptions::default()
+const REJECTIONS: &[Rejection] = &[
+    Rejection::ZeroMaxEntries,
+    Rejection::ZeroTtl,
+    Rejection::SubSecondTtl,
+    #[cfg(feature = "encryption")]
+    Rejection::ShortKey,
+];
+
+impl Rejection {
+    fn options(self, database: &Path) -> CacheOptions {
+        let mut options = CacheOptions {
+            database_path: database.to_path_buf(),
+            ..CacheOptions::default()
+        };
+        match self {
+            Self::ZeroMaxEntries => options.max_entries = Some(0),
+            Self::ZeroTtl => options.ttl = Some(Duration::ZERO),
+            Self::SubSecondTtl => options.ttl = Some(Duration::from_millis(999)),
+            #[cfg(feature = "encryption")]
+            Self::ShortKey => options.encryption_key = Some(vec![0x5A; 31]),
+        }
+        options
+    }
+
+    fn configure(self, builder: CacheEngineBuilder<Vec<f32>>) -> CacheEngineBuilder<Vec<f32>> {
+        match self {
+            Self::ZeroMaxEntries => builder.max_entries(0),
+            Self::ZeroTtl => builder.ttl(Duration::ZERO),
+            Self::SubSecondTtl => builder.ttl(Duration::from_millis(999)),
+            #[cfg(feature = "encryption")]
+            Self::ShortKey => builder.encryption_key(vec![0x5A; 31]),
+        }
+    }
+
+    /// The `option` the error names and its whole `Display`.
+    fn expected(self) -> (&'static str, &'static str) {
+        match self {
+            Self::ZeroMaxEntries => (
+                "max_entries",
+                "invalid configuration: max_entries: must be at least 1; use None for no limit",
+            ),
+            Self::ZeroTtl => (
+                "ttl",
+                "invalid configuration: ttl: must be at least one second, got 0ns",
+            ),
+            Self::SubSecondTtl => (
+                "ttl",
+                "invalid configuration: ttl: must be at least one second, got 999ms",
+            ),
+            #[cfg(feature = "encryption")]
+            Self::ShortKey => (
+                "encryption_key",
+                "invalid configuration: encryption_key: must be exactly 32 bytes, got 31",
+            ),
+        }
+    }
+
+    /// `Err` carries a description of what was wrong, so a test can report every
+    /// entry point that misbehaves and not only the first.
+    fn check(self, name: &str, result: Result<(), LocalFileCacheError>) -> Result<(), String> {
+        let (option, display) = self.expected();
+        match result {
+            Ok(()) => Err(format!("{name}: the rejected configuration was accepted")),
+            Err(error @ LocalFileCacheError::InvalidConfiguration { option: found, .. })
+                if found == option && error.to_string() == display =>
+            {
+                Ok(())
+            }
+            Err(error) => Err(format!("{name}: expected `{display}`, got: {error}")),
+        }
     }
 }
 
-fn engine_open(database: &Path) -> Result<(), LocalFileCacheError> {
-    CacheEngine::<Vec<f32>>::open(rejected_options(database)).map(drop)
+type EntryPoint = fn(&Path, Rejection) -> Result<(), LocalFileCacheError>;
+
+fn engine_open(database: &Path, rejection: Rejection) -> Result<(), LocalFileCacheError> {
+    CacheEngine::<Vec<f32>>::open(rejection.options(database)).map(drop)
 }
 
-fn builder_build(database: &Path) -> Result<(), LocalFileCacheError> {
-    CacheEngine::<Vec<f32>>::builder()
-        .database(database)
-        .encryption_key(short_key())
+fn builder_build(database: &Path, rejection: Rejection) -> Result<(), LocalFileCacheError> {
+    rejection
+        .configure(CacheEngine::<Vec<f32>>::builder().database(database))
         .build()
         .map(drop)
 }
 
-fn builder_build_read_pool(database: &Path) -> Result<(), LocalFileCacheError> {
-    CacheEngine::<Vec<f32>>::builder()
-        .database(database)
-        .encryption_key(short_key())
+fn builder_build_read_pool(
+    database: &Path,
+    rejection: Rejection,
+) -> Result<(), LocalFileCacheError> {
+    rejection
+        .configure(CacheEngine::<Vec<f32>>::builder().database(database))
         .build_read_pool(2)
         .map(drop)
 }
 
-fn read_pool_open(database: &Path) -> Result<(), LocalFileCacheError> {
-    localcache::ReadPool::<Vec<f32>>::open(rejected_options(database), 2).map(drop)
+fn read_pool_open(database: &Path, rejection: Rejection) -> Result<(), LocalFileCacheError> {
+    localcache::ReadPool::<Vec<f32>>::open(rejection.options(database), 2).map(drop)
 }
 
-fn sync_engine_open(database: &Path) -> Result<(), LocalFileCacheError> {
-    SyncCacheEngine::<Vec<f32>>::open(rejected_options(database)).map(drop)
+fn sync_engine_open(database: &Path, rejection: Rejection) -> Result<(), LocalFileCacheError> {
+    SyncCacheEngine::<Vec<f32>>::open(rejection.options(database)).map(drop)
 }
 
 #[allow(deprecated)]
-fn shared_engine_open(database: &Path) -> Result<(), LocalFileCacheError> {
-    localcache::shared_engine::<Vec<f32>>(rejected_options(database)).map(drop)
+fn shared_engine_open(database: &Path, rejection: Rejection) -> Result<(), LocalFileCacheError> {
+    localcache::shared_engine::<Vec<f32>>(rejection.options(database)).map(drop)
 }
 
 #[cfg(any(feature = "async", feature = "async-std", feature = "smol"))]
-fn async_engine_open(database: &Path) -> Result<(), LocalFileCacheError> {
+fn async_engine_open(database: &Path, rejection: Rejection) -> Result<(), LocalFileCacheError> {
     let open = async {
-        localcache::AsyncCacheEngine::<Vec<f32>>::open(rejected_options(database))
+        localcache::AsyncCacheEngine::<Vec<f32>>::open(rejection.options(database))
             .await
             .map(drop)
     };
@@ -91,8 +165,9 @@ fn async_engine_open(database: &Path) -> Result<(), LocalFileCacheError> {
     }
 }
 
-fn entry_points() -> Vec<(&'static str, EntryPoint)> {
-    vec![
+/// Every entry point that builds an engine or a pool, with every rejection.
+fn cases() -> Vec<(String, EntryPoint, Rejection)> {
+    let entry_points: Vec<(&str, EntryPoint)> = vec![
         ("CacheEngine::open", engine_open),
         ("CacheEngineBuilder::build", builder_build),
         (
@@ -104,7 +179,14 @@ fn entry_points() -> Vec<(&'static str, EntryPoint)> {
         ("shared_engine", shared_engine_open),
         #[cfg(any(feature = "async", feature = "async-std", feature = "smol"))]
         ("AsyncCacheEngine::open", async_engine_open),
-    ]
+    ];
+    let mut cases = Vec::new();
+    for rejection in REJECTIONS {
+        for (name, open) in &entry_points {
+            cases.push((format!("{name} / {rejection:?}"), *open, *rejection));
+        }
+    }
+    cases
 }
 
 /// Every file in `directory`, by name, with its bytes.
@@ -121,28 +203,6 @@ fn listing(directory: &Path) -> Vec<(String, Vec<u8>)> {
         .collect();
     files.sort();
     files
-}
-
-/// `Err` carries a description of what was wrong, so a test can report every
-/// entry point that misbehaves and not only the first.
-fn key_length_rejection(name: &str, result: Result<(), LocalFileCacheError>) -> Result<(), String> {
-    match result {
-        Ok(()) => Err(format!("{name}: a {SHORT_KEY_LEN}-byte key was accepted")),
-        Err(error)
-            if matches!(
-                error,
-                LocalFileCacheError::InvalidConfiguration {
-                    option: "encryption_key",
-                    ..
-                }
-            ) && error.to_string().contains("exactly 32 bytes") =>
-        {
-            Ok(())
-        }
-        Err(error) => Err(format!(
-            "{name}: expected the key-length rejection, got: {error}"
-        )),
-    }
 }
 
 fn assert_no_failures(failures: &[String]) {
@@ -218,11 +278,11 @@ fn version_4_database(directory: &TempDir, name: &str) -> std::path::PathBuf {
 #[test]
 fn rejected_open_on_a_missing_path_creates_nothing() {
     let mut failures = Vec::new();
-    for (name, open) in entry_points() {
+    for (name, open, rejection) in cases() {
         let directory = TempDir::new().unwrap();
         let database = directory.path().join("absent.sqlite3");
 
-        failures.extend(key_length_rejection(name, open(&database)).err());
+        failures.extend(rejection.check(&name, open(&database, rejection)).err());
 
         if database.exists() {
             failures.push(format!("{name}: the database file was created"));
@@ -239,7 +299,7 @@ fn rejected_open_on_a_missing_path_creates_nothing() {
 #[test]
 fn rejected_open_leaves_a_current_database_untouched_in_its_journal_mode() {
     let mut failures = Vec::new();
-    for (name, open) in entry_points() {
+    for (name, open, rejection) in cases() {
         let directory = TempDir::new().unwrap();
         let database = current_database_in_delete_mode(&directory, "current.sqlite3");
         let version_before = pragma(&database, "user_version");
@@ -247,7 +307,7 @@ fn rejected_open_leaves_a_current_database_untouched_in_its_journal_mode() {
         let before = listing(directory.path());
 
         // The default `journal_mode` is WAL, so an accepted open would switch it.
-        failures.extend(key_length_rejection(name, open(&database)).err());
+        failures.extend(rejection.check(&name, open(&database, rejection)).err());
 
         if listing(directory.path()) != before {
             failures.push(format!("{name}: the files changed"));
@@ -266,13 +326,13 @@ fn rejected_open_leaves_a_current_database_untouched_in_its_journal_mode() {
 #[test]
 fn rejected_open_does_not_migrate_a_version_4_database() {
     let mut failures = Vec::new();
-    for (name, open) in entry_points() {
+    for (name, open, rejection) in cases() {
         let directory = TempDir::new().unwrap();
         let database = version_4_database(&directory, "v4.sqlite3");
         assert_eq!(pragma(&database, "user_version"), "4");
         let before = listing(directory.path());
 
-        failures.extend(key_length_rejection(name, open(&database)).err());
+        failures.extend(rejection.check(&name, open(&database, rejection)).err());
 
         if listing(directory.path()) != before {
             failures.push(format!("{name}: the files changed"));
@@ -288,7 +348,7 @@ fn rejected_open_does_not_migrate_a_version_4_database() {
 #[test]
 fn rejected_open_on_a_wal_database_leaves_no_side_files() {
     let mut failures = Vec::new();
-    for (name, open) in entry_points() {
+    for (name, open, rejection) in cases() {
         let directory = TempDir::new().unwrap();
         let database = directory.path().join("wal.sqlite3");
         {
@@ -303,7 +363,7 @@ fn rejected_open_on_a_wal_database_leaves_no_side_files() {
         }
         let before = listing(directory.path());
 
-        failures.extend(key_length_rejection(name, open(&database)).err());
+        failures.extend(rejection.check(&name, open(&database, rejection)).err());
 
         if listing(directory.path()) != before {
             failures.push(format!("{name}: the files changed"));

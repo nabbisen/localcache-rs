@@ -20,7 +20,10 @@ use crate::db::{repository, schema};
 use crate::detection::hash::{compute_full_hash, compute_partial_hash};
 use crate::detection::metadata::collect_metadata;
 use crate::detection::strategy::detect_change;
-use crate::error::{ConfigOption, LocalFileCacheError, SqliteResultExt, invalid_configuration};
+use crate::error::{
+    ArgumentName, ConfigOption, LocalFileCacheError, SqliteResultExt, invalid_argument,
+    invalid_configuration,
+};
 use crate::path::{normalize_path, path_to_str, resolve_path_key};
 use crate::serialization::{decode_payload, encode_payload};
 
@@ -480,14 +483,17 @@ where
     /// rest are counted in [`BatchSetReport::succeeded`](BatchSetReport).
     ///
     /// With [`max_entries`](CacheOptions::max_entries) set, this call
-    /// never evicts any entry it wrote, even when the batch itself is
-    /// larger than `max_entries` — see `max_entries` for the full
-    /// eviction policy. **`Err` means nothing was written, including the
-    /// items that prepared successfully.**
+    /// never evicts any entry it wrote, and a batch with more distinct
+    /// paths than `max_entries` is rejected — see `max_entries` for the
+    /// full eviction policy. **`Err` means nothing was written, including
+    /// the items that prepared successfully.**
     ///
     /// # Errors
     ///
     /// * [`LocalFileCacheError::ReadOnly`] — engine is in read-only mode.
+    /// * [`LocalFileCacheError::InvalidArgument`] with `argument: "items"` —
+    ///   the batch holds more distinct paths than `max_entries`. Nothing was
+    ///   encoded or written.
     /// * [`LocalFileCacheError::Database`] — including a busy database
     ///   after the busy timeout. Per-item preparation failures are
     ///   reported in [`BatchSetReport::failed`](BatchSetReport), not
@@ -499,51 +505,87 @@ where
         self.guard_write()?;
 
         let mut report = BatchSetReport::default();
-        let mut prepared: Vec<(
+        // Per-item failures are reported in the items' order, whichever of the
+        // two passes below found them.
+        let mut failed: Vec<(usize, std::path::PathBuf, LocalFileCacheError)> = Vec::new();
+
+        // Pass 1: everything that decides which rows this batch would occupy
+        // (the canonical key, the file's metadata, its hash). Nothing is
+        // encoded or written yet.
+        let mut occupying: Vec<(
+            usize,
+            std::path::PathBuf,
             String,
             crate::detection::metadata::FileMetadata,
-            Vec<u8>,
-            &'static str,
         )> = Vec::with_capacity(items.len());
-
-        for (path, payload) in items {
+        for (index, (path, _)) in items.iter().enumerate() {
             let canonical = match normalize_path(path.as_ref()) {
                 Ok(p) => p,
                 Err(e) => {
-                    report.failed.push((path.as_ref().to_path_buf(), e));
+                    failed.push((index, path.as_ref().to_path_buf(), e));
                     continue;
                 }
             };
             let path_str = match path_to_str(&canonical) {
                 Ok(s) => s.to_owned(),
                 Err(e) => {
-                    report.failed.push((canonical.clone(), e));
+                    failed.push((index, canonical, e));
                     continue;
                 }
             };
             let mut metadata = match collect_metadata(&canonical) {
                 Ok(m) => m,
                 Err(e) => {
-                    report.failed.push((canonical.clone(), e));
+                    failed.push((index, canonical, e));
                     continue;
                 }
             };
             match compute_hash_for_mode(&canonical, self.mode) {
                 Ok(h) => metadata.hash = h,
                 Err(e) => {
-                    report.failed.push((canonical.clone(), e));
+                    failed.push((index, canonical, e));
                     continue;
                 }
             }
-            let (bytes, encoding) = match self.encode(payload) {
-                Ok(r) => r,
-                Err(e) => {
-                    report.failed.push((canonical.clone(), e));
-                    continue;
-                }
-            };
-            prepared.push((path_str, metadata, bytes, encoding));
+            occupying.push((index, canonical, path_str, metadata));
         }
+
+        // RFC 025 R6: a batch that would hold more distinct keys than
+        // `max_entries` is rejected before the transaction starts and before
+        // any payload is encoded. "Distinct" is the canonical key the database
+        // uses; items that failed above occupy no row and are not counted.
+        if let Some(max_entries) = self.max_entries {
+            let distinct = occupying
+                .iter()
+                .map(|(_, _, path_str, _)| path_str.as_str())
+                .collect::<std::collections::HashSet<_>>()
+                .len();
+            if distinct > max_entries {
+                return Err(invalid_argument(
+                    ArgumentName::Items,
+                    format!("{distinct} distinct paths exceed max_entries ({max_entries})"),
+                ));
+            }
+        }
+
+        // Pass 2: encode the payloads.
+        let mut prepared: Vec<(
+            String,
+            crate::detection::metadata::FileMetadata,
+            Vec<u8>,
+            &'static str,
+        )> = Vec::with_capacity(occupying.len());
+        for (index, canonical, path_str, metadata) in occupying {
+            match self.encode(&items[index].1) {
+                Ok((bytes, encoding)) => prepared.push((path_str, metadata, bytes, encoding)),
+                Err(e) => failed.push((index, canonical, e)),
+            }
+        }
+        failed.sort_by_key(|(index, _, _)| *index);
+        report.failed = failed
+            .into_iter()
+            .map(|(_, path, error)| (path, error))
+            .collect();
 
         // Same rule as `set` (RFC 022 R6 item 3 / Q0c review C1): the whole
         // batch and its eviction share one IMMEDIATE transaction.
@@ -1353,6 +1395,20 @@ fn check_configuration(
         return Err(invalid_configuration(
             ConfigOption::ReadOnly,
             "not supported with an in-memory database",
+        ));
+    }
+    // RFC 025 R6 (announced in v0.21.5): rejected for every engine, read-only
+    // ones included, because the options are invalid whatever the engine does.
+    if options.max_entries == Some(0) {
+        return Err(invalid_configuration(
+            ConfigOption::MaxEntries,
+            "must be at least 1; use None for no limit",
+        ));
+    }
+    if let Some(ttl) = options.ttl.filter(|ttl| *ttl < Duration::from_secs(1)) {
+        return Err(invalid_configuration(
+            ConfigOption::Ttl,
+            format!("must be at least one second, got {ttl:?}"),
         ));
     }
 

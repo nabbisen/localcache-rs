@@ -321,12 +321,13 @@ fn ttl_expired_entry_is_none() {
     let dir = TempDir::new().unwrap();
     let engine: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
         database_path: dir.path().join("ttl.sqlite3"),
-        ttl: Some(Duration::from_secs(0)),
+        ttl: Some(Duration::from_secs(1)),
         ..CacheOptions::default()
     })
     .unwrap();
     let path = write_file(&dir, "ttl.txt", b"content");
     engine.set(&path, &vec![1.0_f32]).unwrap();
+    common::age_entries(&dir.path().join("ttl.sqlite3"), 100);
     assert!(engine.get_if_fresh(&path).unwrap().is_none());
     assert_eq!(engine.check_status(&path).unwrap(), CacheStatus::Stale);
 }
@@ -437,12 +438,13 @@ fn cleanup_expired_removes_old_entries() {
     let dir = TempDir::new().unwrap();
     let engine: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
         database_path: dir.path().join("ttlclean.sqlite3"),
-        ttl: Some(Duration::from_secs(0)),
+        ttl: Some(Duration::from_secs(1)),
         ..CacheOptions::default()
     })
     .unwrap();
     let path = write_file(&dir, "exp.txt", b"content");
     engine.set(&path, &vec![1.0_f32]).unwrap();
+    common::age_entries(&dir.path().join("ttlclean.sqlite3"), 100);
     assert_eq!(engine.cleanup_expired().unwrap(), 1);
     assert_eq!(engine.check_status(&path).unwrap(), CacheStatus::Missing);
 }

@@ -20,8 +20,8 @@ Existing exhaustive matches must add a `_` arm to upgrade to v0.21.0.
 | `Poisoned { resource: &'static str }` | A lock guarding shared cache state was poisoned by a panic in another thread | The poisoning caller's bug, not yours — recreate the pool/engine/watcher |
 | `EncryptionError(String)` *(encryption)* | Wrong key or corrupt data — *not* a missing feature or a missing key (see below) | Verify encryption key |
 | `AsyncTaskPanicked` *(async / async-std / smol)* | `spawn_blocking` task panicked | Check payload type and encoding |
-| `InvalidConfiguration { option, reason }` | A configuration option is invalid or unsupported: `option` is `database_path`, `read_only`, `encryption_key` or `size`. Found before the database is touched | Fix the named option and open again; nothing was created or changed |
-| `InvalidArgument { argument, reason }` | A call's argument is invalid: `argument` is `new_key`, `path_glob`, `index_name` or `records` | Correct that argument and call again |
+| `InvalidConfiguration { option, reason }` | A configuration option is invalid or unsupported: `option` is `database_path`, `read_only`, `encryption_key`, `size`, `max_entries` or `ttl`. Found before the database is touched | Fix the named option and open again; nothing was created or changed |
+| `InvalidArgument { argument, reason }` | A call's argument is invalid: `argument` is `new_key`, `path_glob`, `index_name`, `records` or `items` | Correct that argument and call again |
 | `SchemaNotCurrent` | A read-only open of a database whose schema is not the current one (older, or empty) | Open it writable once to migrate it, or use the CLI's `copy --from-db --upgrade-source`; the database was not modified |
 | `IncompatibleSchema(String)` | The schema is newer than this version understands, is not a localcache database, or is damaged; the message says what was found | Use a version that matches the database, or restore a backup; the database was not modified |
 | `MissingEncryptionKey` *(encryption)* | An operation needs an encryption key and none is configured: rotating a key, or reading an encrypted entry | Configure `encryption_key` on the engine |
@@ -72,8 +72,9 @@ v0.22.0 removes `UnsupportedFeature`, the catch-all error of earlier releases
 was never returned, and adds seven variants, so a condition can be recognised
 without reading English. A compile error that names either removed variant
 means the match needs the variant from the table below.
-Which inputs succeed and which fail is **unchanged**; only the variant and, for
-a few errors, the wording differ.
+For these errors, which inputs succeed and which fail is **unchanged**; only the
+variant and, for a few, the wording differ. (Three inputs that were accepted
+before are rejected in the same release; they are listed after the table.)
 
 | It used to be reported as `unsupported feature: …` because… | It is now | Match on |
 |---|---|---|
@@ -89,6 +90,18 @@ a few errors, the wording differ.
 | an unrecognised, newer or damaged schema | `IncompatibleSchema` | the variant |
 | an unsafe journal mode for a migration, SQLite not honouring a setting, a failed migration postcondition, a failed runtime configuration | `DatabaseState` | the variant |
 | a failure of the file-system watcher | `Watcher` | the variant |
+
+The same release also **rejects three inputs** that were accepted before, all
+announced in v0.21.4 and v0.21.5; they are new errors, not renamed ones:
+
+| Input | Error | What to do |
+|---|---|---|
+| `max_entries` of `Some(0)`, at open | `InvalidConfiguration { option: "max_entries", .. }` | use `None` for no limit |
+| a TTL under one second (including zero), at open | `InvalidConfiguration { option: "ttl", .. }` | use a TTL of at least one second, or no TTL |
+| a `batch_set` with more distinct paths than `max_entries` | `InvalidArgument { argument: "items", .. }` | split the batch, or raise `max_entries` |
+
+All three are found before anything is written, and a read-only engine is not
+exempt.
 
 If you matched on the **text** of an `unsupported feature: …` message, match on
 the variant instead; the text of schema, state and watcher errors was reworded so

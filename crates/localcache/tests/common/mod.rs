@@ -27,6 +27,16 @@ pub fn make_engine(dir: &TempDir, mode: ChangeDetectionMode) -> CacheEngine<Vec<
     .unwrap()
 }
 
+/// Make every entry of `database` `seconds` older, by moving its `updated_at`
+/// back, so a test can expire entries without sleeping.
+#[allow(dead_code)]
+pub fn age_entries(database: &std::path::Path, seconds: i64) {
+    rusqlite::Connection::open(database)
+        .unwrap()
+        .execute("UPDATE files SET updated_at = updated_at - ?1", [seconds])
+        .unwrap();
+}
+
 /// Overwrite the stored payload of the entry at `stored_path` (the path as
 /// `keys()` returns it) with bytes that no codec can decode, straight in the
 /// database. Reaches a decode failure that no public call produces.

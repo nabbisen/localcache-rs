@@ -90,8 +90,8 @@ where
 
     /// Time-to-live for cache entries, measured from each entry's last write; a
     /// system clock stepped back does not expire entries. See
-    /// [`CacheOptions::ttl`] for the one-second resolution and the v0.22.0
-    /// rejection plan.
+    /// [`CacheOptions::ttl`] for the one-second resolution; a duration under
+    /// one second is rejected when the engine is built.
     pub fn ttl(mut self, duration: Duration) -> Self {
         self.opts.ttl = Some(duration);
         self
@@ -104,8 +104,9 @@ where
     }
 
     /// Maximum entries in the namespace, evicted in least-recently-**read**
-    /// order. See [`CacheOptions::max_entries`] for the full eviction and
-    /// write-protection contract.
+    /// order. `0` is rejected when the engine is built. See
+    /// [`CacheOptions::max_entries`] for the full eviction, write-protection
+    /// and `batch_set` contract.
     pub fn max_entries(mut self, n: usize) -> Self {
         self.opts.max_entries = Some(n);
         self

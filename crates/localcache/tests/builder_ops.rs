@@ -33,15 +33,18 @@ fn builder_creates_working_engine() {
 fn builder_with_ttl() {
     use std::time::Duration;
     let dir = TempDir::new().unwrap();
+    let db = dir.path().join("ttl_built.sqlite3");
     let engine: CacheEngine<Vec<f32>> = CacheEngine::builder()
-        .database(":memory:")
-        .ttl(Duration::from_secs(0))
+        .database(&db)
+        .ttl(Duration::from_secs(1))
         .build()
         .unwrap();
 
     let path = write_file(&dir, "ttl_built.txt", b"x");
     engine.set(&path, &vec![1.0_f32]).unwrap();
-    // TTL=0 → immediately stale.
+    // Older than the one-second TTL → stale. (A TTL of zero is no longer
+    // accepted; the entry is aged through the database, not by sleeping.)
+    crate::common::age_entries(&db, 100);
     assert!(engine.get_if_fresh(&path).unwrap().is_none());
 }
 

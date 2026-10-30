@@ -76,24 +76,28 @@ SQLite `synchronous` pragma: `SynchronousMode::Off`, `Normal`, `Full`, or `Extra
 
 Time-to-live for cache entries.  Entries older than `duration` are treated
 as stale by `get_if_fresh` and `check_status`. TTL has **one-second resolution**
-(`updated_at` is stored in Unix seconds): a duration under one second makes
-every entry immediately stale, since even an entry read back in the same
-second as it was written already exceeds it. **From v0.22.0**, a TTL under
-one second is rejected at open instead of silently accepted as it is today.
+(`updated_at` is stored in Unix seconds): a fractional TTL of one second or more
+is truncated to whole seconds (`1500 ms` behaves as `1 s`). A TTL **under one
+second**, including zero, is rejected at open with
+`InvalidConfiguration { option: "ttl", .. }`, before the database is touched;
+use `no_ttl()` for entries that never expire by age.
 
 ### `max_entries(n)`
 
 Cap the namespace at `n` entries. Eviction removes the entries with the
 oldest `last_accessed_at` first — **never-read entries first** (`last_accessed_at
 == 0`), then oldest `updated_at`, then lowest `id` as a final deterministic
-tiebreak. **A write never evicts what it just wrote**: an oversized `batch_set`
-stores everything it reports as succeeded, and the bound is restored by the
-*next* write, not necessarily within the same call. `max_entries(0)` keeps
-only the most recently written entry. **From v0.22.0**, `max_entries(0)` and
-a `batch_set` larger than `max_entries` will be rejected with an error
-instead of silently accepted as they are today. The bound is enforced only
-by `set`/`batch_set` — it is **not** enforced by `import_entries`
-or `import_from`.
+tiebreak. **A write never evicts what it just wrote.** `max_entries(0)` is
+rejected at open with `InvalidConfiguration { option: "max_entries", .. }`;
+use no `max_entries` for no limit. A `batch_set` with more **distinct** paths
+than `max_entries` is rejected before anything is written, with
+`InvalidArgument { argument: "items", .. }`: split the batch or raise the
+bound. "Distinct" means after canonicalization, the key the database uses —
+duplicates count once, and an item that fails preparation (a missing file, an
+invalid path) occupies no row and is not counted — and a batch of exactly
+`max_entries` distinct paths is accepted. The bound is enforced only by
+`set`/`batch_set` — it is **not** enforced by `import_entries` or
+`import_from`.
 
 ### `payload_version(v)`
 
@@ -213,7 +217,8 @@ let engine = CacheEngine::<Vec<f32>>::open(CacheOptions {
 })?;
 ```
 
-`CacheOptionsExt` provides ergonomic TTL helpers:
+`CacheOptionsExt` provides ergonomic TTL helpers (a TTL must be at least one
+second, so `with_ttl_secs(0)` is rejected at open):
 
 ```rust
 use localcache::CacheOptionsExt as _;

@@ -542,6 +542,11 @@ where
 // ---------------------------------------------------------------------------
 
 /// Extension trait for ergonomic [`CacheOptions`] construction.
+///
+/// A TTL has one-second resolution and must be at least one second: `0`
+/// seconds is rejected when the engine is opened
+/// ([`LocalFileCacheError::InvalidConfiguration`] with `option: "ttl"`); see
+/// [`CacheOptions::ttl`].
 pub trait CacheOptionsExt: Sized {
     /// Set TTL from seconds.
     fn with_ttl_secs(self, secs: u64) -> Self;

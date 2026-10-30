@@ -460,7 +460,7 @@ fn every_public_mutator_returns_read_only_before_other_work() {
         .database(&database)
         .namespace("readonly")
         .read_only()
-        .max_entries(0)
+        .max_entries(1)
         .on_evict(move |_| callback_called_in_engine.store(true, Ordering::SeqCst))
         .build()
         .unwrap();

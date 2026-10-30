@@ -153,12 +153,12 @@ CacheOptions {
     codec:                  Codec,
     journal_mode:           JournalMode,
     synchronous:            SynchronousMode,
-    ttl:                    Option<Duration>,
+    ttl:                    Option<Duration>,  // at least one second; resolution one second
     namespace:              String,
     read_only:              bool,
     shared_cache:           bool,         // RFC 004: shared page-cache read-only mode
     payload_version:        u32,
-    max_entries:            Option<usize>,
+    max_entries:            Option<usize>,     // Some(0) is rejected; None means no limit
     watch_dirs:             bool,         // watching feature: directory-level watching
     compress_payloads:      bool,         // compression feature
     encryption_key:         Option<Vec<u8>>,  // encryption feature

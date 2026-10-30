@@ -71,6 +71,25 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     `copy --from-db` recognises a source whose schema is merely old by the `SchemaNotCurrent`
     variant (which `--upgrade-source` can fix) and no longer by the start of the message; an
     unrecognised schema (`IncompatibleSchema`) is still refused without the hint.
+- **Breaking:** three inputs that v0.21.4 and v0.21.5 announced are now **rejected**
+  (RFC 025 R6, R8), each before the database is touched, for every engine (read-only ones
+  included) and through every entry point:
+  - `max_entries` of `Some(0)` returns `InvalidConfiguration { option: "max_entries", .. }`
+    from `open`, the builder, every wrapper's `open` and `ReadPool::open`. Use `None` for no
+    limit. (It used to keep only the most recently written entry.)
+  - A TTL under one second, **zero included**, returns `InvalidConfiguration { option: "ttl", .. }`
+    from the same entry points. Use a TTL of at least one second, or no TTL. (It used to make
+    every entry immediately stale.) A fractional TTL of one second or more is accepted and
+    truncated to whole seconds: `1500 ms` behaves as `1 s`. This is now documented on
+    `CacheOptions::ttl`, the builder's `ttl` and `CacheOptionsExt`.
+  - A `batch_set` with more **distinct** paths than `max_entries` returns
+    `InvalidArgument { argument: "items", .. }` before the transaction starts and before any
+    payload is encoded; nothing is written or evicted. Split the batch or raise `max_entries`.
+    "Distinct" is the canonical key the database uses: duplicates count once, and an item that
+    fails preparation (a missing file, an invalid path) occupies no row, is not counted and is
+    still reported in `BatchSetReport::failed`. A batch of exactly `max_entries` distinct paths
+    is accepted. (It used to store everything and leave the namespace over the bound until the
+    next write.)
 
 ---
 

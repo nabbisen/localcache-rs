@@ -110,10 +110,10 @@ engine.get_if_fresh(path)
 
 **A write never evicts what it just wrote.** The row(s) a `set`/`batch_set` call just inserted or
 updated are excluded from that call's own eviction candidates, even though a brand-new row's
-`last_accessed_at = 0` would otherwise make it the first entry eligible for eviction. An oversized
-`batch_set` therefore keeps everything it reports as stored; the bound is restored by the *next*
-write, not necessarily within the same call. `max_entries(0)` keeps only the most recently written
-entry. The bound is not enforced by `import_entries`/`import_from`.
+`last_accessed_at = 0` would otherwise make it the first entry eligible for eviction. A `batch_set`
+with more distinct paths than `max_entries` is rejected before it writes anything, so one call can
+no longer exceed the bound; `max_entries(0)` is rejected at open. The bound is not enforced by
+`import_entries`/`import_from`.
 
 ## SQLite settings
 

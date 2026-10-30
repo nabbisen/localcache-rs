@@ -107,8 +107,8 @@ pub enum LocalFileCacheError {
     /// database was touched.
     ///
     /// `option` names the [`CacheOptions`](crate::CacheOptions) field or
-    /// argument at fault: `database_path`, `read_only`, `encryption_key` or
-    /// `size`; `reason` says what is wrong. Fix the option and open again;
+    /// argument at fault: `database_path`, `read_only`, `encryption_key`,
+    /// `size`, `max_entries` or `ttl`; `reason` says what is wrong. Fix the option and open again;
     /// nothing was created or changed.
     #[error("invalid configuration: {option}: {reason}")]
     InvalidConfiguration {
@@ -119,7 +119,7 @@ pub enum LocalFileCacheError {
     /// An argument of a call is invalid, found before any work was done.
     ///
     /// `argument` names the parameter at fault: `new_key`, `path_glob`,
-    /// `index_name` or `records`; `reason` says what is wrong. Correct the
+    /// `index_name`, `records` or `items`; `reason` says what is wrong. Correct the
     /// argument and call again.
     #[error("invalid argument: {argument}: {reason}")]
     InvalidArgument {
@@ -179,6 +179,8 @@ pub(crate) enum ConfigOption {
     #[cfg(feature = "encryption")]
     EncryptionKey,
     Size,
+    MaxEntries,
+    Ttl,
 }
 
 impl ConfigOption {
@@ -189,6 +191,8 @@ impl ConfigOption {
             #[cfg(feature = "encryption")]
             Self::EncryptionKey => "encryption_key",
             Self::Size => "size",
+            Self::MaxEntries => "max_entries",
+            Self::Ttl => "ttl",
         }
     }
 }
@@ -201,6 +205,7 @@ pub(crate) enum ArgumentName {
     PathGlob,
     IndexName,
     Records,
+    Items,
 }
 
 impl ArgumentName {
@@ -211,6 +216,7 @@ impl ArgumentName {
             Self::PathGlob => "path_glob",
             Self::IndexName => "index_name",
             Self::Records => "records",
+            Self::Items => "items",
         }
     }
 }
