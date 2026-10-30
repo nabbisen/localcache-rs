@@ -21,6 +21,9 @@ on:
   schedule:
     - cron: "17 3 * * 1" # Mondays, 03:17 UTC
   workflow_dispatch:
+  # Called by release.yaml: a release sees the advisory database and a fresh
+  # resolution as they are at the moment of release.
+  workflow_call:
 
 permissions:
   contents: read

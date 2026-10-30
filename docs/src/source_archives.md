@@ -47,6 +47,61 @@ working tree that has uncommitted or untracked files, so run it before pushing.
 
 ## Publishing
 
-A release is published by the project owner with
-`cargo publish --workspace --locked`, after CI is green on the release commit.
-The documentation here describes the checks, not the publication.
+A release is published by the `Release` workflow (`.github/workflows/release.yaml`),
+which the project owner starts by hand and approves. No registry token is stored
+in the repository or in CI: the workflow exchanges a short-lived GitHub identity
+for a crates.io token (Trusted Publishing).
+
+### Steps for the owner
+
+1. Push a signed, annotated tag named exactly like the version, without a `v`:
+   `git tag -s 0.22.0` and `git push origin 0.22.0`.
+2. In *Actions*, run **Release** from that tag, first with `dry_run` on (the
+   default), then with it off.
+3. Read the `Gate` and `Source archive` results, then approve the `release`
+   Environment. Check that the commit shown in the approval prompt is the one you
+   tagged: anyone who can push a tag of this form can start the workflow from it,
+   and your approval is the control. Nothing reaches crates.io before it.
+
+### What each job does
+
+| Job | What it does |
+|---|---|
+| `Gate` | Fails unless: the run is from a tag (a branch is accepted only for a dry run from `main`); the tag looks like `X.Y.Z`, is annotated, and equals the workspace version; the commit is reachable from `main`; the newest `ci.yaml` run on the commit is `completed` with `success`; and `scripts/check_versions.py --expect <version>` passes |
+| `Advisories`, `MSRV fresh resolution` | The weekly checks, run again at the moment of release, because an advisory or a new upstream release appears without any push |
+| `Source archive` | `git archive` of the commit as `localcache-vX.Y.Z.tar.gz`, its SHA-256, and a build-provenance attestation |
+| `Publish` | The only job in the `release` Environment, so the only one that can obtain a registry token. It runs `cargo publish --workspace --locked` (with `--dry-run` for a dry run) and records the `.crate` digests |
+| `GitHub release` | Only when `dry_run` is off: a release named by the tag, with the version's `CHANGELOG.md` section, the archive, and the archive and `.crate` SHA-256 digests |
+
+The tag's signature is made on the owner's machine and is **not** verified by
+CI. To check an archive from a release:
+
+```sh
+gh attestation verify localcache-vX.Y.Z.tar.gz --repo nabbisen/localcache-rs
+```
+
+### Rehearsal
+
+A dry run may also be started from `main`. It runs the whole chain (the gate on
+its branch path, both reusable workflows, the archive and its attestation, the
+identity exchange with crates.io for both crates, and `cargo publish --dry-run`)
+and publishes nothing, so a mistake in the trust setup shows up before a release.
+The rehearsal needs branch `main` to be allowed on the `release` Environment;
+remove it when the rehearsal is done, so that afterwards only tags can deploy.
+
+### If a publish stops half way
+
+`cargo publish --workspace` uploads the crates in dependency order. If
+`localcache` was uploaded and `localcache-cli` failed, **do not run the workflow
+again**: the first crate's version already exists. Check crates.io, then publish
+the missing crate by hand with the owner's own token, or release a new patch
+version.
+
+### One-time setup (owner)
+
+- GitHub Environment `release`: the owner as required reviewer, with "prevent
+  self-review" off (the owner both starts and approves), deployments limited to
+  tags matching `[0-9]*.[0-9]*.[0-9]*`.
+- On crates.io, for each of `localcache` and `localcache-cli`, a trusted
+  publisher: repository `nabbisen/localcache-rs`, workflow `release.yaml`,
+  environment `release`.
