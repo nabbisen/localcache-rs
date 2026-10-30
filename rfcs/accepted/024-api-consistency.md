@@ -359,6 +359,12 @@ unless you ask to skip.
 The migration precondition (a rollback-capable or WAL journal) is unchanged. A `Preserve` open of
 a database in `OFF` or `MEMORY` mode is refused by the existing check, as a `Delete` open would be.
 
+*Erratum (architect, 2026-10-31, Q2f review 053).* The second sentence above describes a database file that
+cannot exist: SQLite stores only `WAL` (and `DELETE`) in the file; `OFF`, `MEMORY`, `TRUNCATE` and `PERSIST`
+are held by a connection and read back as `delete` by the next connection. An engine always opens a new
+connection, so it never meets `OFF` or `MEMORY` in a file. The refusal exists and is tested at the connection
+level (`prepare_file_migration`); `Preserve` goes through the same check.
+
 ### B3 — Imports honour `max_entries`
 
 `import_entries` and `import_from` enforce `max_entries` under **the same rule as `batch_set`**
