@@ -218,9 +218,8 @@ jobs:
           path: ${{ runner.temp }}/localcache-archive
           if-no-files-found: error
 
-  # RFC 009 R9 / M6e items 7-8: rustdoc, mdBook, and joint cargo package
-  # --workspace verification. Uploads doc/package evidence only; never
-  # publishes to a registry.
+  # RFC 009 R9: rustdoc, mdBook and `cargo package --workspace --locked`
+  # (`cargo make gate-docs`). Never publishes to a registry.
   doc-package:
     name: Docs and package verification
     needs: source-integrity
@@ -248,17 +247,17 @@ jobs:
             ~/.cargo/git
             target
           key: ubuntu-24.04-cargo-doc-package-${{ hashFiles('**/Cargo.lock') }}
-      - name: cargo doc, mdbook build, cargo package --workspace (RFC 009 R9)
-        run: >-
-          python3 scripts/release.py doc-package
-          --output-dir "$RUNNER_TEMP/localcache-doc-package-evidence"
-      - name: Preserve doc/package evidence
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - name: Cache pinned gate tools
+        id: tools
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          name: doc-package-evidence
-          path: ${{ runner.temp }}/localcache-doc-package-evidence
-          if-no-files-found: error
+          path: ~/.cargo/bin/cargo-make
+          key: ubuntu-24.04-gate-tools-make-0.37.24
+      - name: Install pinned gate tools
+        if: steps.tools.outputs.cache-hit != 'true'
+        run: cargo install cargo-make --version 0.37.24 --locked
+      - name: cargo doc, mdbook build, cargo package --workspace (RFC 009 R9)
+        run: cargo make gate-docs
 
   # RFC 009 M6c item 3: the final fail-closed gate. Runs even if an earlier
   # job failed (`if: always()`) so it reports the exact binding failure
@@ -286,11 +285,6 @@ jobs:
         with:
           name: project-archive-evidence
           path: ${{ runner.temp }}/project-archive-evidence
-      - name: Download doc/package evidence
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: doc-package-evidence
-          path: ${{ runner.temp }}/doc-package-evidence
       - name: Aggregate and verify CI provenance
         run: >-
           python3 scripts/release.py aggregate-ci
@@ -307,7 +301,6 @@ jobs:
           --require-job "archive=${{ needs.archive.result }}"
           --require-job "doc-package=${{ needs.doc-package.result }}"
           --evidence-manifest "$RUNNER_TEMP/project-archive-evidence/evidence/manifest.json"
-          --evidence-manifest "$RUNNER_TEMP/doc-package-evidence/manifest.json"
       - name: Preserve aggregation evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
