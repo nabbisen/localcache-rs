@@ -14,10 +14,8 @@
 # Pinned tools (cargo install <tool> --version <v> --locked): cargo-make
 # 0.37.24, cargo-hack 0.6.45, cargo-deny 0.20.2.
 #
-# Publishing (RFC 022 R3): `cargo make release` runs the RFC 009 R12
-# canonical gates (source, msrv, doc-package, security). Publication
-# itself is owner-only and manual: `cargo publish --workspace --locked`
-# (RFC 009 R15), run after `cargo make release` passes.
+# Publishing is owner-only and manual: `cargo publish --workspace --locked`
+# (RFC 009 R15), after CI is green on the commit.
 
 [config]
 default_to_workspace = false
@@ -91,80 +89,6 @@ args = ["package", "--list", "--allow-dirty"]
 description = "Dry-run package build for the library crate"
 command = "cargo"
 args = ["package", "--no-verify", "--allow-dirty"]
-
-[tasks.doc-package-check]
-description = "cargo doc, mdbook build, and joint cargo package --workspace verification (RFC 009 R9)"
-command = "python3"
-args = [
-    "scripts/release.py",
-    "doc-package",
-    "--output-dir",
-    ".git-exclude/doc-package-evidence",
-]
-
-# ---------------------------------------------------------------------------
-# Release helpers
-# ---------------------------------------------------------------------------
-
-[tasks.changelog-check]
-description = "Verify CHANGELOG.md has an entry for the current version"
-script = [
-    '''
-    VERSION=$(cargo metadata --no-deps --format-version 1 | python3 -c "import sys,json; pkgs=json.load(sys.stdin)[\"packages\"]; print(next(p[\"version\"] for p in pkgs if p[\"name\"]==\"localcache\"))")
-    echo "Checking CHANGELOG for v${VERSION}..."
-    grep -q "## \\[${VERSION}\\]" CHANGELOG.md && echo "OK: found [${VERSION}]" || (echo "ERROR: no entry for [${VERSION}] in CHANGELOG.md" && exit 1)
-    '''
-]
-
-[tasks.version-check]
-description = "Verify both workspace package versions match"
-script = [
-    '''
-    LIB=$(cargo metadata --no-deps --format-version 1 | python3 -c "import sys,json; pkgs=json.load(sys.stdin)[\"packages\"]; print(next(p[\"version\"] for p in pkgs if p[\"name\"]==\"localcache\"))")
-    CLI=$(cargo metadata --no-deps --format-version 1 | python3 -c "import sys,json; pkgs=json.load(sys.stdin)[\"packages\"]; print(next(p[\"version\"] for p in pkgs if p[\"name\"]==\"localcache-cli\"))")
-    echo "localcache:     ${LIB}"
-    echo "localcache-cli: ${CLI}"
-    [ "${LIB}" = "${CLI}" ] && echo "OK: versions match" || (echo "ERROR: version mismatch" && exit 1)
-    '''
-]
-
-[tasks.release]
-description = "RFC 009 R12 canonical release entry point: source, msrv, doc-package, security in order, fail-fast, one consolidated evidence bundle"
-command = "python3"
-args = [
-    "scripts/release.py",
-    "release",
-    "--output-dir",
-    ".git-exclude/release-evidence",
-]
-
-[tasks.release-check]
-description = "Full pre-release checklist: quality matrix plus the RFC 009 R12 canonical release entry point"
-dependencies = ["fmt-check", "gate-features", "version-check", "changelog-check", "release"]
-
-# ---------------------------------------------------------------------------
-# RFC 009 M1 source archive verification
-#
-# Produces below .git-exclude/release-output/:
-#   localcache-vX.Y.Z.tar.gz
-#   evidence/
-#
-# Project files are at archive root. The runner refuses a dirty checkout,
-# validates raw headers before extraction, and runs the M1 smoke gates from
-# both the checkout and a Git-free fresh extraction. RFC 017 retired the
-# canonical/noncanonical distinction: this runs on any supported host, and
-# the uncompressed-tar digest is the same-host determinism gate (R2).
-# ---------------------------------------------------------------------------
-
-[tasks.archive]
-description = "Construct and verify the RFC 009/017 project source archive"
-command = "python3"
-args = [
-    "scripts/release.py",
-    "source",
-    "--output-dir",
-    ".git-exclude/release-output",
-]
 
 # ---------------------------------------------------------------------------
 # RFC 027 — the standard gates

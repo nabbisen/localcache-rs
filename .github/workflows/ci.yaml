@@ -257,11 +257,10 @@ jobs:
       - name: cargo doc, mdbook build, cargo package --workspace (RFC 009 R9)
         run: cargo make gate-docs
 
-  # RFC 009 M6c item 3: the final fail-closed gate. Runs even if an earlier
-  # job failed (`if: always()`) so it reports the exact binding failure
-  # instead of being silently skipped. It is the only job that reads
-  # `needs.*.result`, `github.run_id`, and `github.sha` — every other gate is
-  # CI-agnostic and runs identically locally via `scripts/release.py`.
+  # The aggregator (RFC 009 R12): fails unless every job it needs succeeded.
+  # `if: always()` makes it run when a needed job failed, was skipped or was
+  # cancelled; any result other than "success" fails it. Its input is the
+  # `needs` context as JSON in $NEEDS, so the body can be run by hand.
   release-gate:
     name: Release gate aggregation
     if: always()
@@ -277,26 +276,9 @@ jobs:
       - doc-package
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Aggregate and verify CI provenance
-        run: >-
-          python3 scripts/release.py aggregate-ci
-          --output-dir "$RUNNER_TEMP/release-gate-evidence"
-          --run-id "${{ github.run_id }}"
-          --sha "${{ github.sha }}"
-          --require-job "source-integrity=${{ needs.source-integrity.result }}"
-          --require-job "fmt=${{ needs.fmt.result }}"
-          --require-job "version-consistency=${{ needs.version-consistency.result }}"
-          --require-job "standard-gates=${{ needs.standard-gates.result }}"
-          --require-job "bench-compile=${{ needs.bench-compile.result }}"
-          --require-job "msrv=${{ needs.msrv.result }}"
-          --require-job "standard-deny=${{ needs.standard-deny.result }}"
-          --require-job "archive=${{ needs.archive.result }}"
-          --require-job "doc-package=${{ needs.doc-package.result }}"
-      - name: Preserve aggregation evidence
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: release-gate-evidence
-          path: ${{ runner.temp }}/release-gate-evidence
-          if-no-files-found: error
+      - name: Fail unless every needed job succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "$NEEDS" | jq -e 'length > 0 and all(.[]; .result == "success")' > /dev/null
