@@ -1,13 +1,18 @@
 # Makefile.toml — cargo-make task runner for localcache
 #
-# Install:  cargo install cargo-make
+# Install:  cargo install cargo-make --version 0.37.24 --locked
 # Usage:    cargo make <task>
 #
-# Common tasks:
-#   cargo make check          — fmt + clippy (all feature combinations)
-#   cargo make test           — full test suite with all features
-#   cargo make source-integrity — verify manifest target sources without Cargo
+# Gates (the same tasks CI runs; RFC 027):
+#   cargo make gate-features  — feature assertion, clippy and tests on every row
+#   cargo make gate-msrv      — declared-MSRV check (rustup run 1.85 cargo make gate-msrv)
+#   cargo make gate-deny      — advisories and sources (deny.toml)
+#   cargo make fmt-check      — formatting
 #   cargo make bench-compile  — verify benchmarks compile
+#   cargo make source-integrity — verify manifest target sources without Cargo
+#
+# Pinned tools (cargo install <tool> --version <v> --locked): cargo-make
+# 0.37.24, cargo-hack 0.6.45, cargo-deny 0.20.2.
 #
 # Publishing (RFC 022 R3): `cargo make release` runs the RFC 009 R12
 # canonical gates (source, msrv, doc-package, security). Publication
@@ -46,93 +51,18 @@ command = "cargo"
 args = ["fmt", "--all"]
 
 # ---------------------------------------------------------------------------
-# Canonical RFC 009 R7 / R12 matrix — scripts/feature_matrix.py is the single
-# checked-in source of truth for rows; these tasks are thin aliases over it,
-# not an independent command list.
-# ---------------------------------------------------------------------------
-
-[tasks.matrix-coverage-check]
-description = "Fail closed if a declared Cargo feature has no matrix row"
-command = "python3"
-args = ["scripts/feature_matrix.py", "--check-coverage"]
-
-[tasks.matrix-clippy]
-description = "Clippy (-D warnings) across every canonical matrix row"
-command = "python3"
-args = ["scripts/feature_matrix.py", "--run-all", "--modes", "clippy"]
-
-[tasks.matrix-test]
-description = "Test across every canonical matrix row"
-command = "python3"
-args = ["scripts/feature_matrix.py", "--run-all", "--modes", "test"]
-
-[tasks.matrix]
-description = "Full canonical matrix: clippy + test, every row"
-command = "python3"
-args = ["scripts/feature_matrix.py", "--run-all"]
-
-[tasks.clippy-default]
-description = "Clippy: localcache with no optional features"
-command = "python3"
-args = ["scripts/feature_matrix.py", "--run", "lib-no-features", "--modes", "clippy"]
-
-[tasks.clippy-all]
-description = "Clippy: localcache with all features enabled"
-command = "python3"
-args = ["scripts/feature_matrix.py", "--run", "lib-all-features", "--modes", "clippy"]
-
-[tasks.clippy-min]
-description = "Clippy: localcache with no optional features (alias of clippy-default)"
-command = "python3"
-args = ["scripts/feature_matrix.py", "--run", "lib-no-features", "--modes", "clippy"]
-
-[tasks.check]
-description = "Format check + coverage check + clippy across the canonical matrix"
-dependencies = [
-    "source-integrity-test",
-    "source-integrity",
-    "fmt-check",
-    "matrix-coverage-check",
-    "matrix-clippy",
-]
-
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
-
-[tasks.test]
-description = "Run tests: localcache with all features"
-command = "python3"
-args = ["scripts/feature_matrix.py", "--run", "lib-all-features", "--modes", "test"]
-
-[tasks.test-default]
-description = "Run tests: localcache with default (no optional) features"
-command = "python3"
-args = ["scripts/feature_matrix.py", "--run", "lib-no-features", "--modes", "test"]
-
-[tasks.test-no-features]
-description = "Run tests: localcache with no optional features (alias of test-default)"
-command = "python3"
-args = ["scripts/feature_matrix.py", "--run", "lib-no-features", "--modes", "test"]
-
-[tasks.test-all]
-description = "Run tests across the full canonical matrix (every row)"
-command = "python3"
-args = ["scripts/feature_matrix.py", "--run-all", "--modes", "test"]
-
-# ---------------------------------------------------------------------------
 # Benchmarks
 # ---------------------------------------------------------------------------
 
 [tasks.bench-compile]
 description = "Verify benchmarks compile (no actual run)"
-command = "python3"
-args = ["scripts/feature_matrix.py", "--run-bench-compile"]
+command = "cargo"
+args = ["bench", "-p", "localcache", "--bench", "cache_bench", "--no-run", "--features", "json", "--locked"]
 
 [tasks.bench]
-description = "Run benchmarks (requires --features json)"
-command = "python3"
-args = ["scripts/feature_matrix.py", "--run-bench"]
+description = "Run benchmarks"
+command = "cargo"
+args = ["bench", "-p", "localcache", "--bench", "cache_bench", "--features", "json", "--locked"]
 
 # ---------------------------------------------------------------------------
 # Documentation
@@ -220,7 +150,7 @@ args = [
 
 [tasks.release-check]
 description = "Full pre-release checklist: quality matrix plus the RFC 009 R12 canonical release entry point"
-dependencies = ["fmt-check", "matrix-coverage-check", "matrix", "version-check", "changelog-check", "release"]
+dependencies = ["fmt-check", "gate-features", "version-check", "changelog-check", "release"]
 
 # ---------------------------------------------------------------------------
 # RFC 009 M1 source archive verification
@@ -247,12 +177,14 @@ args = [
 ]
 
 # ---------------------------------------------------------------------------
-# RFC 027 Q9a — standard gates, beside the RFC 009 gates above
+# RFC 027 — the standard gates
 #
-# Each gate is the literal command; CI (`.github/workflows/ci.yaml`, job
-# "Standard gates") runs these same tasks. Q9b removes the RFC 009 gates they
-# replace. Pinned tools (installed with `cargo install <tool> --version <v>
-# --locked`): cargo-make 0.37.24, cargo-hack 0.6.45, cargo-deny 0.20.2.
+# Each gate is the literal command; CI (`.github/workflows/ci.yaml`) runs these
+# same tasks, so the local command is the CI command. Pinned tools (installed
+# with `cargo install <tool> --version <v> --locked`): cargo-make 0.37.24,
+# cargo-hack 0.6.45, cargo-deny 0.20.2. Where they are pinned: this header and
+# the "Cache pinned gate tools" steps of `ci.yaml`, `advisories.yaml` and
+# `msrv-fresh.yaml`.
 # ---------------------------------------------------------------------------
 
 [tasks.gate-features-assert]

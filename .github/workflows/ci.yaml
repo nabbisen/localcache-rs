@@ -45,56 +45,9 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all --check
 
-  matrix-setup:
-    name: Matrix setup
-    needs: source-integrity
-    runs-on: ubuntu-24.04
-    outputs:
-      rows: ${{ steps.rows.outputs.rows }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Fail closed on an uncovered Cargo feature
-        run: python3 scripts/feature_matrix.py --check-coverage
-      - name: Enumerate canonical matrix rows
-        id: rows
-        run: echo "rows=$(python3 scripts/feature_matrix.py --list --json)" >> "$GITHUB_OUTPUT"
-
-  # RFC 009 R7 / R12: rows come from scripts/feature_matrix.py, the single
-  # checked-in source of truth — this job does not maintain its own feature
-  # list. Each row runs clippy (-D warnings) and test; the doctest-only row
-  # skips clippy internally.
-  matrix:
-    name: Matrix (${{ matrix.row }})
-    needs: matrix-setup
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        row: ${{ fromJson(needs.matrix-setup.outputs.rows) }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
-        with:
-          components: clippy
-
-      - name: Cache cargo registry
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ubuntu-24.04-cargo-${{ matrix.row }}-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Run matrix row (clippy -D warnings + test)
-        run: python3 scripts/feature_matrix.py --run "${{ matrix.row }}"
-
-  # RFC 027 Q9a: the standard gates, beside the RFC 009 matrix above. They run
-  # the Makefile.toml tasks, so the local command is the CI command. Parity
-  # with the old gates is proven first; Q9b removes the old ones and adds these
-  # jobs to `release-gate`. Until then they are deliberately NOT in its `needs`.
+  # RFC 027 Q9a/Q9b: the feature matrix is `cargo make gate-features`
+  # (`cargo hack --each-feature` plus the two runtime-suite rows, the CLI rows
+  # and the doctests), so the local command is the CI command.
   # Same R16 posture as every job here: read-only, no secrets, pinned actions.
   standard-gates:
     name: Standard gates (feature matrix)
@@ -169,8 +122,17 @@ jobs:
             ~/.cargo/git
             target
           key: ubuntu-24.04-cargo-bench-${{ hashFiles('**/Cargo.lock') }}
+      - name: Cache pinned gate tools
+        id: tools
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-make
+          key: ubuntu-24.04-gate-tools-make-0.37.24
+      - name: Install pinned gate tools
+        if: steps.tools.outputs.cache-hit != 'true'
+        run: cargo install cargo-make --version 0.37.24 --locked
       - name: Check bench compiles
-        run: python3 scripts/feature_matrix.py --run-bench-compile
+        run: cargo make bench-compile
 
   msrv:
     name: MSRV (declared Rust 1.85)
@@ -319,7 +281,7 @@ jobs:
     needs:
       - source-integrity
       - fmt
-      - matrix
+      - standard-gates
       - bench-compile
       - msrv
       - dependency-security
@@ -351,7 +313,7 @@ jobs:
           --sha "${{ github.sha }}"
           --require-job "source-integrity=${{ needs.source-integrity.result }}"
           --require-job "fmt=${{ needs.fmt.result }}"
-          --require-job "matrix=${{ needs.matrix.result }}"
+          --require-job "standard-gates=${{ needs.standard-gates.result }}"
           --require-job "bench-compile=${{ needs.bench-compile.result }}"
           --require-job "msrv=${{ needs.msrv.result }}"
           --require-job "dependency-security=${{ needs.dependency-security.result }}"

@@ -954,13 +954,13 @@ class ReleaseRunnerTests(unittest.TestCase):
                     "42",
                     "--sha",
                     "abc123",
-                    *self._require_job_args(matrix="failure"),
+                    *self._require_job_args(fmt="failure"),
                 ]
             )
             self.assertNotEqual(status, 0)
             summary = (output / "summary.log").read_text(encoding="utf-8")
             self.assertIn("status: FAIL", summary)
-            self.assertIn("matrix", summary)
+            self.assertIn("'fmt'", summary)
             self.assertNotIn("evidence-binding: PASS", summary)
 
     def test_aggregate_ci_rejects_a_malformed_require_job_value(self) -> None:
