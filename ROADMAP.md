@@ -1671,7 +1671,7 @@ authorization. **Done:** Q9a–Q9c, Q3d, Q1c, Q3b, Q3c, Q2f (local commits), Q3e
 
 | # | Gate | Owner of the step | Depends on |
 |---|---|---|---|
-| 1 | Q10 bounded decoding (RFC 025 Amendment 2, **accepted by the owner 2026-10-31**) | dev builds; handoff `rfcs/handoffs/025-…/q10-bounded-payload-decoding.md` | Q3e committed |
+| 1 | Q10 bounded decompression (RFC 025 Amendment 2, **revised 2026-10-31 after the owner's second-review request; awaiting re-acceptance**) | owner re-accepts; dev builds; handoff `rfcs/handoffs/025-…/q10-bounded-payload-decoding.md` (held) | the owner's re-acceptance |
 | 2 | Security-model page for the book (documentation only; ships with the release push) | architect | none |
 | 3 | `preload` quiet-host measurement (no code) | dev | none; runs while Q10 waits |
 | 4 | One-time release setup (GitHub Environment `release`; trusted-publisher record for each crate) and the `Release` dry run from `main` | owner does the setup; architect reviews the run | none; **must finish before gate 7** |

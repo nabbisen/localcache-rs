@@ -435,99 +435,129 @@ the database exactly as it found them.
   it leaves the file byte-identical, `user_version` unchanged, and the journal mode as it was. Write
   it failing-before, as the Phase 24 rule requires.
 
-## Amendment 2 (architect, 2026-10-31) — Bounded payload decoding; an eighth variant
+## Amendment 2 (architect, 2026-10-31, revised the same day) — Bounded decompression; an eighth variant
 
-**Status: Accepted by the owner, 2026-10-31, as written (D1 to D7, the 64 MiB default and the name `PayloadTooLarge`).** It adds one variant, so R3's rule
-("a new variant needs a review") applies; this amendment is that review.
+**Status: revised by the architect after the owner asked for a second review against the project's philosophy
+("finally clean, safe and secure, robust and sophisticated"; less is more; no API that confuses). The first
+text, accepted earlier on 2026-10-31, is superseded by this one; the revision awaits the owner's acceptance.**
+It adds one variant, so R3's rule ("a new variant needs a review") applies; this amendment is that review.
+
+### What the second review found wrong in the first text
+
+1. **It limited the wrong thing.** The threat is *amplification*: a few KB that become a GiB. Only
+   decompression amplifies without bound. An uncompressed payload is exactly as large as its stored blob, which
+   a read already holds in memory; refusing it above 64 MiB protects nothing, and it would make every existing
+   large `raw` or `json` entry unreadable after the upgrade. A limit that costs legitimate users and buys no
+   safety fails "robust" and "less is more".
+2. **A variant and an option that can never occur in most builds.** Without the `compression` feature nothing
+   decompresses, so `PayloadTooLarge` could never be returned: the same defect for which this RFC removes
+   `PayloadVersionMismatch` (R5), and R3 says each variant exists exactly in the builds that can return it. The
+   precedent for the option is `CacheOptions::compress_payloads`, which is `#[cfg(feature = "compression")]`.
+3. **An unverified claim.** "Transient memory of roughly three times the limit" was asserted, not measured.
+4. **The bincode length-claim probe was tangled into the same rule.** It is a different threat (a claim inside
+   the data) and a different decision; it stays a required probe, but if it finds a problem the answer is a
+   design request, not an extension of this rule.
 
 ### The defect (reproduced; announced as a Known issue in v0.21.6)
 
 `serialization::decompress_bytes` calls `zstd::decode_all` with no limit. A stored payload of about 32 KB can
 expand to 1 GiB, and `get` aborts the process (exit 134, `.git-exclude/tmp/`, registered 2026-10-29). Anyone
 who can write the database file, or an `ExportRecord` that is imported, can make a reader abort. An abort is
-not an error a caller can handle. The same unbounded read is on every decode path, because they all end in
-`decode_payload`.
+not an error a caller can handle. Every read ends in `decode_payload`, so every read is exposed.
 
 ### What the project measures
 
 The largest payload any benchmark, test or example in the repository stores is a 1536-element `Vec<f32>`
 (`benches/cache_bench.rs`): **6,152 bytes** with the bincode codec (8-byte length plus 6,144), and at most
 about 17 KB as JSON (1,536 numbers of at most 10 characters plus separators). The CLI stores arbitrary bytes,
-so user payloads are not bounded by the project. The measured maximum therefore fixes only the lower end of
-the choice; the default is chosen for safety (D2).
+so user payloads are not bounded by the project. The measured maximum fixes only the lower end of the choice;
+the default is chosen for safety (D2).
 
 ### Decisions
 
-**D1 — The error.** A new variant, in every feature combination:
+**D1 — The error.** A new variant, **only with the `compression` feature**:
 
 ```rust
-/// A payload is larger than `max_payload_bytes`, on read or on write.
-#[error("payload exceeds the {limit}-byte limit (CacheOptions::max_payload_bytes)")]
+/// A payload would exceed `max_decompressed_bytes` once decompressed: found on read of a stored
+/// compressed payload, or on write of a payload that is about to be compressed.
+#[cfg(feature = "compression")]
+#[error("payload exceeds the {limit}-byte limit for compressed payloads (CacheOptions::max_decompressed_bytes)")]
 PayloadTooLarge { limit: usize },
 ```
 
 A caller acts on it differently from corruption: raise the option, or treat the entry as unusable. It is not
-`Serialization` (not matchable), not `Io` (what `decode_all` returned for a malformed frame), and not
-`UnknownEncoding`. Only the limit is reported: while streaming, the real size is unknown (it is "more than the
-limit"), and a frame's declared size is not to be trusted.
+`Serialization` (not matchable), not `Io` (what a malformed frame returns), and not `UnknownEncoding`. Only the
+limit is reported: while streaming, the real size is unknown ("more than the limit"), and a frame's declared
+size is not to be trusted.
 
-**D2 — The option and its default.** `CacheOptions::max_payload_bytes: usize` (builder:
-`max_payload_bytes(n)`), default **64 MiB** (`67_108_864`), a documented public constant
-`DEFAULT_MAX_PAYLOAD_BYTES`. `0` is rejected as `InvalidConfiguration { option: "max_payload_bytes" }`
-(a limit that admits nothing). The limit applies to the payload's **decoded bytes**: the bytes the
-deserializer receives, after decryption and decompression, and symmetrically to the **serialized bytes
-before compression and encryption** on write. 64 MiB is about 10,000 times the largest measured payload and
-bounds a read's transient memory to roughly three times the limit (stream buffer, decoded bytes, the value).
-A consumer with larger payloads raises it explicitly, and the error says how.
+**D2 — The option and its default.** `CacheOptions::max_decompressed_bytes: usize`, **`#[cfg(feature =
+"compression")]` like `compress_payloads`**, with the builder's `max_decompressed_bytes(n)`, default **64 MiB**
+(`67_108_864`), a documented public constant `DEFAULT_MAX_DECOMPRESSED_BYTES`. `0` is rejected as
+`InvalidConfiguration { option: "max_decompressed_bytes" }` (a limit that admits nothing). It bounds **the size
+of a payload after decompression**; it says nothing about uncompressed payloads, which this release does not
+limit. 64 MiB is about 10,000 times the largest measured payload. A default has two failure modes: too small
+costs users with unusually large compressed payloads a clear error and a one-line fix; too large lets a hostile
+file exhaust a modest host. The second is the worse, so the default errs small. The transient memory of a
+refused read is bounded by the limit plus the stream buffer; the implementation **measures** it (Test plan).
 
 **D3 — Enforcement on read.** In `decode_payload` (the one function every read ends in: `get`,
-`get_if_fresh`, `batch_get`, every query tier, `preload`), after decryption and for every codec:
-- for a `zstd` frame, first the **declared content size** (`zstd_safe::get_frame_content_size`): if it is
-  present and greater than the limit, return the error **without allocating**; then decode through the
-  streaming `zstd::stream::read::Decoder` behind `Read::take(limit + 1)` into a buffer pre-sized to
-  `min(declared, limit)` when the size is known, and return the error if more than `limit` bytes arrive;
-- for an uncompressed payload, `data.len() > limit` is the error.
-A malformed frame stays `Io` as today. Query tiers record `PayloadTooLarge` as a skipped entry's error like
-any other decode failure (RFC 024 B1 then makes `run()` return it).
+`get_if_fresh`, `batch_get`, every query tier, `preload`), for a `zstd` payload only:
+- first the **declared content size** (`zstd_safe::get_frame_content_size`): if present and greater than the
+  limit, return the error **without allocating**;
+- then decode through the streaming `zstd::stream::read::Decoder` behind `Read::take(limit + 1)` into a buffer
+  pre-sized to `min(declared, limit)` when the size is known, and return the error if more than `limit` bytes
+  arrive.
+A malformed frame stays `Io` as today. Uncompressed payloads are untouched. Query tiers record `PayloadTooLarge`
+as a skipped entry's error like any other decode failure (RFC 024 B1 then makes `run()` return it).
 
-**D4 — Enforcement on write.** In `encode_payload`, the serialized length before compression and encryption
-is checked against the limit and returns `PayloadTooLarge` (for `batch_set` a per-item failure, as other
-encode errors are). Without this, `set` could store what the same engine can no longer read.
+**D4 — Enforcement on write, only where it prevents a trap.** When a payload is about to be compressed, its
+serialized length is checked against the limit before any compression and returns `PayloadTooLarge` (for
+`batch_set` a per-item failure, as other encode errors are). Without this, `set` could store a compressed
+payload that the same engine then refuses to read. A payload that is not compressed is not checked: nothing
+stored uncompressed can be unreadable because of this option.
 
 **D5 — Import and export do not decode.** `export_entries` writes stored bytes and `import_entries` stores
 them; neither runs `decode_payload`. After D3 a hostile record is harmless: the next read returns
 `PayloadTooLarge`. Adding a decode to every import record would make imports pay a decompression for a
-condition that D3 already handles at the one place it matters. `rotate_encryption_key` re-encrypts stored
-bytes and does not decode either.
+condition D3 already handles at the one place it matters. `rotate_encryption_key` re-encrypts stored bytes and
+does not decode either.
 
 **D6 — `zstd` with `default-features = false`.** The default features (`legacy`, `arrays`, `zdict_builder`)
 add decoders for pre-2016 frame formats, array-sized buffers and dictionary training. localcache writes and
 reads only standard frames; the workspace requirement becomes `zstd = { version = "0.14", default-features =
 false }`. The compat fixtures (payloads written by released versions) are the proof that nothing is lost.
 
-**D7 — A probe the implementation must run.** A crafted `raw` (bincode) payload whose length prefix claims a
-huge `Vec` may allocate before the deserializer finds the bytes missing. The handoff requires a probe; if it
-allocates beyond the payload's length, the bincode configuration gets a limit consistent with D2 and the
-amendment's rule is extended to "no stored byte sequence of at most S bytes makes a read allocate more than a
-constant multiple of the limit". If the probe shows no problem, the test records that.
+**D7 — A probe the implementation must run and report.** A crafted `raw` (bincode) payload whose length prefix
+claims a huge `Vec` may allocate before the deserializer finds the bytes missing. That is a different threat
+from decompression and, if real, a different decision (it would apply to uncompressed payloads, which this
+amendment leaves unlimited). The implementation reports the probe's result under a memory ceiling. If it
+aborts or allocates far beyond the payload, the implementation **stops and files a design request**; it does
+not widen this rule.
 
 ### Compatibility
 
-Breaking, in v0.22.0 (announced in v0.21.6): a `CacheOptions` field is added (exhaustive struct literals
-without `..Default::default()` stop compiling; that idiom is the documented one); an entry stored by an earlier
-version whose decoded size exceeds 64 MiB is refused by default until the option is raised; a `set` of a
-payload over the limit is rejected. The error names the option. Nothing in the file format changes.
+Breaking, in v0.22.0 (announced in v0.21.6): with the `compression` feature a `CacheOptions` field and an error
+variant are added (exhaustive struct literals without `..Default::default()` stop compiling; that idiom is the
+documented one); a stored compressed entry that decompresses to more than 64 MiB is refused by default until
+the option is raised; a `set` of such a payload is rejected. The error names the option. **Without the
+`compression` feature nothing changes in the API.** Uncompressed entries of any size keep reading. Nothing in
+the file format changes.
 
 ### Test plan
 
 A crafted 32 KB-class frame expanding past the limit is refused with `PayloadTooLarge` on `get`,
-`get_if_fresh`, `batch_get`, every query tier and `preload`, without the process aborting and with memory
-bounded (measured peak resident size for the bomb is below a stated multiple of the limit); a frame with a
-forged small declared size is refused after the streaming bound; a payload exactly at the limit round-trips and
-one byte over is refused on both `set` and `get`; the limit option is honoured per engine, rejected at 0; the
-compat fixtures decode unmodified under `default-features = false`; the bincode probe (D7).
+`get_if_fresh`, `batch_get`, every query tier and `preload`, without the process aborting, and the peak
+resident size of the refusal is measured and stated (it must stay near the limit, not a multiple of the
+expansion); a frame with a forged small declared size is refused after the streaming bound or as a malformed
+frame, never aborts; a compressed payload whose serialized size is exactly the limit round-trips and one byte
+over is refused on `set` and, stored by other means, on `get`; an **uncompressed** payload larger than the
+limit still reads and writes; the option is honoured per engine, rejected at 0; the compat fixtures decode
+unmodified under `default-features = false`; the build without `compression` has neither the option nor the
+variant; the bincode probe (D7).
 
-### Decision
+### Decision requested of the owner
 
-The owner accepted D1 to D7 as written, including the **default of 64 MiB** and the variant name `PayloadTooLarge`
-(2026-10-31). Handoff: `../handoffs/025-error-taxonomy-and-input-validation/q10-bounded-payload-decoding.md`.
+Accept this revision (D1 to D7) in place of the first text. The substantive changes: the limit applies to
+decompressed size only; the variant and the option exist only with `compression`; the option is named
+`max_decompressed_bytes`; the default stays 64 MiB; the variant keeps the name `PayloadTooLarge`. Recommended:
+accept. Q10 starts when you do (it is held, not cancelled; the other slices do not depend on it).
