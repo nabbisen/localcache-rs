@@ -196,17 +196,17 @@ jobs:
             ~/.cargo/git
             target
           key: ubuntu-24.04-cargo-msrv-${{ hashFiles('**/Cargo.lock') }}
-      - name: Check declared-MSRV matrix with toolchain evidence (RFC 009 R8/R14)
-        run: >-
-          python3 scripts/release.py msrv
-          --output-dir "$RUNNER_TEMP/localcache-msrv-evidence"
-      - name: Preserve MSRV evidence
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - name: Cache pinned gate tools
+        id: tools
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          name: msrv-evidence
-          path: ${{ runner.temp }}/localcache-msrv-evidence
-          if-no-files-found: error
+          path: ~/.cargo/bin/cargo-make
+          key: ubuntu-24.04-gate-tools-make-0.37.24
+      - name: Install pinned gate tools
+        if: steps.tools.outputs.cache-hit != 'true'
+        run: cargo install cargo-make --version 0.37.24 --locked
+      - name: Check the declared-MSRV matrix (RFC 009 R8)
+        run: cargo make gate-msrv
 
   dependency-security:
     name: Dependency security policy
@@ -338,11 +338,6 @@ jobs:
         with:
           name: project-archive-evidence
           path: ${{ runner.temp }}/project-archive-evidence
-      - name: Download MSRV evidence
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: msrv-evidence
-          path: ${{ runner.temp }}/msrv-evidence
       - name: Download doc/package evidence
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -364,7 +359,6 @@ jobs:
           --require-job "doc-package=${{ needs.doc-package.result }}"
           --evidence-manifest "$RUNNER_TEMP/dependency-security-evidence/manifest.json"
           --evidence-manifest "$RUNNER_TEMP/project-archive-evidence/evidence/manifest.json"
-          --evidence-manifest "$RUNNER_TEMP/msrv-evidence/manifest.json"
           --evidence-manifest "$RUNNER_TEMP/doc-package-evidence/manifest.json"
       - name: Preserve aggregation evidence
         if: always()

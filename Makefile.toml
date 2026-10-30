@@ -135,32 +135,6 @@ command = "python3"
 args = ["scripts/feature_matrix.py", "--run-bench"]
 
 # ---------------------------------------------------------------------------
-# Declared-MSRV matrix (RFC 014 R8) — rows come from
-# scripts/feature_matrix.py's MSRV_ROW_NAMES, not a hand-written list here.
-# ---------------------------------------------------------------------------
-
-[tasks.msrv-check]
-description = "Run the declared-MSRV cargo-check matrix with toolchain evidence"
-command = "python3"
-args = [
-    "scripts/release.py",
-    "msrv",
-    "--output-dir",
-    ".git-exclude/msrv-evidence",
-]
-
-[tasks.msrv-fresh]
-description = "RFC 023 R6.2: resolve with no lockfile under the declared MSRV, then run the declared-MSRV rows"
-command = "python3"
-args = [
-    "scripts/release.py",
-    "msrv",
-    "--fresh",
-    "--output-dir",
-    ".git-exclude/msrv-fresh-evidence",
-]
-
-# ---------------------------------------------------------------------------
 # Documentation
 # ---------------------------------------------------------------------------
 
@@ -335,3 +309,21 @@ dependencies = ["gate-features-assert", "gate-clippy", "gate-test"]
 description = "Dependency security: advisories and sources (deny.toml); a stale ignore fails"
 command = "cargo"
 args = ["deny", "--locked", "check", "-D", "advisory-not-detected", "advisories", "sources"]
+
+[tasks.gate-msrv]
+description = "Declared-MSRV cargo check on the four MSRV rows (RFC 014 R8). Locally: rustup run 1.85 cargo make gate-msrv"
+# The toolchain is whatever `cargo` resolves to: CI installs the declared MSRV
+# as the job's default; locally `rustup run 1.85 cargo make gate-msrv` does it.
+# The rows are the old `MSRV_ROW_NAMES`: lib-all-features, lib-feature-async-std,
+# lib-feature-smol, cli-all-features. async-std and smol each get their own
+# row because Tokio takes priority under --all-features, so all-features alone
+# never compiles those backends.
+script = [
+    '''
+    set -ex
+    cargo check -p localcache --all-targets --all-features --locked
+    cargo check -p localcache --all-targets --no-default-features --features async-std --locked
+    cargo check -p localcache --all-targets --no-default-features --features smol --locked
+    cargo check -p localcache-cli --all-targets --all-features --locked
+    '''
+]

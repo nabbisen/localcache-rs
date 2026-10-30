@@ -7,16 +7,15 @@ name: MSRV fresh resolution
 #
 # This is its own workflow, not a `schedule:` on ci.yaml: a failure caused by
 # an upstream publication must not turn unrelated pushes red, and must not run
-# the whole CI weekly. It is deliberately NOT part of `aggregate-ci`. The same
-# check also runs inside the `msrv` release gate (`scripts/release.py release`),
-# where drift blocks the release.
+# the whole CI weekly. It is deliberately NOT part of `release-gate`.
 #
 # Read-only, no secrets, actions pinned by full SHA with the same pins as
 # ci.yaml (RFC 009 R16). The runner image and the pins change only by a
 # deliberate, CI-verified change (RFC 022 R3 items 6-7).
 #
-# Deliberately no cache step: a cached registry or target directory would hide
-# exactly the fresh resolution this workflow exists to perform.
+# Deliberately no cache of the registry or the target directory: either would
+# hide exactly the fresh resolution this workflow exists to perform. Only the
+# pinned `cargo-make` binary is cached.
 
 on:
   schedule:
@@ -46,14 +45,24 @@ jobs:
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: ${{ steps.msrv.outputs.toolchain }}
-      - name: Check a fresh resolution builds on the declared MSRV (RFC 023 R6.2)
-        run: >-
-          python3 scripts/release.py msrv --fresh
-          --output-dir "$RUNNER_TEMP/msrv-fresh-evidence"
-      - name: Preserve fresh-resolution evidence
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - name: Cache pinned gate tools
+        id: tools
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          name: msrv-fresh-evidence
-          path: ${{ runner.temp }}/msrv-fresh-evidence
-          if-no-files-found: error
+          path: ~/.cargo/bin/cargo-make
+          key: ubuntu-24.04-gate-tools-make-0.37.24
+      - name: Install pinned gate tools
+        if: steps.tools.outputs.cache-hit != 'true'
+        run: cargo install cargo-make --version 0.37.24 --locked
+      - name: Check a fresh resolution builds on the declared MSRV (RFC 023 R6.2)
+        run: |
+          # The tracked tree, in a new directory outside the checkout, without
+          # its Cargo.lock: the declared-MSRV cargo resolves it as a new
+          # consumer would (`resolver = "3"` falls back to MSRV-compatible
+          # versions). The repository's own lockfile is never touched.
+          FRESH="$RUNNER_TEMP/msrv-fresh"
+          mkdir "$FRESH"
+          git archive HEAD | tar -x -C "$FRESH"
+          rm "$FRESH/Cargo.lock"
+          cargo generate-lockfile --manifest-path "$FRESH/Cargo.toml"
+          cargo make --cwd "$FRESH" gate-msrv
