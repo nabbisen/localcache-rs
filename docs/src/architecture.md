@@ -108,12 +108,14 @@ engine.get_if_fresh(path)
 2. `updated_at` ascending, as a tiebreak.
 3. `id` ascending, as a final, fully deterministic tiebreak.
 
-**A write never evicts what it just wrote.** The row(s) a `set`/`batch_set` call just inserted or
-updated are excluded from that call's own eviction candidates, even though a brand-new row's
-`last_accessed_at = 0` would otherwise make it the first entry eligible for eviction. A `batch_set`
-with more distinct paths than `max_entries` is rejected before it writes anything, so one call can
-no longer exceed the bound; `max_entries(0)` is rejected at open. The bound is not enforced by
-`import_entries`/`import_from`.
+**A write never evicts what it just wrote.** The row(s) a `set`/`batch_set`/`import_entries`/
+`import_from` call just inserted or updated are excluded from that call's own eviction candidates,
+even though a brand-new row's `last_accessed_at = 0` would otherwise make it the first entry
+eligible for eviction. A `batch_set` with more distinct paths than `max_entries`, and an import of
+more distinct entries, is rejected before it writes anything, so one call can no longer exceed the
+bound; `max_entries(0)` is rejected at open. Every write path shares one `enforce_max_entries`
+and runs it in the write's own `IMMEDIATE` transaction. (Before v0.22.0 the imports ignored the
+bound.)
 
 ## SQLite settings
 

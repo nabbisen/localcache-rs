@@ -114,6 +114,17 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   exhaustively, which now needs a wildcard arm. To keep the old behaviour, set
   `journal_mode(JournalMode::Wal)`. The CLI's writable commands (`import`, `cleanup`, `vacuum`,
   `purge-version`, `copy`, `watch`) no longer convert an existing database to WAL.
+- **Breaking:** `import_entries` and `import_from` now **honour `max_entries`** (RFC 024 B3, RFC 025
+  R6), under the same rule as `batch_set`. They used to ignore the bound and could leave a
+  namespace over it. An import of more **distinct** entries than `max_entries` (the stored key; the
+  same path twice counts once; exactly `max_entries` is accepted) returns
+  `InvalidArgument { argument: "records", .. }` **before anything is written**. An import that fits
+  runs its eviction in its own `IMMEDIATE` transaction, evicts the least recently read older
+  entries of the namespace, never a row it wrote, and calls the eviction callback after the
+  commit; `Err` means nothing changed. `namespace_copy` (deprecated) calls `import_from` and gets
+  the rule too. Affected: callers that import into an engine with `max_entries` set: split the
+  import, or raise the bound. Without `max_entries` nothing changes, and the CLI, which has no
+  such option, is unaffected.
 
 ---
 

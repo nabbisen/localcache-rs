@@ -91,7 +91,7 @@ before are rejected in the same release; they are listed after the table.)
 | an unsafe journal mode for a migration, SQLite not honouring a setting, a failed migration postcondition, a failed runtime configuration | `DatabaseState` | the variant |
 | a failure of the file-system watcher | `Watcher` | the variant |
 
-The same release also **rejects three inputs** that were accepted before, all
+The same release also **rejects four inputs** that were accepted before, all
 announced in v0.21.4 and v0.21.5; they are new errors, not renamed ones:
 
 | Input | Error | What to do |
@@ -99,9 +99,10 @@ announced in v0.21.4 and v0.21.5; they are new errors, not renamed ones:
 | `max_entries` of `Some(0)`, at open | `InvalidConfiguration { option: "max_entries", .. }` | use `None` for no limit |
 | a TTL under one second (including zero), at open | `InvalidConfiguration { option: "ttl", .. }` | use a TTL of at least one second, or no TTL |
 | a `batch_set` with more distinct paths than `max_entries` | `InvalidArgument { argument: "items", .. }` | split the batch, or raise `max_entries` |
+| an `import_entries` or `import_from` of more distinct entries than `max_entries` | `InvalidArgument { argument: "records", .. }` | split the import, or raise `max_entries` |
 
-All three are found before anything is written, and a read-only engine is not
-exempt.
+All four are found before anything is written. The first two are checked at
+open, where a read-only engine is not exempt.
 
 If you matched on the **text** of an `unsupported feature: …` message, match on
 the variant instead; the text of schema, state and watcher errors was reworded so

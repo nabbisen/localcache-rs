@@ -12,7 +12,7 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use crate::cache::entry::ExportRecord;
 use crate::db::repository;
-use crate::error::{ArgumentName, LocalFileCacheError, invalid_argument};
+use crate::error::{ArgumentName, LocalFileCacheError, SqliteResultExt, invalid_argument};
 
 use super::CacheEngine;
 
@@ -49,7 +49,24 @@ where
     /// Import a slice of [`crate::ExportRecord`]s into the current namespace.
     ///
     /// Existing entries for the same path are replaced atomically inside a
-    /// single transaction.  Returns the number of entries imported.
+    /// single transaction.  Returns the number of records imported.
+    ///
+    /// With [`max_entries`](crate::CacheOptions::max_entries) set, the import
+    /// follows the rule `batch_set` follows: records for more **distinct**
+    /// paths (the stored key; the same path twice counts once) than
+    /// `max_entries` are rejected before anything is written, and otherwise
+    /// the eviction runs in the import's own transaction and never evicts a
+    /// row the import wrote. **`Ok` means the records were stored and the
+    /// bound enforced. `Err` means nothing changed.**
+    ///
+    /// # Errors
+    ///
+    /// * [`LocalFileCacheError::ReadOnly`] — engine is in read-only mode.
+    /// * [`LocalFileCacheError::InvalidArgument`] — `argument: "records"`: a
+    ///   payload that is not valid Base64, or more distinct paths than
+    ///   `max_entries`.
+    /// * [`LocalFileCacheError::Database`] — including a busy database after
+    ///   the busy timeout.
     ///
     /// The payload bytes are stored verbatim (still compressed/encrypted as
     /// they were when exported); no re-encoding is performed.
@@ -81,7 +98,7 @@ where
             })
             .collect();
 
-        repository::import_rows(&self.conn, &self.namespace, &rows?)
+        self.import_bounded(&rows?)
     }
 
     /// Copy all entries from `source` into the current namespace.
@@ -93,6 +110,13 @@ where
     /// The two engines may point to different databases or different namespaces
     /// within the same database. Entries already in the current namespace for
     /// the same path are replaced.
+    ///
+    /// `max_entries` applies as for
+    /// [`import_entries`](Self::import_entries): a source holding more
+    /// distinct entries than the bound is rejected with
+    /// `InvalidArgument { argument: "records" }` before anything is written,
+    /// and a source that fits evicts older entries of this namespace in the
+    /// same transaction, never one it wrote.
     ///
     /// # Example
     ///
@@ -114,7 +138,53 @@ where
     {
         self.guard_write()?;
         let rows = repository::load_all_full(&source.conn, &source.namespace)?;
-        repository::import_rows(&self.conn, &self.namespace, &rows)
+        self.import_bounded(&rows)
+    }
+
+    /// The one import path: `import_entries` and `import_from` (and so the
+    /// deprecated `namespace_copy`) both end here, under the rule `batch_set`
+    /// follows (RFC 024 B3, RFC 025 R6):
+    ///
+    /// * more **distinct** stored keys than `max_entries` is rejected before
+    ///   anything is written, with `InvalidArgument { argument: "records" }`;
+    /// * the write and the eviction share one `IMMEDIATE` transaction, and the
+    ///   eviction (`enforce_max_entries`, shared with `set` and `batch_set`)
+    ///   never evicts a row this call wrote;
+    /// * the eviction callback runs after the commit.
+    ///
+    /// Returns the number of records imported.
+    fn import_bounded(&self, rows: &[repository::FullRow]) -> Result<usize, LocalFileCacheError> {
+        if rows.is_empty() {
+            return Ok(0);
+        }
+        if let Some(max_entries) = self.max_entries {
+            let distinct = rows
+                .iter()
+                .map(|row| row.path.as_str())
+                .collect::<std::collections::HashSet<_>>()
+                .len();
+            if distinct > max_entries {
+                return Err(invalid_argument(
+                    ArgumentName::Records,
+                    format!("{distinct} distinct entries exceed max_entries ({max_entries})"),
+                ));
+            }
+        }
+
+        let tx = rusqlite::Transaction::new_unchecked(
+            &self.conn,
+            rusqlite::TransactionBehavior::Immediate,
+        )
+        .db()?;
+        let written = repository::import_rows_in_tx(&tx, &self.namespace, rows)?;
+        let evicted = self.enforce_max_entries(&tx, &written)?;
+        tx.commit().db()?;
+        if let Some(callback) = &self.evict_callback {
+            for path in &evicted {
+                callback(path);
+            }
+        }
+        Ok(rows.len())
     }
 
     /// List all distinct namespace names present in the current database.
@@ -127,7 +197,8 @@ where
 
     /// Copy all entries from `source` into the current namespace.
     ///
-    /// Identical to [`import_from`](Self::import_from), which it calls.
+    /// Identical to [`import_from`](Self::import_from), which it calls, so it
+    /// enforces `max_entries` in the same way.
     #[deprecated(since = "0.21.5", note = "identical to import_from; use import_from")]
     pub fn namespace_copy<U>(&self, source: &CacheEngine<U>) -> Result<usize, LocalFileCacheError>
     where

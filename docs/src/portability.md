@@ -35,6 +35,15 @@ let imported = engine.import_entries(&records)?;
 println!("imported: {imported}");
 ```
 
+**`max_entries` applies to imports.** On an engine with `max_entries(n)`, records for more than `n`
+**distinct** paths (the stored key; the same path twice counts once) are rejected before anything
+is written, with `InvalidArgument { argument: "records", .. }`: split the import, or raise the
+bound. An import that fits is stored together with the eviction it triggers in one transaction:
+the least recently read older entries of the namespace make room, and the imported entries are
+never the ones evicted. `import_from`, and the `import` and `copy` CLI commands built on it,
+follow the same rule. (Before v0.22.0 an import ignored the bound and could leave the namespace
+over it.) The CLI has no `max_entries` option, so it is unaffected.
+
 Via the CLI:
 
 ```sh

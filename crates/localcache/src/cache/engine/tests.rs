@@ -165,6 +165,60 @@ fn failed_eviction_during_set_leaves_nothing_changed() {
     );
 }
 
+/// RFC 024 B3 — an import and its eviction share one `IMMEDIATE` transaction,
+/// like `set` and `batch_set`: a failure after the write and before the
+/// commit leaves the database as it was. Both import paths end in the same
+/// function, and each is checked.
+#[test]
+fn failed_eviction_during_an_import_leaves_nothing_changed() {
+    let dir = TempDir::new().unwrap();
+    let engine: CacheEngine<Vec<f32>> = CacheEngine::builder()
+        .database(":memory:")
+        .max_entries(3)
+        .build()
+        .unwrap();
+    let existing: Vec<PathBuf> = (0..3)
+        .map(|i| {
+            let path = write_file(&dir, &format!("e{i}.txt"));
+            engine.set(&path, &vec![i as f32]).unwrap();
+            path
+        })
+        .collect();
+    let mut before = engine.keys(None).unwrap();
+    before.sort();
+    assert_eq!(before.len(), 3);
+
+    let source: CacheEngine<Vec<f32>> =
+        CacheEngine::builder().database(":memory:").build().unwrap();
+    for i in 0..2 {
+        let path = write_file(&dir, &format!("s{i}.txt"));
+        source.set(&path, &vec![9.0_f32]).unwrap();
+    }
+    let records = source.export_entries().unwrap();
+    assert_eq!(records.len(), 2);
+
+    let hook = set_hook(|point| {
+        if point == TestPoint::BeforeEviction {
+            return Err(LocalFileCacheError::DatabaseState(
+                "forced eviction failure for the test".into(),
+            ));
+        }
+        Ok(())
+    });
+    let by_entries = engine.import_entries(&records);
+    let by_source = engine.import_from(&source);
+    drop(hook);
+
+    assert!(by_entries.is_err(), "import_entries: {by_entries:?}");
+    assert!(by_source.is_err(), "import_from: {by_source:?}");
+    let mut after = engine.keys(None).unwrap();
+    after.sort();
+    assert_eq!(after, before, "no imported row, no evicted row");
+    for path in &existing {
+        assert!(engine.contains(path).unwrap());
+    }
+}
+
 // ---------------------------------------------------------------------------
 // RFC 025 R1 — `ttl_remaining`, the one place TTL arithmetic happens
 // ---------------------------------------------------------------------------

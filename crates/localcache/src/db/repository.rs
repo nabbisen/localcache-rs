@@ -656,18 +656,18 @@ pub(crate) fn load_all_full(
     rows.db()
 }
 
-/// Import a batch of rows into `namespace` inside a single transaction.
+/// Import a batch of rows into `namespace` inside the caller's transaction.
 ///
-/// Existing entries (matched on `namespace + path`) are replaced.
-pub(crate) fn import_rows(
-    conn: &Connection,
+/// Existing entries (matched on `namespace + path`) are replaced. Returns the
+/// id of the row written for each input row, in order (a path that appears
+/// twice yields its id twice), so the caller can protect them from eviction
+/// and commit when it is done.
+pub(crate) fn import_rows_in_tx(
+    tx: &Transaction,
     namespace: &str,
     rows: &[FullRow],
-) -> Result<usize, LocalFileCacheError> {
-    if rows.is_empty() {
-        return Ok(0);
-    }
-    let tx = conn.unchecked_transaction().db()?;
+) -> Result<Vec<i64>, LocalFileCacheError> {
+    let mut written = Vec::with_capacity(rows.len());
     for row in rows {
         tx.execute(
             "INSERT INTO files
@@ -711,10 +711,9 @@ pub(crate) fn import_rows(
             params![file_id, row.content, row.encoding],
         )
         .db()?;
+        written.push(file_id);
     }
-    let n = rows.len();
-    tx.commit().db()?;
-    Ok(n)
+    Ok(written)
 }
 
 // ---------------------------------------------------------------------------

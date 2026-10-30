@@ -114,9 +114,13 @@ than `max_entries` is rejected before anything is written, with
 bound. "Distinct" means after canonicalization, the key the database uses —
 duplicates count once, and an item that fails preparation (a missing file, an
 invalid path) occupies no row and is not counted — and a batch of exactly
-`max_entries` distinct paths is accepted. The bound is enforced only by
-`set`/`batch_set` — it is **not** enforced by `import_entries` or
-`import_from`.
+`max_entries` distinct paths is accepted. The bound is enforced by every write
+path, imports included: `import_entries` and `import_from` reject more
+**distinct** entries than `max_entries` (the stored key; the same path twice
+counts once) with `InvalidArgument { argument: "records", .. }` before
+anything is written, and an import that fits evicts the least recently read
+older entries in its own transaction, never a row it wrote. (Before v0.22.0
+the imports ignored the bound.)
 
 ### `payload_version(v)`
 

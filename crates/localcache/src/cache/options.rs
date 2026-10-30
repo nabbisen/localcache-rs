@@ -203,12 +203,14 @@ pub struct CacheOptions {
 
     /// Maximum number of entries to keep in the current namespace.
     ///
-    /// When exceeded after a `set` or `batch_set`, the least recently
-    /// **read** entries are evicted until the count is within the limit:
-    /// never-read entries (`last_accessed_at == 0`) first, then by oldest
-    /// `updated_at`, then by first insertion. **A write never evicts the
-    /// entries it just wrote** — `set`'s own row, or every row a
-    /// `batch_set` call wrote, is excluded from that call's own eviction.
+    /// When exceeded after a `set`, `batch_set`, `import_entries` or
+    /// `import_from`, the least recently **read** entries are evicted until
+    /// the count is within the limit: never-read entries
+    /// (`last_accessed_at == 0`) first, then by oldest `updated_at`, then by
+    /// first insertion. **A write never evicts the entries it just wrote** —
+    /// `set`'s own row, or every row a `batch_set` or import call wrote, is
+    /// excluded from that call's own eviction. The write and its eviction are
+    /// one transaction.
     ///
     /// `Some(0)` is rejected when the engine is opened, with
     /// [`LocalFileCacheError::InvalidConfiguration`](crate::LocalFileCacheError::InvalidConfiguration)
@@ -222,8 +224,13 @@ pub struct CacheOptions {
     /// invalid path) occupies no row and is not counted. A batch of exactly
     /// `max_entries` distinct paths is accepted.
     ///
-    /// The bound is enforced by `set`/`batch_set` only — not by
-    /// `import_entries` or `import_from`.
+    /// Imports follow the same rule (before v0.22.0 they ignored the bound).
+    /// An `import_entries` or `import_from` of more **distinct** entries
+    /// than `max_entries` is rejected before anything is written, with
+    /// `InvalidArgument { argument: "records" }`; "distinct" is the stored
+    /// key, so the same path twice counts once, and exactly `max_entries`
+    /// is accepted. An import that fits evicts the least recently read
+    /// older entries of the namespace, never a row it wrote.
     pub max_entries: Option<usize>,
 
     /// AES-256-GCM encryption key (exactly 32 bytes).
