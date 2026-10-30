@@ -42,11 +42,14 @@ The declared MSRV changes only under a written rule
 - **The previous minor line** gets security, data-loss, and corruption fixes for
   6 months after a raise, where the fix does not itself need the raise.
 
-## Why `rusqlite` is pinned below its newest line
+## Why the `rusqlite` requirement is `0.40.2`
 
-`localcache` requires `rusqlite ^0.39`, not the newer `0.40`. This is deliberate,
-it is the constraint most often asked about, and it is worth understanding before
-filing a request to change it.
+`localcache` 0.22 requires `rusqlite 0.40.2`, not `0.40` and not the newer
+`0.41`; `localcache` 0.21.x required `rusqlite ^0.39`. In Cargo's notation
+`0.40.2` means at least that patch release and below 0.41, so it is a floor
+inside the 0.40 line. Both choices were deliberate, they are the constraint most
+often asked about, and they are worth understanding before filing a request to
+change them.
 
 ### The chain
 
@@ -77,21 +80,29 @@ With `libsqlite3-sys 0.38.2` locked, `rusqlite =0.40.0` and `=0.40.1` still fail
 
 ### Where this leaves `localcache`
 
-- **`localcache 0.21.x` keeps `rusqlite ^0.39`** — for compatibility, not because
-  of the toolchain. `rusqlite::Error` is part of this crate's public
+- **`localcache 0.21.x` kept `rusqlite ^0.39`** — for compatibility, not because
+  of the toolchain. `rusqlite::Error` was part of this crate's public
   `LocalFileCacheError::Database` variant, and `links` (below) allows one SQLite
-  line per dependency graph, so changing the line is a breaking change and ships
-  only in a minor release.
-- **`localcache 0.22.0` moves to `rusqlite 0.40.2`**, with the declared MSRV still
+  line per dependency graph, so changing the line was a breaking change that
+  could ship only in a minor release. v0.22.0 made the error opaque, so
+  `rusqlite::Error` is no longer part of the public API; the `links` constraint
+  remains.
+- **`localcache 0.22.0` moved to `rusqlite 0.40.2`**, with the declared MSRV still
   1.85. The requirement names `0.40.2`, not a bare `0.40`, so that no lockfile can
   keep `rusqlite 0.40.0`/`0.40.1` and `libsqlite3-sys 0.38.0`/`0.38.1`, which need
   1.95.
+- **`rusqlite 0.41` is not used.** It declares Rust 1.89 and requires
+  `libsqlite3-sys ^0.39`, so adopting it would raise the MSRV, and RFC 023 allows
+  that only for a named necessity; there is none. A crate that depends directly
+  on `rusqlite 0.41` therefore cannot be combined with `localcache 0.22`
+  (`links`, below).
 - **Consumers who pin `rusqlite 0.40` directly** can use `localcache` from 0.22.0.
 
-The gain is a newer bundled SQLite (3.51.3 → 3.53.2). The cost of staying on
-`^0.39` until then is the older one: no advisory currently affects it, and the
-advisory check below scans `libsqlite3-sys` along with everything else, so a
-future one would surface there.
+The gain was a newer bundled SQLite (3.51.3 → 3.53.2, checked on the built
+crate: `rusqlite::version()` prints `3.53.2`). While `localcache` stayed on
+`^0.39`, no advisory affected the older one, and the advisory check below scans
+`libsqlite3-sys` along with everything else, so a later one would have surfaced
+there.
 
 ### Why this cannot be worked around downstream
 
@@ -99,12 +110,13 @@ future one would surface there.
 package with a given `links` value in a dependency graph. Two `rusqlite` lines are
 therefore not a tolerable duplicate — they are a hard resolution failure.
 
-The practical consequence: a crate depending directly on `rusqlite 0.40` cannot
-also depend on a `localcache` version requiring `^0.39`, and **no lockfile entry,
-`--precise` pin, or feature flag at the consumer's end can resolve it**. If that
-is your situation on `localcache 0.21.x` or earlier, the options are to move your
-own `rusqlite` to 0.39, or to wait for `localcache 0.22.0`, which requires
-`rusqlite 0.40.2`. You can also tell us — see below.
+The practical consequence: a crate depending directly on a different `rusqlite`
+line than `localcache` cannot be combined with it, and **no lockfile entry,
+`--precise` pin, or feature flag at the consumer's end can resolve it**. With
+`localcache 0.22` your own `rusqlite`, if you depend on it directly, must be
+`0.40.2` or later in the 0.40 line. On `localcache 0.21.x` or earlier, which
+required `^0.39`, a crate on `rusqlite 0.40` had to move its own `rusqlite` to
+0.39 or wait for 0.22.0. You can also tell us — see below.
 
 ### The upstream cause
 
@@ -118,6 +130,12 @@ the floor moved **within a patch series**, up (`rusqlite 0.40.0`/`0.40.1` and
 `libsqlite3-sys 0.38.2`), invisibly to Cargo's MSRV-aware resolver. A consumer's
 build could break, or be repaired, with no change to anything they declared. That is why RFC 023 adds a check of a
 *fresh* resolution, rather than trusting the locked graph alone.
+
+It is still so for `rusqlite 0.40.2`. Its release notes say "Lower MSRV to
+1.88.0", but its manifest declares no `rust-version`, and the declared-MSRV rows
+(`cargo make gate-msrv`) and the fresh-resolution check both pass on Rust 1.85.0
+with it. What upstream states and what the build needs are not the same thing,
+which is why the weekly fresh-resolution run stays.
 
 We have not filed an upstream issue. Doing so would open a conversation this project
 would need to sustain, and the constraint is documented here regardless. If you have hit
@@ -136,7 +154,7 @@ right answer differed in each case.
 | 2026-08-01 | Blocked at `localcache 0.20.0`: the project pins `rusqlite 0.40` directly, so `^0.39` made every later version unresolvable. Requested `>=0.40`. | Declined — it would have raised this crate's MSRV to 1.95. The project moved its own `rusqlite` to 0.39 instead, having discovered its real floor was already 1.95 for the same reason. |
 
 On 2026-08-08, `rusqlite 0.40.2` and `libsqlite3-sys 0.38.2` (both published that
-day) removed the Rust 1.95 requirement, so the second case's request (`rusqlite >= 0.40`) is being met in `localcache 0.22.0`,
+day) removed the Rust 1.95 requirement, so the second case's request (`rusqlite >= 0.40`) is met in `localcache 0.22.0`,
 without an MSRV change.
 
 The second case is the more instructive one: the reporter believed their floor was

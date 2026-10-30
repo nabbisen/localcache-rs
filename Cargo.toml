@@ -29,7 +29,7 @@ readme          = "README.md"
 # workspace members
 localcache              = { version = "0", path = "crates/localcache" }
 # library
-rusqlite                = { version = "0.39", features = ["bundled", "limits"] }
+rusqlite                = { version = "0.40.2", features = ["bundled", "limits"] }
 serde                   = { version = "1",    features = ["derive"] }
 bincode                 = { version = "2", features = ["serde"] }
 blake3                  = "1"
@@ -39,7 +39,7 @@ base64                  = "0.22"
 tokio                   = { version = "1.23",  features = ["rt"] }   # < 1.23.0 affected by RUSTSEC-2023-0001
 zstd                    = "0.14"
 serde_json              = "1"
-aes-gcm                 = "0.10.3"    # < 0.10.3 affected by RUSTSEC-2023-0096; 0.11.x still RC
+aes-gcm                 = "0.10.3"    # < 0.10.3 affected by RUSTSEC-2023-0096 (the advisory floor)
 tracing                 = "0.1"
 notify                  = "8"
 notify-debouncer-mini   = "0.7"

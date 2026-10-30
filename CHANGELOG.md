@@ -11,6 +11,12 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
+- **Breaking:** `rusqlite` 0.39 → **0.40.2** (RFC 023 R8, R9), with its bundled SQLite 3.51.3 →
+  3.53.2. The declared MSRV stays 1.85. The requirement is `0.40.2` (at least that patch, below 0.41), never `0.40`, because
+  `rusqlite` 0.40.0 and 0.40.1 need Rust 1.95. Because `libsqlite3-sys` declares
+  `links = "sqlite3"`, a crate that depends on `rusqlite` directly must use 0.40.2 or later in the
+  0.40 line alongside `localcache` 0.22. The payload wire format and the database schema do not
+  change.
 - **Breaking:** `LocalFileCacheError::Database` now wraps the opaque `DatabaseError`
   (RFC 025 R7). `rusqlite::Error` is no longer part of the public API: not as the variant's
   payload, and not through a `From<rusqlite::Error>` impl. `DatabaseError` prints the same
