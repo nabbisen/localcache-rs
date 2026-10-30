@@ -52,6 +52,34 @@ fn stored_payload(database: &Path, path: &Path) -> Option<Vec<u8>> {
     engine.get(path).unwrap().map(|e| e.payload)
 }
 
+/// RFC 025 Amendment 1: a record line that does not parse is an invalid
+/// `records` argument. The exit status is the one every error has (1); only
+/// the stderr prefix is new.
+#[test]
+fn a_record_line_that_does_not_parse_is_an_invalid_records_argument() {
+    let directory = TempDir::new().unwrap();
+    let database = directory.path().join("db.sqlite3");
+    let existing = write_file(&directory, "existing.bin", b"seed");
+    let import_file = write_import_file(
+        &directory,
+        "in.jsonl",
+        &[
+            export_line(&existing, b"fine"),
+            "{ this is not json".to_owned(),
+        ],
+    );
+
+    let output = localcache(&database, &["import", "-i", import_file.to_str().unwrap()]);
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("error: invalid argument: records: json parse error at line 2:"),
+        "stderr: {stderr}"
+    );
+    assert!(!stderr.contains("unsupported feature"), "stderr: {stderr}");
+}
+
 #[test]
 fn overwrite_default_replaces_existing_entry() {
     // Regression guard: `--overwrite` (the default) behaviour is unchanged.

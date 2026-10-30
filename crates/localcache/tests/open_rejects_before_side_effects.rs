@@ -128,7 +128,17 @@ fn listing(directory: &Path) -> Vec<(String, Vec<u8>)> {
 fn key_length_rejection(name: &str, result: Result<(), LocalFileCacheError>) -> Result<(), String> {
     match result {
         Ok(()) => Err(format!("{name}: a {SHORT_KEY_LEN}-byte key was accepted")),
-        Err(error) if error.to_string().contains("exactly 32 bytes") => Ok(()),
+        Err(error)
+            if matches!(
+                error,
+                LocalFileCacheError::InvalidConfiguration {
+                    option: "encryption_key",
+                    ..
+                }
+            ) && error.to_string().contains("exactly 32 bytes") =>
+        {
+            Ok(())
+        }
         Err(error) => Err(format!(
             "{name}: expected the key-length rejection, got: {error}"
         )),

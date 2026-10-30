@@ -12,7 +12,7 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use crate::cache::entry::ExportRecord;
 use crate::db::repository;
-use crate::error::LocalFileCacheError;
+use crate::error::{ArgumentName, LocalFileCacheError, invalid_argument};
 
 use super::CacheEngine;
 
@@ -62,10 +62,10 @@ where
             .iter()
             .map(|r| {
                 let content = STANDARD.decode(&r.payload_b64).map_err(|e| {
-                    LocalFileCacheError::UnsupportedFeature(format!(
-                        "base64 decode error for '{}': {e}",
-                        r.path
-                    ))
+                    invalid_argument(
+                        ArgumentName::Records,
+                        format!("base64 decode error for '{}': {e}", r.path),
+                    )
                 })?;
                 Ok(repository::FullRow {
                     path: r.path.clone(),

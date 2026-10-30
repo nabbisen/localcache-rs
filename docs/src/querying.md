@@ -270,8 +270,8 @@ platform and performs no Unicode normalization. A literal `[` matches `[`
 (character classes are unsupported).
 
 Unmatched braces, NUL, and bounded pattern-expansion violations return a
-stable `UnsupportedFeature` error from `run()` or `dry_run()` before database
-work. The fluent `path_glob` setter remains infallible.
+stable `InvalidArgument { argument: "path_glob", .. }` error from `run()` or
+`dry_run()` before database work. The fluent `path_glob` setter remains infallible.
 
 **Performance:** start the pattern with a literal, not `*`. A leading literal
 narrows to an indexable range and stays flat as the namespace grows; a

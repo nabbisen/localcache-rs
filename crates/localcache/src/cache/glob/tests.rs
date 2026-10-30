@@ -16,9 +16,14 @@ fn assert_matches(pattern: &str, matching: &[&str], rejected: &[&str]) {
     }
 }
 
+/// The `reason` of a glob rejection; the variant and the argument name are
+/// asserted here, so every caller checks them.
 fn message(error: LocalFileCacheError) -> String {
     match error {
-        LocalFileCacheError::UnsupportedFeature(message) => message,
+        LocalFileCacheError::InvalidArgument { argument, reason } => {
+            assert_eq!(argument, "path_glob");
+            reason
+        }
         other => panic!("unexpected error: {other:?}"),
     }
 }

@@ -80,8 +80,8 @@ mod json_tests {
         assert_eq!(e2.payload, payload);
     }
 
-    // RFC 018 R3 — JSON codec failures use `Serialization`, not
-    // `UnsupportedFeature`.
+    // RFC 018 R3 — JSON codec failures use `Serialization`, not a
+    // catch-all variant.
     #[test]
     fn json_encode_failure_yields_serialization_error() {
         use localcache::LocalFileCacheError;

@@ -181,7 +181,8 @@ where
     /// full index name is prefixed with `"lc_user_"` and returned. Existing
     /// structurally valid legacy indexes remain idempotently discoverable,
     /// but an out-of-grammar legacy spelling cannot be recreated after drop.
-    /// Rejected names return [`LocalFileCacheError::UnsupportedFeature`].
+    /// Rejected names return [`LocalFileCacheError::InvalidArgument`] with
+    /// `argument: "index_name"`.
     #[deprecated(
         since = "0.21.5",
         note = "the index duplicates the built-in unique index on (namespace, path) and cannot speed up a query"

@@ -98,7 +98,7 @@ where
             #[cfg(all(feature = "json", feature = "compression"))]
             "json-zstd" => "json-zstd-aes256gcm",
             other => {
-                return Err(LocalFileCacheError::UnsupportedFeature(format!(
+                return Err(LocalFileCacheError::Serialization(format!(
                     "no encrypted tag for base tag '{other}'"
                 )));
             }
@@ -121,11 +121,7 @@ where
     let (inner_bytes_cow, inner_tag) = if let Some(base) = encoding.strip_suffix(ENC_SUFFIX) {
         #[cfg(feature = "encryption")]
         {
-            let key = encryption_key.ok_or_else(|| {
-                LocalFileCacheError::UnsupportedFeature(
-                    "entry is encrypted but no encryption key was provided".into(),
-                )
-            })?;
+            let key = encryption_key.ok_or(LocalFileCacheError::MissingEncryptionKey)?;
             let decrypted = decrypt_bytes(bytes, key)?;
             (std::borrow::Cow::Owned(decrypted), base)
         }

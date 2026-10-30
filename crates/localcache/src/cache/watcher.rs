@@ -209,8 +209,8 @@ where
                 }
             })
             .map_err(|e| {
-                LocalFileCacheError::UnsupportedFeature(format!(
-                    "failed to create file-system watcher: {e}"
+                LocalFileCacheError::Watcher(format!(
+                    "could not create the file-system watcher: {e}"
                 ))
             })?;
 
@@ -266,14 +266,14 @@ where
     /// Start watching an additional `path`.
     ///
     /// Has no effect if the path is already watched. Returns
-    /// [`LocalFileCacheError::UnsupportedFeature`] if the path does not
+    /// [`LocalFileCacheError::Watcher`] if the path does not
     /// exist — this does not silently do nothing.
     pub fn watch<P: AsRef<Path>>(&mut self, path: P) -> Result<(), LocalFileCacheError> {
         self._os_watcher
             .watch(path.as_ref(), RecursiveMode::NonRecursive)
             .map_err(|e| {
-                LocalFileCacheError::UnsupportedFeature(format!(
-                    "watch failed for '{}': {e}",
+                LocalFileCacheError::Watcher(format!(
+                    "could not watch '{}': {e}",
                     path.as_ref().display()
                 ))
             })
@@ -282,8 +282,8 @@ where
     /// Stop watching `path`.
     pub fn unwatch<P: AsRef<Path>>(&mut self, path: P) -> Result<(), LocalFileCacheError> {
         self._os_watcher.unwatch(path.as_ref()).map_err(|e| {
-            LocalFileCacheError::UnsupportedFeature(format!(
-                "unwatch failed for '{}': {e}",
+            LocalFileCacheError::Watcher(format!(
+                "could not unwatch '{}': {e}",
                 path.as_ref().display()
             ))
         })
@@ -313,8 +313,8 @@ where
         self._os_watcher
             .watch(dir.as_ref(), RecursiveMode::Recursive)
             .map_err(|e| {
-                LocalFileCacheError::UnsupportedFeature(format!(
-                    "watch_dir failed for '{}': {e}",
+                LocalFileCacheError::Watcher(format!(
+                    "could not watch directory '{}': {e}",
                     dir.as_ref().display()
                 ))
             })
@@ -323,8 +323,8 @@ where
     /// Stop watching the directory `dir` (and its subtree).
     pub fn unwatch_dir<P: AsRef<Path>>(&mut self, dir: P) -> Result<(), LocalFileCacheError> {
         self._os_watcher.unwatch(dir.as_ref()).map_err(|e| {
-            LocalFileCacheError::UnsupportedFeature(format!(
-                "unwatch_dir failed for '{}': {e}",
+            LocalFileCacheError::Watcher(format!(
+                "could not unwatch directory '{}': {e}",
                 dir.as_ref().display()
             ))
         })
@@ -520,9 +520,7 @@ where
             },
         )
         .map_err(|e| {
-            LocalFileCacheError::UnsupportedFeature(format!(
-                "failed to create debounced watcher: {e}"
-            ))
+            LocalFileCacheError::Watcher(format!("could not create the debounced watcher: {e}"))
         })?;
 
         // Register all pre-existing cached paths — per file (default) or per
@@ -581,8 +579,8 @@ where
             .watcher()
             .watch(dir.as_ref(), RecursiveMode::Recursive)
             .map_err(|e| {
-                LocalFileCacheError::UnsupportedFeature(format!(
-                    "watch_dir failed for '{}': {e}",
+                LocalFileCacheError::Watcher(format!(
+                    "could not watch directory '{}': {e}",
                     dir.as_ref().display()
                 ))
             })
@@ -594,8 +592,8 @@ where
             .watcher()
             .unwatch(dir.as_ref())
             .map_err(|e| {
-                LocalFileCacheError::UnsupportedFeature(format!(
-                    "unwatch_dir failed for '{}': {e}",
+                LocalFileCacheError::Watcher(format!(
+                    "could not unwatch directory '{}': {e}",
                     dir.as_ref().display()
                 ))
             })

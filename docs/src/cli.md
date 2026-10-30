@@ -219,7 +219,7 @@ the read-only open refuses it, `copy` prints the library's message and a hint,
 exits non-zero, and leaves the source file unchanged:
 
 ```text
-error: unsupported feature: read-only open requires the current database schema; …; database was not modified
+error: database schema is not current; a read-only open cannot migrate it; database was not modified
 hint: to upgrade the source database to the current schema first, add --upgrade-source
 ```
 

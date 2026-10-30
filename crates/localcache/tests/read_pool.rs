@@ -343,7 +343,10 @@ fn read_pool_rejects_size_zero() {
         0,
     );
     assert!(
-        matches!(result, Err(LocalFileCacheError::UnsupportedFeature(_))),
+        matches!(
+            result,
+            Err(LocalFileCacheError::InvalidConfiguration { option: "size", .. })
+        ),
         "size=0 must be rejected"
     );
 }
@@ -358,8 +361,12 @@ fn read_pool_rejects_memory_database() {
         2,
     );
     assert!(
-        matches!(result, Err(LocalFileCacheError::UnsupportedFeature(_))),
-        ":memory: must be rejected"
+        matches!(
+            &result,
+            Err(LocalFileCacheError::InvalidConfiguration { option: "database_path", reason })
+                if reason.contains("SyncCacheEngine") && !reason.contains("ConnectionPool")
+        ),
+        ":memory: must be rejected, and the reason must name SyncCacheEngine"
     );
 }
 

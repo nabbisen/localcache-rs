@@ -8,16 +8,16 @@ use crate::{JournalMode, LocalFileCacheError, SynchronousMode};
 pub(super) fn prepare_file_migration(conn: &Connection) -> Result<(), LocalFileCacheError> {
     let journal = observed_journal_mode(conn).db()?;
     if !matches!(journal.as_str(), "delete" | "truncate" | "persist" | "wal") {
-        return Err(LocalFileCacheError::UnsupportedFeature(format!(
-            "database migration requires an existing rollback-capable or WAL journal; observed_journal_mode={journal}; database was not modified"
+        return Err(LocalFileCacheError::DatabaseState(format!(
+            "migration requires an existing rollback-capable or WAL journal; observed_journal_mode={journal}; database was not modified"
         )));
     }
 
     conn.execute_batch("PRAGMA synchronous = FULL;").db()?;
     let synchronous = observed_synchronous(conn).db()?;
     if synchronous != "full" {
-        return Err(LocalFileCacheError::UnsupportedFeature(format!(
-            "database migration requires synchronous=FULL; observed_synchronous={synchronous}; database was not modified"
+        return Err(LocalFileCacheError::DatabaseState(format!(
+            "migration requires synchronous=FULL; observed_synchronous={synchronous}; database was not modified"
         )));
     }
     Ok(())
@@ -137,8 +137,8 @@ fn configuration_error(
 ) -> LocalFileCacheError {
     let observed_journal = observed_journal_mode(conn).unwrap_or_else(|_| "unknown".into());
     let observed_synchronous = observed_synchronous(conn).unwrap_or_else(|_| "unknown".into());
-    LocalFileCacheError::UnsupportedFeature(format!(
-        "database runtime configuration failed: schema_migration_committed={schema_migration_committed}; requested_synchronous={}; observed_synchronous={observed_synchronous}; requested_journal_mode={}; observed_journal_mode={observed_journal}; cause={cause}",
+    LocalFileCacheError::DatabaseState(format!(
+        "runtime configuration failed: schema_migration_committed={schema_migration_committed}; requested_synchronous={}; observed_synchronous={observed_synchronous}; requested_journal_mode={}; observed_journal_mode={observed_journal}; cause={cause}",
         synchronous_name(requested_synchronous),
         journal_name(requested_journal),
     ))

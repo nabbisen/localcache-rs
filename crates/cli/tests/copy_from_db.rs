@@ -15,7 +15,7 @@ const OLD_SCHEMA_FIXTURE: &str = concat!(
 const OLD_SCHEMA_FIXTURE_SHA256: &str =
     "9046c0d81ac51ba59ca45de0849a7955d3d4f04a92ff39adfd0042e35c9b31bb";
 
-const SCHEMA_REFUSAL: &str = "read-only open requires the current database schema";
+const SCHEMA_REFUSAL: &str = "database schema is not current; a read-only open cannot migrate it";
 const MIGRATE_WARNING: &str =
     "warning: `migrate` is deprecated and will be removed in 0.22.0; use `copy --from-db`";
 
@@ -161,6 +161,45 @@ fn an_old_schema_source_is_refused_and_left_unchanged() {
         !destination.exists(),
         "a refused source leaves no destination file behind"
     );
+}
+
+/// A source that is not a database this version understands (here: a
+/// current-looking file whose `user_version` is from the future) is an
+/// incompatible schema, not an old one: it is refused, the `--upgrade-source`
+/// hint is not offered (an upgrade cannot help), and the file is untouched.
+#[test]
+fn an_unrecognised_schema_is_not_reported_as_schema_not_current() {
+    let directory = TempDir::new().unwrap();
+    let source = old_schema_copy(&directory);
+    // `user_version` is the big-endian u32 at byte offset 60 of the header.
+    let mut bytes = fs::read(&source).unwrap();
+    bytes[60..64].copy_from_slice(&99_u32.to_be_bytes());
+    fs::write(&source, &bytes).unwrap();
+    let destination = directory.path().join("destination.sqlite3");
+
+    let output = localcache(&[
+        "-d",
+        path_text(&destination),
+        "copy",
+        "--from-db",
+        path_text(&source),
+        "--from",
+        "plain",
+        "--to",
+        "plain",
+        "--upgrade-source",
+    ]);
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = text(&output.stderr);
+    assert!(
+        stderr.contains("incompatible database schema: unrecognized at physical version 99"),
+        "stderr: {stderr}"
+    );
+    assert!(!stderr.contains(SCHEMA_REFUSAL), "stderr: {stderr}");
+    assert!(!stderr.contains("hint:"), "stderr: {stderr}");
+    assert_eq!(fs::read(&source).unwrap(), bytes, "the source is untouched");
+    assert!(!destination.exists());
 }
 
 #[test]

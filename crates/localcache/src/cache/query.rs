@@ -341,7 +341,8 @@ where
     /// `GLOB` operator, character classes (`[abc]`) are not supported.
     ///
     /// Pattern validation is deferred to `run()`/`dry_run()`. Unmatched braces,
-    /// NUL, and bounded safety-limit violations return `UnsupportedFeature`
+    /// NUL, and bounded safety-limit violations return
+    /// [`LocalFileCacheError::InvalidArgument`] with `argument: "path_glob"`
     /// before database work.
     ///
     /// > Note: `*` and `?` in the pattern always act as wildcards.  If you
@@ -374,7 +375,8 @@ where
     /// Requires the full name of an allowed main-schema index. Both terminal
     /// operations validate its complete catalog shape before generating
     /// `INDEXED BY <name>`; missing or unauthorized names return
-    /// [`LocalFileCacheError::UnsupportedFeature`] without planner fallback.
+    /// [`LocalFileCacheError::InvalidArgument`] with `argument: "index_name"`
+    /// without planner fallback.
     ///
     /// Use [`crate::CacheEngine::list_path_indexes`] to discover available
     /// user-created indexes. The schema-v5 built-ins

@@ -178,9 +178,7 @@ fn create_and_drop_errors_after_ddl_roll_back() {
     let before_create = semantic_snapshot(&engine.conn);
     let hook = set_hook(|point| {
         if point == TestPoint::CreateDdl {
-            return Err(LocalFileCacheError::UnsupportedFeature(
-                "after create".into(),
-            ));
+            return Err(LocalFileCacheError::DatabaseState("after create".into()));
         }
         Ok(())
     });
@@ -197,7 +195,7 @@ fn create_and_drop_errors_after_ddl_roll_back() {
     let before_drop = semantic_snapshot(&engine.conn);
     let hook = set_hook(|point| {
         if point == TestPoint::DropDdl {
-            return Err(LocalFileCacheError::UnsupportedFeature("after drop".into()));
+            return Err(LocalFileCacheError::DatabaseState("after drop".into()));
         }
         Ok(())
     });
@@ -406,9 +404,19 @@ fn list_fails_closed_on_an_invalid_owned_prefix_candidate() {
         .execute("CREATE INDEX lc_user_wrong ON files(path)", [])
         .unwrap();
     let error = list_path_indexes(&engine.conn).unwrap_err();
+    assert!(
+        matches!(
+            error,
+            LocalFileCacheError::InvalidArgument {
+                argument: "index_name",
+                ..
+            }
+        ),
+        "{error:?}"
+    );
     assert_eq!(
         error.to_string(),
-        "unsupported feature: SQLite index identifier is invalid or is not an allowed localcache index"
+        "invalid argument: index_name: not a valid SQLite identifier or not an allowed localcache index"
     );
 }
 

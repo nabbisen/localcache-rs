@@ -539,7 +539,7 @@ fn validate_v4_conversion(transaction: &Transaction<'_>) -> Result<(), LocalFile
 }
 
 fn migration_invariant(reason: &str) -> LocalFileCacheError {
-    LocalFileCacheError::UnsupportedFeature(format!(
-        "database migration precondition or postcondition failed: {reason}; transaction will be rolled back"
+    LocalFileCacheError::DatabaseState(format!(
+        "migration precondition or postcondition failed: {reason}; transaction will be rolled back"
     ))
 }

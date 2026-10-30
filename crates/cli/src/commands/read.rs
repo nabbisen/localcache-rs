@@ -182,9 +182,8 @@ pub(crate) fn cmd_export(opts: CacheOptions, args: ExportArgs) -> Result<(), Loc
     };
 
     for record in &records {
-        let line = serde_json::to_string(record).map_err(|e| {
-            LocalFileCacheError::UnsupportedFeature(format!("json serialisation: {e}"))
-        })?;
+        let line = serde_json::to_string(record)
+            .map_err(|e| LocalFileCacheError::Serialization(format!("json serialisation: {e}")))?;
         output
             .write_all(line.as_bytes())
             .map_err(LocalFileCacheError::Io)?;

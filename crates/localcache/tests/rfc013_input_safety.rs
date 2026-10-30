@@ -12,8 +12,8 @@ use tempfile::TempDir;
 
 use common::write_file;
 
-const MALFORMED: &str = "invalid glob pattern: malformed brace syntax";
-const SAFETY: &str = "invalid glob pattern: safety limit exceeded";
+const MALFORMED: &str = "malformed brace syntax";
+const SAFETY: &str = "safety limit exceeded";
 
 fn engine() -> CacheEngine<Vec<u8>> {
     CacheEngine::builder()
@@ -26,14 +26,14 @@ fn engine() -> CacheEngine<Vec<u8>> {
 fn assert_malformed<T>(result: Result<T, LocalFileCacheError>) {
     assert!(matches!(
         result,
-        Err(LocalFileCacheError::UnsupportedFeature(message)) if message == MALFORMED
+        Err(LocalFileCacheError::InvalidArgument { argument: "path_glob", reason }) if reason == MALFORMED
     ));
 }
 
 fn assert_safety<T>(result: Result<T, LocalFileCacheError>) {
     assert!(matches!(
         result,
-        Err(LocalFileCacheError::UnsupportedFeature(message)) if message == SAFETY
+        Err(LocalFileCacheError::InvalidArgument { argument: "path_glob", reason }) if reason == SAFETY
     ));
 }
 

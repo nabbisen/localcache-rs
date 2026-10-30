@@ -2,11 +2,10 @@
 
 use rusqlite::{Connection, TransactionBehavior};
 
-use crate::error::{LocalFileCacheError, SqliteResultExt};
+use crate::error::{ArgumentName, LocalFileCacheError, SqliteResultExt, invalid_argument};
 
 pub(crate) const PUBLIC_INDEX_PREFIX: &str = "lc_user_";
-const IDENTIFIER_ERROR: &str =
-    "SQLite index identifier is invalid or is not an allowed localcache index";
+const IDENTIFIER_ERROR: &str = "not a valid SQLite identifier or not an allowed localcache index";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct IndexListRow {
@@ -310,7 +309,7 @@ fn identifier_eq(left: &str, right: &str) -> bool {
 }
 
 fn identifier_error() -> LocalFileCacheError {
-    LocalFileCacheError::UnsupportedFeature(IDENTIFIER_ERROR.to_owned())
+    invalid_argument(ArgumentName::IndexName, IDENTIFIER_ERROR)
 }
 
 fn main_schema_objects(conn: &Connection) -> Result<Vec<SchemaObject>, LocalFileCacheError> {

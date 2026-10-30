@@ -1,13 +1,13 @@
 //! Bounded glob compilation shared by directory scans and path queries.
 
-use crate::error::LocalFileCacheError;
+use crate::error::{ArgumentName, LocalFileCacheError, invalid_argument};
 
 const MAX_PATTERN_BYTES: usize = 16_384;
 const MAX_BRACE_DEPTH: usize = 32;
 const MAX_ALTERNATIVES: usize = 256;
 
-const MALFORMED_MESSAGE: &str = "invalid glob pattern: malformed brace syntax";
-const SAFETY_MESSAGE: &str = "invalid glob pattern: safety limit exceeded";
+const MALFORMED_MESSAGE: &str = "malformed brace syntax";
+const SAFETY_MESSAGE: &str = "safety limit exceeded";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Token {
@@ -248,11 +248,11 @@ fn sqlite_pattern(tokens: &[Token]) -> String {
 }
 
 fn malformed_error() -> LocalFileCacheError {
-    LocalFileCacheError::UnsupportedFeature(MALFORMED_MESSAGE.to_owned())
+    invalid_argument(ArgumentName::PathGlob, MALFORMED_MESSAGE)
 }
 
 fn safety_error() -> LocalFileCacheError {
-    LocalFileCacheError::UnsupportedFeature(SAFETY_MESSAGE.to_owned())
+    invalid_argument(ArgumentName::PathGlob, SAFETY_MESSAGE)
 }
 
 #[cfg(test)]

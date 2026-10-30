@@ -74,7 +74,7 @@ use crate::cache::engine::CacheEngine;
 use crate::cache::entry::{CacheEntry, CacheStats, Diagnosis, EntryInfo, ExportRecord};
 use crate::cache::options::{CacheOptions, ScanOptions};
 use crate::cache::query::{QueryBuilder, QueryReport};
-use crate::error::LocalFileCacheError;
+use crate::error::{ConfigOption, LocalFileCacheError, invalid_configuration};
 
 // ---------------------------------------------------------------------------
 // ReadPool
@@ -104,23 +104,26 @@ where
     ///
     /// # Errors
     ///
-    /// - `size == 0` → [`LocalFileCacheError::UnsupportedFeature`].
-    /// - `:memory:` database → [`LocalFileCacheError::UnsupportedFeature`]
+    /// - `size == 0` → [`LocalFileCacheError::InvalidConfiguration`] with
+    ///   `option: "size"`.
+    /// - `:memory:` database → [`LocalFileCacheError::InvalidConfiguration`] with
+    ///   `option: "database_path"`
     ///   (N independent in-memory connections each see a different DB).
     /// - A fresh, historical, future, or malformed schema is rejected without
     ///   initialization or migration.
     pub fn open(options: CacheOptions, size: usize) -> Result<Self, LocalFileCacheError> {
         if size == 0 {
-            return Err(LocalFileCacheError::UnsupportedFeature(
-                "ReadPool size must be >= 1".into(),
+            return Err(invalid_configuration(
+                ConfigOption::Size,
+                "a ReadPool needs at least one connection",
             ));
         }
         if crate::cache::options::is_memory_path(&options.database_path) {
-            return Err(LocalFileCacheError::UnsupportedFeature(
-                "ReadPool does not support ':memory:' databases — each slot \
-                 would open a separate empty database.  Use ConnectionPool \
-                 or a shared-cache engine pair for in-process sharing."
-                    .into(),
+            return Err(invalid_configuration(
+                ConfigOption::DatabasePath,
+                "a ReadPool does not support ':memory:' databases: each slot \
+                 would open a separate empty database. Use SyncCacheEngine \
+                 or a shared-cache engine pair for in-process sharing",
             ));
         }
 

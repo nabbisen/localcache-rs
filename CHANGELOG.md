@@ -31,6 +31,46 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     A `Database(_)` arm needs no change. A match on another `rusqlite::Error` variant (for
     example `QueryReturnedNoRows`) has no counterpart; `sqlite_extended_code()` is `None` for
     those, and the message is the only description.
+- **Breaking:** `LocalFileCacheError::UnsupportedFeature` and `PayloadVersionMismatch` are
+  **removed**, and seven purpose-named variants replace them (RFC 025 R3 to R5, Amendment 1):
+  `InvalidConfiguration { option, reason }`, `InvalidArgument { argument, reason }`,
+  `SchemaNotCurrent`, `IncompatibleSchema(String)`, `MissingEncryptionKey` (feature
+  `encryption`), `DatabaseState(String)` and `Watcher(String)` (feature `watching`).
+  `PayloadVersionMismatch` was never returned. **Which inputs succeed and which fail is
+  unchanged**; only the variant, and for a few errors the wording, differ. The `option` values
+  are `database_path`, `read_only`, `encryption_key` and `size`; the `argument` values are
+  `new_key`, `path_glob`, `index_name` and `records`.
+  - **To migrate**, match on the variant (and, where there is one, on `option` or `argument`):
+
+    | It was `UnsupportedFeature` because… | It is now | Match on |
+    |---|---|---|
+    | read-only requested with an in-memory database | `InvalidConfiguration` | `option: "read_only"` |
+    | the encryption key is not 32 bytes, at open | `InvalidConfiguration` | `option: "encryption_key"` |
+    | a `ReadPool` of size 0 | `InvalidConfiguration` | `option: "size"` |
+    | a `ReadPool` on a `:memory:` database | `InvalidConfiguration` | `option: "database_path"` |
+    | `rotate_encryption_key` got a key that is not 32 bytes | `InvalidArgument` | `argument: "new_key"` |
+    | a malformed or over-limit `path_glob` | `InvalidArgument` | `argument: "path_glob"` |
+    | an index name that is not an allowed one | `InvalidArgument` | `argument: "index_name"` |
+    | an import record whose payload is not base64 | `InvalidArgument` | `argument: "records"` |
+    | rotating a key, or reading an encrypted entry, with no key configured | `MissingEncryptionKey` | the variant |
+    | a read-only open of an older or empty database | `SchemaNotCurrent` | the variant |
+    | an unrecognised, newer or damaged schema | `IncompatibleSchema` | the variant |
+    | an unsafe journal for a migration, SQLite not honouring a setting, a failed migration postcondition, a failed runtime configuration | `DatabaseState` | the variant |
+    | a failure of the file-system watcher | `Watcher` | the variant |
+
+    A match on the **text** of the old message becomes a match on the variant.
+  - The `Display` of schema, state and watcher errors is reworded so that it reads once: for
+    example `incompatible database schema: unrecognized at physical version 7: …; database was
+    not modified`, `database state: migration requires …; database was not modified`, and `file
+    watching failed: could not watch '…': …`. The clauses `database was not modified` and
+    `transaction will be rolled back` are unchanged. The text of the `path_glob` and `index_name`
+    reasons no longer starts with "invalid glob pattern" or "SQLite index identifier".
+  - **CLI:** the exit status is unchanged (1). The stderr prefix changes from
+    `unsupported feature:` to `serialization error:` (a JSON failure on `export`) or
+    `invalid argument: records:` (a record line of `import` that does not parse), and
+    `copy --from-db` recognises a source whose schema is merely old by the `SchemaNotCurrent`
+    variant (which `--upgrade-source` can fix) and no longer by the start of the message; an
+    unrecognised schema (`IncompatibleSchema`) is still refused without the hint.
 
 ---
 

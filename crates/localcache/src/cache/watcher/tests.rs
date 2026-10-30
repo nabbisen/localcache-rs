@@ -67,3 +67,63 @@ fn poisoned_lock_is_an_error_from_entry_count_and_a_silent_zero_from_watched_cou
         "the deprecated method hides the error as 0 (its documented behaviour)"
     );
 }
+
+/// RFC 025 R4: every failure of the operating-system watcher is a `Watcher`
+/// error whose text reads once ("file watching failed: could not …").
+fn assert_watcher_error(error: LocalFileCacheError, expected_start: &str) {
+    match &error {
+        LocalFileCacheError::Watcher(message) => {
+            assert!(message.starts_with(expected_start), "{message}");
+            assert!(!message.contains("failed"), "reads twice: {message}");
+        }
+        other => panic!("expected a Watcher error, got {other:?}"),
+    }
+    assert!(
+        error
+            .to_string()
+            .starts_with("file watching failed: could not ")
+    );
+}
+
+#[test]
+fn watch_and_unwatch_failures_are_watcher_errors() {
+    let dir = TempDir::new().unwrap();
+    let mut watcher = watcher_with_one_entry(&dir);
+    let missing = dir.path().join("no-such-file");
+
+    assert_watcher_error(watcher.watch(&missing).unwrap_err(), "could not watch '");
+    assert_watcher_error(
+        watcher.unwatch(&missing).unwrap_err(),
+        "could not unwatch '",
+    );
+    assert_watcher_error(
+        watcher.watch_dir(&missing).unwrap_err(),
+        "could not watch directory '",
+    );
+    assert_watcher_error(
+        watcher.unwatch_dir(&missing).unwrap_err(),
+        "could not unwatch directory '",
+    );
+}
+
+#[test]
+fn debounced_watch_dir_and_unwatch_dir_failures_are_watcher_errors() {
+    let dir = TempDir::new().unwrap();
+    let engine: CacheEngine<Vec<f32>> = CacheEngine::builder()
+        .database(dir.path().join("debounced.sqlite3"))
+        .build()
+        .unwrap();
+    let mut watcher = engine
+        .debounced_watcher(std::time::Duration::from_millis(50))
+        .unwrap();
+    let missing = dir.path().join("no-such-directory");
+
+    assert_watcher_error(
+        watcher.watch_dir(&missing).unwrap_err(),
+        "could not watch directory '",
+    );
+    assert_watcher_error(
+        watcher.unwatch_dir(&missing).unwrap_err(),
+        "could not unwatch directory '",
+    );
+}

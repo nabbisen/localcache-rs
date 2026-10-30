@@ -77,7 +77,7 @@ fn observational_command_rejects_historical_fixture_without_migration() {
     assert!(!output.status.success());
     assert!(
         String::from_utf8_lossy(&output.stderr)
-            .contains("read-only open requires the current database schema")
+            .contains("database schema is not current; a read-only open cannot migrate it")
     );
     assert_eq!(fs::read(database).unwrap(), before);
 }
@@ -237,7 +237,7 @@ fn scan_reports_malformed_glob_without_panicking() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("invalid glob pattern: malformed brace syntax"),
+        stderr.contains("invalid argument: path_glob: malformed brace syntax"),
         "{stderr}"
     );
     assert!(!stderr.to_lowercase().contains("panicked"));

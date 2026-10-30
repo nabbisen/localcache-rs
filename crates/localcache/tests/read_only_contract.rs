@@ -18,7 +18,8 @@ use tempfile::TempDir;
 
 use common::write_file;
 
-const HISTORICAL_READ_ONLY_ERROR: &str = "unsupported feature: read-only open requires the current database schema; initialization or migration is not permitted; database was not modified";
+const HISTORICAL_READ_ONLY_ERROR: &str =
+    "database schema is not current; a read-only open cannot migrate it; database was not modified";
 
 #[derive(Debug, PartialEq, Eq)]
 struct CurrentSnapshot {
@@ -177,6 +178,10 @@ fn assert_historical_rejected_unchanged(path: &Path) {
         read_only: true,
         ..CacheOptions::default()
     });
+    assert!(
+        matches!(error, LocalFileCacheError::SchemaNotCurrent),
+        "{error:?}"
+    );
     assert_eq!(error.to_string(), HISTORICAL_READ_ONLY_ERROR);
     assert_eq!(fs::read(path).unwrap(), before);
     assert!(!PathBuf::from(format!("{}-wal", path.display())).exists());
@@ -323,8 +328,8 @@ fn fresh_future_and_malformed_schemas_reject_unchanged() {
             ..CacheOptions::default()
         });
         assert!(
-            matches!(error, LocalFileCacheError::UnsupportedFeature(ref message)
-                if message.contains("unrecognized database schema")
+            matches!(error, LocalFileCacheError::IncompatibleSchema(ref message)
+                if message.contains("unrecognized at physical version")
                     && message.contains("database was not modified")),
             "{error:?}"
         );
@@ -351,9 +356,19 @@ fn missing_file_and_explicit_read_only_memory_never_initialize() {
             shared_cache,
             ..CacheOptions::default()
         });
+        assert!(
+            matches!(
+                error,
+                LocalFileCacheError::InvalidConfiguration {
+                    option: "read_only",
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
         assert_eq!(
             error.to_string(),
-            "unsupported feature: read-only mode does not support in-memory databases"
+            "invalid configuration: read_only: not supported with an in-memory database"
         );
     }
 

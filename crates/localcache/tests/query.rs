@@ -782,8 +782,7 @@ fn hostile_index_identifiers_fail_closed_without_mutation() {
     use localcache::LocalFileCacheError;
     use rusqlite::Connection;
 
-    const SAFETY_ERROR: &str =
-        "SQLite index identifier is invalid or is not an allowed localcache index";
+    const SAFETY_ERROR: &str = "not a valid SQLite identifier or not an allowed localcache index";
     let directory = TempDir::new().unwrap();
     let database = directory.path().join("hostile-index.sqlite3");
     let engine: CacheEngine<Vec<f32>> = CacheEngine::builder().database(&database).build().unwrap();
@@ -917,7 +916,7 @@ fn hostile_index_identifiers_fail_closed_without_mutation() {
         let error = engine.create_path_index(suffix).unwrap_err();
         assert!(matches!(
             &error,
-            LocalFileCacheError::UnsupportedFeature(message) if message == SAFETY_ERROR
+            LocalFileCacheError::InvalidArgument { argument: "index_name", reason } if reason == SAFETY_ERROR
         ));
         if !suffix.is_empty() {
             assert!(!error.to_string().contains(suffix));
@@ -931,7 +930,7 @@ fn hostile_index_identifiers_fail_closed_without_mutation() {
         ] {
             assert!(matches!(
                 &error,
-                LocalFileCacheError::UnsupportedFeature(message) if message == SAFETY_ERROR
+                LocalFileCacheError::InvalidArgument { argument: "index_name", reason } if reason == SAFETY_ERROR
             ));
             if !suffix.is_empty() {
                 assert!(!error.to_string().contains(suffix));
@@ -1098,8 +1097,11 @@ mod async_phase11_tests {
             .unwrap_err();
         assert!(matches!(
             error,
-            localcache::LocalFileCacheError::UnsupportedFeature(ref message)
-                if message == "SQLite index identifier is invalid or is not an allowed localcache index"
+            localcache::LocalFileCacheError::InvalidArgument {
+                    argument: "index_name",
+                    ref reason,
+                }
+                if reason == "not a valid SQLite identifier or not an allowed localcache index"
         ));
 
         let dropped = engine.drop_path_index("asyncidx".to_owned()).await.unwrap();
@@ -1123,8 +1125,11 @@ mod async_phase11_tests {
             .unwrap_err();
         assert!(matches!(
             error,
-            LocalFileCacheError::UnsupportedFeature(ref message)
-                if message == "SQLite index identifier is invalid or is not an allowed localcache index"
+            LocalFileCacheError::InvalidArgument {
+                    argument: "index_name",
+                    ref reason,
+                }
+                if reason == "not a valid SQLite identifier or not an allowed localcache index"
         ));
     }
 }
@@ -1161,8 +1166,11 @@ async fn async_index_parity() {
         .unwrap_err();
     assert!(matches!(
         error,
-        LocalFileCacheError::UnsupportedFeature(ref message)
-            if message == "SQLite index identifier is invalid or is not an allowed localcache index"
+        LocalFileCacheError::InvalidArgument {
+                argument: "index_name",
+                ref reason,
+            }
+            if reason == "not a valid SQLite identifier or not an allowed localcache index"
     ));
     assert_eq!(
         engine.create_path_index("parity".to_owned()).await.unwrap(),
@@ -1183,8 +1191,11 @@ async fn async_index_parity() {
         .unwrap_err();
     assert!(matches!(
         error,
-        LocalFileCacheError::UnsupportedFeature(ref message)
-            if message == "SQLite index identifier is invalid or is not an allowed localcache index"
+        LocalFileCacheError::InvalidArgument {
+                argument: "index_name",
+                ref reason,
+            }
+            if reason == "not a valid SQLite identifier or not an allowed localcache index"
     ));
     assert!(engine.drop_path_index("parity".to_owned()).await.unwrap());
     assert!(engine.list_path_indexes().await.unwrap().is_empty());

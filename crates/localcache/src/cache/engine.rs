@@ -20,7 +20,7 @@ use crate::db::{repository, schema};
 use crate::detection::hash::{compute_full_hash, compute_partial_hash};
 use crate::detection::metadata::collect_metadata;
 use crate::detection::strategy::detect_change;
-use crate::error::{LocalFileCacheError, SqliteResultExt};
+use crate::error::{ConfigOption, LocalFileCacheError, SqliteResultExt, invalid_configuration};
 use crate::path::{normalize_path, path_to_str, resolve_path_key};
 use crate::serialization::{decode_payload, encode_payload};
 
@@ -778,25 +778,26 @@ where
     /// # Errors
     ///
     /// * [`LocalFileCacheError::ReadOnly`] — engine is in read-only mode.
-    /// * [`LocalFileCacheError::UnsupportedFeature`] — no encryption key is
+    /// * [`LocalFileCacheError::MissingEncryptionKey`] — no encryption key is
     ///   currently set on this engine (nothing to rotate).
+    /// * [`LocalFileCacheError::InvalidArgument`] with `argument: "new_key"` —
+    ///   `new_key` is not exactly 32 bytes.
     /// * [`LocalFileCacheError::EncryptionError`] — decryption or re-encryption
     ///   failed. The engine keeps using the old key; nothing was written.
     #[cfg(feature = "encryption")]
     pub fn rotate_encryption_key(&self, new_key: &[u8]) -> Result<usize, LocalFileCacheError> {
         self.guard_write()?;
 
-        let old_key = self.encryption_key.get().ok_or_else(|| {
-            LocalFileCacheError::UnsupportedFeature(
-                "rotate_encryption_key requires an existing encryption key on this engine".into(),
-            )
-        })?;
+        let old_key = self
+            .encryption_key
+            .get()
+            .ok_or(LocalFileCacheError::MissingEncryptionKey)?;
 
         let new_key_arr: [u8; 32] = new_key.try_into().map_err(|_| {
-            LocalFileCacheError::UnsupportedFeature(format!(
-                "new encryption key must be exactly 32 bytes, got {}",
-                new_key.len()
-            ))
+            crate::error::invalid_argument(
+                crate::error::ArgumentName::NewKey,
+                format!("must be exactly 32 bytes, got {}", new_key.len()),
+            )
         })?;
 
         // Hold the write lock from the first read to the commit, so a
@@ -1349,8 +1350,9 @@ fn check_configuration(
     is_memory: bool,
 ) -> Result<CheckedConfiguration, LocalFileCacheError> {
     if options.read_only && is_memory {
-        return Err(LocalFileCacheError::UnsupportedFeature(
-            "read-only mode does not support in-memory databases".into(),
+        return Err(invalid_configuration(
+            ConfigOption::ReadOnly,
+            "not supported with an in-memory database",
         ));
     }
 
@@ -1360,10 +1362,10 @@ fn check_configuration(
             None => Ok(None),
             Some(ref k) => {
                 let arr: [u8; 32] = k.as_slice().try_into().map_err(|_| {
-                    LocalFileCacheError::UnsupportedFeature(format!(
-                        "encryption key must be exactly 32 bytes, got {}",
-                        k.len()
-                    ))
+                    invalid_configuration(
+                        ConfigOption::EncryptionKey,
+                        format!("must be exactly 32 bytes, got {}", k.len()),
+                    )
                 })?;
                 Ok(Some(arr))
             }

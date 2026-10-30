@@ -41,7 +41,7 @@ pub(crate) fn validate_read_only(conn: &mut Connection) -> Result<(), LocalFileC
         .query_row("PRAGMA query_only", [], |row| row.get(0))
         .db()?;
     if query_only != 1 {
-        return Err(LocalFileCacheError::UnsupportedFeature(
+        return Err(LocalFileCacheError::DatabaseState(
             "SQLite query-only enforcement could not be enabled".into(),
         ));
     }
@@ -58,10 +58,7 @@ pub(crate) fn validate_read_only(conn: &mut Connection) -> Result<(), LocalFileC
             ..
         } => transaction.commit().db()?,
         SchemaState::Fresh | SchemaState::Version { .. } => {
-            return Err(LocalFileCacheError::UnsupportedFeature(
-                "read-only open requires the current database schema; initialization or migration is not permitted; database was not modified"
-                    .into(),
-            ));
+            return Err(LocalFileCacheError::SchemaNotCurrent);
         }
     }
     Ok(())
@@ -170,8 +167,8 @@ fn validate_current_read_snapshot(conn: &mut Connection) -> Result<(), LocalFile
             ..
         } => transaction.commit().db()?,
         _ => {
-            return Err(LocalFileCacheError::UnsupportedFeature(
-                "database changed while current schema was being validated; database was not modified"
+            return Err(LocalFileCacheError::DatabaseState(
+                "changed while the current schema was being validated; database was not modified"
                     .into(),
             ));
         }
@@ -199,7 +196,7 @@ pub(crate) fn enable_foreign_keys(conn: &Connection) -> Result<(), LocalFileCach
         .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
         .db()?;
     if enabled != 1 {
-        return Err(LocalFileCacheError::UnsupportedFeature(
+        return Err(LocalFileCacheError::DatabaseState(
             "SQLite foreign-key enforcement could not be enabled".into(),
         ));
     }

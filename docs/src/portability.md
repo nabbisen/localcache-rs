@@ -141,6 +141,6 @@ let opts2 = ScanOptions {
 ```
 
 Malformed braces, NUL, patterns over 16,384 UTF-8 bytes, nesting over 32
-levels, and expansion beyond 256 alternatives return `UnsupportedFeature`
-before directory iteration. File names that are not valid UTF-8 return
+levels, and expansion beyond 256 alternatives return
+`InvalidArgument { argument: "path_glob", .. }` before directory iteration. File names that are not valid UTF-8 return
 `InvalidPath` rather than being skipped or converted lossily.

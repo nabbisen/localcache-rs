@@ -46,7 +46,7 @@ fn every_required_failpoint_rolls_back_and_retry_succeeds() {
 
         let error = initialize_with_hook(&mut conn, false, &mut |point| {
             if point == failpoint {
-                Err(LocalFileCacheError::UnsupportedFeature(format!(
+                Err(LocalFileCacheError::DatabaseState(format!(
                     "synthetic RFC 010 failure at {point:?}"
                 )))
             } else {
@@ -329,7 +329,7 @@ fn fresh_creation_is_atomic_when_failure_occurs_before_commit() {
     let mut conn = Connection::open(&path).unwrap();
     let error = initialize_with_hook(&mut conn, false, &mut |point| {
         if point == MigrationPoint::ImmediatelyBeforeCommit {
-            Err(LocalFileCacheError::UnsupportedFeature(
+            Err(LocalFileCacheError::DatabaseState(
                 "synthetic fresh failure".into(),
             ))
         } else {

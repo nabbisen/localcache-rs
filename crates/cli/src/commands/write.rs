@@ -68,12 +68,11 @@ pub(crate) fn cmd_import(opts: CacheOptions, args: ImportArgs) -> Result<(), Loc
         if trimmed.is_empty() {
             continue;
         }
-        let record: localcache::ExportRecord = serde_json::from_str(trimmed).map_err(|e| {
-            LocalFileCacheError::UnsupportedFeature(format!(
-                "json parse error at line {}: {e}",
-                lineno + 1
-            ))
-        })?;
+        let record: localcache::ExportRecord =
+            serde_json::from_str(trimmed).map_err(|e| LocalFileCacheError::InvalidArgument {
+                argument: "records",
+                reason: format!("json parse error at line {}: {e}", lineno + 1),
+            })?;
         records.push(record);
     }
 
@@ -195,9 +194,7 @@ fn open_copy_source(
         ..options.clone()
     };
     match CacheEngine::<Vec<u8>>::open(read_only) {
-        Err(LocalFileCacheError::UnsupportedFeature(message))
-            if message.starts_with(SCHEMA_NOT_CURRENT) =>
-        {
+        Err(error @ LocalFileCacheError::SchemaNotCurrent) => {
             if upgrade_source {
                 return CacheEngine::<Vec<u8>>::open(CacheOptions {
                     read_only: false,
@@ -205,7 +202,7 @@ fn open_copy_source(
                 });
             }
             // The library's own message, then the way forward.
-            eprintln!("error: unsupported feature: {message}");
+            eprintln!("error: {error}");
             eprintln!(
                 "hint: to upgrade the source database to the current schema first, add --upgrade-source"
             );
@@ -214,11 +211,6 @@ fn open_copy_source(
         other => other,
     }
 }
-
-/// The start of the library's read-only-open refusal for a database whose
-/// schema is not the current one (`localcache::db::schema`). It is matched by
-/// text because the library has no dedicated error for it.
-const SCHEMA_NOT_CURRENT: &str = "read-only open requires the current database schema";
 
 pub(crate) fn cmd_migrate(
     opts: CacheOptions,

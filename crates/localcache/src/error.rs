@@ -24,17 +24,19 @@ use std::path::PathBuf;
 ///         LocalFileCacheError::Io(_) => {}
 ///         LocalFileCacheError::Serialization(_) => {}
 ///         LocalFileCacheError::FileNotFound { .. } => {}
-///         LocalFileCacheError::UnsupportedFeature(_) => {}
+///         LocalFileCacheError::InvalidConfiguration { .. } => {}
+///         LocalFileCacheError::InvalidArgument { .. } => {}
+///         LocalFileCacheError::SchemaNotCurrent => {}
+///         LocalFileCacheError::IncompatibleSchema(_) => {}
+///         LocalFileCacheError::DatabaseState(_) => {}
 ///         LocalFileCacheError::InvalidPath { .. } => {}
 ///         LocalFileCacheError::ReadOnly => {}
 ///         LocalFileCacheError::UnknownEncoding(_) => {}
-///         LocalFileCacheError::PayloadVersionMismatch { .. } => {}
 ///         LocalFileCacheError::Poisoned { .. } => {}
-///         #[cfg(feature = "encryption")]
-///         LocalFileCacheError::EncryptionError(_) => {}
-///         #[cfg(any(feature = "async", feature = "async-std", feature = "smol"))]
-///         LocalFileCacheError::AsyncTaskPanicked => {}
-///         // deliberately no `_` arm
+///         // deliberately no `_` arm; variants that exist only with a Cargo
+///         // feature (`MissingEncryptionKey`, `EncryptionError`, `Watcher`,
+///         // `AsyncTaskPanicked`) are not named, so the match is the same in
+///         // every feature combination
 ///     }
 /// }
 /// ```
@@ -61,11 +63,6 @@ pub enum LocalFileCacheError {
     #[error("file does not exist: {path}")]
     FileNotFound { path: PathBuf },
 
-    /// A requested feature/configuration is unsupported or failed a safety
-    /// precondition.
-    #[error("unsupported feature: {0}")]
-    UnsupportedFeature(String),
-
     /// The provided path cannot be represented as an exact valid UTF-8
     /// database key.
     #[error("invalid path: {path}")]
@@ -78,13 +75,6 @@ pub enum LocalFileCacheError {
     /// A stored payload uses an encoding that is not understood by this build.
     #[error("unknown payload encoding: {0}")]
     UnknownEncoding(String),
-
-    /// Reserved, and not currently returned by any operation. A stored
-    /// payload whose version does not match the configured version instead
-    /// makes `get_if_fresh` return `None` and `check_status` return
-    /// `CacheStatus::Stale`.
-    #[error("payload version mismatch: stored={stored}, expected={expected}")]
-    PayloadVersionMismatch { stored: u32, expected: u32 },
 
     /// A lock guarding shared cache state was poisoned by a panic in another
     /// thread. The data behind it may reflect a partially completed operation;
@@ -100,7 +90,7 @@ pub enum LocalFileCacheError {
     /// encrypted entry decoded without the `encryption` feature compiled in
     /// returns [`LocalFileCacheError::UnknownEncoding`], and an encrypted
     /// entry decoded with the feature compiled in but no key configured
-    /// returns [`LocalFileCacheError::UnsupportedFeature`].
+    /// returns [`LocalFileCacheError::MissingEncryptionKey`].
     #[cfg(feature = "encryption")]
     #[error("encryption error: {0}")]
     EncryptionError(String),
@@ -112,6 +102,137 @@ pub enum LocalFileCacheError {
     #[cfg(any(feature = "async", feature = "async-std", feature = "smol"))]
     #[error("async blocking task panicked")]
     AsyncTaskPanicked,
+
+    /// A configuration option is invalid or unsupported, found before the
+    /// database was touched.
+    ///
+    /// `option` names the [`CacheOptions`](crate::CacheOptions) field or
+    /// argument at fault: `database_path`, `read_only`, `encryption_key` or
+    /// `size`; `reason` says what is wrong. Fix the option and open again;
+    /// nothing was created or changed.
+    #[error("invalid configuration: {option}: {reason}")]
+    InvalidConfiguration {
+        option: &'static str,
+        reason: String,
+    },
+
+    /// An argument of a call is invalid, found before any work was done.
+    ///
+    /// `argument` names the parameter at fault: `new_key`, `path_glob`,
+    /// `index_name` or `records`; `reason` says what is wrong. Correct the
+    /// argument and call again.
+    #[error("invalid argument: {argument}: {reason}")]
+    InvalidArgument {
+        argument: &'static str,
+        reason: String,
+    },
+
+    /// A read-only open was refused because the database's schema is not the
+    /// current one (it is older, or empty). A read-only open never initializes
+    /// or migrates a database.
+    ///
+    /// Open it writable once to migrate it, or use a tool built for that (the
+    /// CLI's `copy --from-db --upgrade-source`). The database was not modified.
+    #[error(
+        "database schema is not current; a read-only open cannot migrate it; database was not modified"
+    )]
+    SchemaNotCurrent,
+
+    /// The database's schema was not recognised: it is newer than this
+    /// version understands, or it is not a localcache database, or it is
+    /// damaged. The payload says what was found.
+    ///
+    /// The database was not modified. Use a version of this crate that matches
+    /// the database, or restore it from a backup.
+    #[error("incompatible database schema: {0}")]
+    IncompatibleSchema(String),
+
+    /// No encryption key is configured, but the operation needs one: rotating
+    /// a key on an engine that has none, or decoding an encrypted entry.
+    ///
+    /// Configure the engine's key (`CacheOptions::encryption_key`) and retry.
+    #[cfg(feature = "encryption")]
+    #[error("no encryption key is configured")]
+    MissingEncryptionKey,
+
+    /// The database or the connection is in a state this crate will not work
+    /// with, for example a journal mode a migration cannot use, or SQLite not
+    /// honouring a setting. The payload says which, and states whether the
+    /// database was left unchanged.
+    #[error("database state: {0}")]
+    DatabaseState(String),
+
+    /// Setting up or running a file-system watcher failed. The payload carries
+    /// the operating-system watcher's message.
+    #[cfg(feature = "watching")]
+    #[error("file watching failed: {0}")]
+    Watcher(String),
+}
+
+/// The configuration options [`LocalFileCacheError::InvalidConfiguration`]
+/// can name. A new name needs a change here, which makes the set a decision
+/// that is reviewed in one place.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum ConfigOption {
+    DatabasePath,
+    ReadOnly,
+    #[cfg(feature = "encryption")]
+    EncryptionKey,
+    Size,
+}
+
+impl ConfigOption {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::DatabasePath => "database_path",
+            Self::ReadOnly => "read_only",
+            #[cfg(feature = "encryption")]
+            Self::EncryptionKey => "encryption_key",
+            Self::Size => "size",
+        }
+    }
+}
+
+/// The argument names [`LocalFileCacheError::InvalidArgument`] can carry.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum ArgumentName {
+    #[cfg(feature = "encryption")]
+    NewKey,
+    PathGlob,
+    IndexName,
+    Records,
+}
+
+impl ArgumentName {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            #[cfg(feature = "encryption")]
+            Self::NewKey => "new_key",
+            Self::PathGlob => "path_glob",
+            Self::IndexName => "index_name",
+            Self::Records => "records",
+        }
+    }
+}
+
+pub(crate) fn invalid_configuration(
+    option: ConfigOption,
+    reason: impl Into<String>,
+) -> LocalFileCacheError {
+    LocalFileCacheError::InvalidConfiguration {
+        option: option.as_str(),
+        reason: reason.into(),
+    }
+}
+
+pub(crate) fn invalid_argument(
+    argument: ArgumentName,
+    reason: impl Into<String>,
+) -> LocalFileCacheError {
+    LocalFileCacheError::InvalidArgument {
+        argument: argument.as_str(),
+        reason: reason.into(),
+    }
 }
 
 /// An error from the underlying SQLite database, as carried by

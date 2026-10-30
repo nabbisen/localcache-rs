@@ -3,7 +3,7 @@ use std::time::Duration;
 use rusqlite::Connection;
 use tempfile::TempDir;
 
-use crate::{JournalMode, SynchronousMode};
+use crate::{JournalMode, LocalFileCacheError, SynchronousMode};
 
 use super::super::{
     CURRENT_VERSION, apply_runtime_configuration, configuration as runtime_configuration,
@@ -24,9 +24,16 @@ fn unsafe_existing_file_journal_modes_reject_before_migration() {
             .unwrap();
         let before = snapshot_v1(&conn);
 
-        let error = initialize(&mut conn, false).unwrap_err().to_string();
+        let error = initialize(&mut conn, false).unwrap_err();
         assert!(
-            error.contains("requires an existing rollback-capable or WAL journal"),
+            matches!(error, LocalFileCacheError::DatabaseState(_)),
+            "{error:?}"
+        );
+        let error = error.to_string();
+        assert!(
+            error.starts_with(
+                "database state: migration requires an existing rollback-capable or WAL journal"
+            ),
             "{error}"
         );
         assert!(error.contains("database was not modified"), "{error}");
@@ -131,7 +138,7 @@ fn post_commit_configuration_error_reports_stable_recovery_fields() {
     .unwrap_err()
     .to_string();
     assert!(
-        error.contains("database runtime configuration failed:"),
+        error.starts_with("database state: runtime configuration failed:"),
         "{error}"
     );
     assert!(error.contains("schema_migration_committed=true"), "{error}");
@@ -170,7 +177,7 @@ fn no_migration_configuration_error_reports_false_and_observed_state() {
     .unwrap_err()
     .to_string();
     assert!(
-        error.contains("database runtime configuration failed:"),
+        error.starts_with("database state: runtime configuration failed:"),
         "{error}"
     );
     assert!(
@@ -214,5 +221,47 @@ fn journal_failure_after_synchronous_change_reports_committed_state() {
         conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
         i64::from(CURRENT_VERSION)
+    );
+}
+
+/// RFC 025 R4: SQLite not honouring a setting, and a failed migration
+/// postcondition, are `DatabaseState` errors. The load-bearing clauses stay.
+#[test]
+fn foreign_key_enforcement_that_cannot_be_enabled_is_a_database_state_error() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    // `PRAGMA foreign_keys` is a no-op inside a transaction.
+    conn.execute_batch("PRAGMA foreign_keys = OFF; BEGIN;")
+        .unwrap();
+    let error = super::super::validate_read_only(&mut conn).unwrap_err();
+    assert!(
+        matches!(error, LocalFileCacheError::DatabaseState(_)),
+        "{error:?}"
+    );
+    assert_eq!(
+        error.to_string(),
+        "database state: SQLite foreign-key enforcement could not be enabled"
+    );
+}
+
+#[test]
+fn a_failed_migration_postcondition_keeps_the_rollback_clause() {
+    let directory = TempDir::new().unwrap();
+    let path = directory.path().join("postcondition.sqlite3");
+    let conn = open_v1(&path);
+    let transaction = conn.unchecked_transaction().unwrap();
+    // A version-1 database is not the final schema.
+    let error = super::super::migration::validate_final_postconditions(&transaction).unwrap_err();
+    assert!(
+        matches!(error, LocalFileCacheError::DatabaseState(_)),
+        "{error:?}"
+    );
+    let text = error.to_string();
+    assert!(
+        text.starts_with("database state: migration precondition or postcondition failed: "),
+        "{text}"
+    );
+    assert!(
+        text.ends_with("; transaction will be rolled back"),
+        "{text}"
     );
 }

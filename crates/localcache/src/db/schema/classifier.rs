@@ -641,8 +641,8 @@ fn validate_foreign_key_integrity(
 }
 
 fn unrecognized(physical_version: i64, reason: &str) -> LocalFileCacheError {
-    LocalFileCacheError::UnsupportedFeature(format!(
-        "unrecognized database schema at physical version {physical_version}: {reason}; database was not modified"
+    LocalFileCacheError::IncompatibleSchema(format!(
+        "unrecognized at physical version {physical_version}: {reason}; database was not modified"
     ))
 }
 

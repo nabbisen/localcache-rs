@@ -140,7 +140,7 @@ fn failed_eviction_during_set_leaves_nothing_changed() {
 
     let hook = set_hook(|point| {
         if point == TestPoint::BeforeEviction {
-            return Err(LocalFileCacheError::UnsupportedFeature(
+            return Err(LocalFileCacheError::DatabaseState(
                 "forced eviction failure for the test".into(),
             ));
         }

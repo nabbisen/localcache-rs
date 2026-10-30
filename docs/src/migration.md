@@ -157,8 +157,9 @@ An effective read-only open accepts only the exact current schema. It runs the
 same strict classifier in one read snapshot but never creates tables, changes
 `user_version`, migrates historical data, or applies journal and synchronous
 configuration. Empty and recognized historical databases are therefore
-rejected with `UnsupportedFeature`; future and malformed schemas retain the
-normal fail-closed classifier error. A missing file remains missing.
+rejected with `SchemaNotCurrent`; future and malformed schemas are rejected with
+`IncompatibleSchema`. Both leave the database unmodified. A missing file remains
+missing.
 
 Use a writable open only when an upgrade is intentional. The CLI's
 `copy --from-db` opens its source read-only and refuses an old-schema source;
@@ -178,8 +179,8 @@ for MEMORY journaling or synchronous OFF therefore cannot weaken the
 migration transaction itself.
 
 If post-commit runtime configuration fails, `open()` returns
-`LocalFileCacheError::UnsupportedFeature` with the stable prefix
-`database runtime configuration failed:`. Its fields include
+`LocalFileCacheError::DatabaseState` whose message begins
+`runtime configuration failed:`. Its fields include
 `schema_migration_committed=true|false`, requested values, and observed values.
 When the field is `true`, schema version 5 is already committed even though
 engine construction failed; inspect the reported observed configuration and
