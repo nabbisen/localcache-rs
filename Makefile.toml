@@ -7,9 +7,15 @@
 #   cargo make gate-features  — feature assertion, clippy and tests on every row
 #   cargo make gate-msrv      — declared-MSRV check (rustup run 1.85 cargo make gate-msrv)
 #   cargo make gate-deny      — advisories and sources (deny.toml)
+#   cargo make gate-versions  — script tests; install examples and CHANGELOG name the version
+#   cargo make gate-docs      — rustdoc, mdBook, cargo package (needs a committed tree)
+#   cargo make gate-archive   — the source archive, checked and built (needs a committed tree)
 #   cargo make fmt-check      — formatting
 #   cargo make bench-compile  — verify benchmarks compile
 #   cargo make source-integrity — verify manifest target sources without Cargo
+#
+# Tasks not listed here are cargo-make built-ins, not the project's gates; the
+# supported commands are the `gate-*` tasks and the tasks listed above.
 #
 # Pinned tools (cargo install <tool> --version <v> --locked): cargo-make
 # 0.37.24, cargo-hack 0.6.45, cargo-deny 0.20.2.
