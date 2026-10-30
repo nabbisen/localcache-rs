@@ -73,6 +73,58 @@ pub fn set_payload_encoding(
     assert_eq!(changed, 1, "expected exactly one payload row to retag");
 }
 
+/// Replace the stored bytes **and** encoding tag of the entry at
+/// `stored_path` (the path as `keys()` returns it), straight in the database.
+/// Reaches a stored payload that no public call writes, such as a hostile one.
+#[allow(dead_code)]
+pub fn store_raw_payload(
+    database: &std::path::Path,
+    stored_path: &std::path::Path,
+    content: &[u8],
+    encoding: &str,
+) {
+    let conn = rusqlite::Connection::open(database).unwrap();
+    let changed = conn
+        .execute(
+            "UPDATE payloads SET content = ?1, encoding = ?2
+             WHERE file_id = (SELECT id FROM files WHERE path = ?3)",
+            rusqlite::params![content, encoding, stored_path.to_str().unwrap()],
+        )
+        .unwrap();
+    assert_eq!(changed, 1, "expected exactly one payload row to replace");
+}
+
+/// Run the test `test` of this same test binary in a child process whose
+/// address space is limited to `address_space_kib` (`ulimit -v`), with `envs`
+/// set, and return its output. A child that aborts or fails to allocate shows
+/// up as a failed exit status here instead of taking the parent down.
+#[cfg(unix)]
+#[allow(dead_code)]
+pub fn run_self_with_address_limit(
+    test: &str,
+    address_space_kib: u64,
+    envs: &[(&str, &str)],
+) -> std::process::Output {
+    std::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!(
+            "ulimit -v {address_space_kib} && exec \"$0\" --exact {test} --include-ignored --nocapture --test-threads=1"
+        ))
+        .arg(std::env::current_exe().unwrap())
+        .envs(envs.iter().copied())
+        .output()
+        .unwrap()
+}
+
+/// One field of `/proc/self/status` in kibibytes (`VmHWM`: peak resident set,
+/// `VmPeak`: peak address space), or `None` where there is no such file.
+#[allow(dead_code)]
+pub fn proc_status_kib(field: &str) -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let line = status.lines().find(|l| l.starts_with(field))?;
+    line.split_whitespace().nth(1)?.parse().ok()
+}
+
 /// A file-backed database holding three `Vec<f32>` entries (`a.txt`, `b.txt`,
 /// `c.txt`) whose second entry in path order is corrupted. Returns the
 /// database path and the stored paths in path order.

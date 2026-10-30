@@ -198,6 +198,7 @@ let watcher = engine.watcher()?;  // registers directories, not individual files
 | Method | Feature | Description |
 |---|---|---|
 | `.compress()` | `compression` | Enable zstd payload compression |
+| `.max_decompressed_bytes(n)` | `compression` | Largest size a compressed payload may have once decompressed (default 64 MiB; `0` is rejected) |
 | `.encryption_key(key)` | `encryption` | AES-256-GCM key (32 bytes) |
 | `.watch_dirs(bool)` | `watching` | Directory-level recursive watching |
 

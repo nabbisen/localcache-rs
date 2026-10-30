@@ -58,6 +58,20 @@ pub enum Codec {
 }
 
 // ---------------------------------------------------------------------------
+// Decompression limit
+// ---------------------------------------------------------------------------
+
+/// The default for [`CacheOptions::max_decompressed_bytes`]: 64 MiB
+/// (`67_108_864` bytes), about ten thousand times the largest payload the
+/// project's benchmarks store. A larger default lets a hostile database file
+/// exhaust a modest host; a smaller one costs users with unusually large
+/// compressed payloads a clear error and a one-line fix.
+///
+/// Requires the `compression` Cargo feature.
+#[cfg(feature = "compression")]
+pub const DEFAULT_MAX_DECOMPRESSED_BYTES: usize = 64 * 1024 * 1024;
+
+// ---------------------------------------------------------------------------
 // JournalMode / SynchronousMode
 // ---------------------------------------------------------------------------
 
@@ -258,6 +272,32 @@ pub struct CacheOptions {
     #[cfg(feature = "compression")]
     pub compress_payloads: bool,
 
+    /// The largest size, in bytes, a **compressed** payload may have once
+    /// decompressed. Defaults to [`DEFAULT_MAX_DECOMPRESSED_BYTES`] (64 MiB).
+    ///
+    /// A few kilobytes of compressed data can expand to gigabytes, so
+    /// decompression is bounded rather than trusted. The limit applies
+    /// symmetrically:
+    ///
+    /// * **on read** (`get`, `get_if_fresh`, `batch_get`, every query,
+    ///   `preload`), a stored compressed payload that expands past the limit
+    ///   returns [`LocalFileCacheError::PayloadTooLarge`](crate::LocalFileCacheError::PayloadTooLarge)
+    ///   without being decompressed in full;
+    /// * **on write**, a payload that is about to be compressed (see
+    ///   [`compress_payloads`](Self::compress_payloads)) and whose serialized
+    ///   size exceeds the limit returns the same error, so that a payload
+    ///   this engine stores is one it can read back.
+    ///
+    /// **Uncompressed payloads are not limited**: they are exactly as large
+    /// as the blob that is stored, which a read already holds in memory.
+    /// `0` is rejected when the engine is opened, with
+    /// [`LocalFileCacheError::InvalidConfiguration`](crate::LocalFileCacheError::InvalidConfiguration)
+    /// and `option: "max_decompressed_bytes"`. Each engine has its own limit.
+    ///
+    /// Requires the `compression` Cargo feature.
+    #[cfg(feature = "compression")]
+    pub max_decompressed_bytes: usize,
+
     /// Register each cached path's **parent directory** for recursive
     /// watching (instead of registering every file individually) when
     /// [`crate::CacheEngine::watcher`] or
@@ -313,6 +353,8 @@ impl Default for CacheOptions {
             encryption_key: None,
             #[cfg(feature = "compression")]
             compress_payloads: false,
+            #[cfg(feature = "compression")]
+            max_decompressed_bytes: DEFAULT_MAX_DECOMPRESSED_BYTES,
             #[cfg(feature = "watching")]
             watch_dirs: false,
             shared_cache: false,

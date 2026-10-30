@@ -37,7 +37,7 @@ thiserror               = "2"
 base64                  = "0.22"
 # optional features
 tokio                   = { version = "1.23",  features = ["rt"] }   # < 1.23.0 affected by RUSTSEC-2023-0001
-zstd                    = "0.14"
+zstd                    = { version = "0.14", default-features = false }
 serde_json              = "1"
 aes-gcm                 = "0.10.3"    # < 0.10.3 affected by RUSTSEC-2023-0096 (the advisory floor)
 tracing                 = "0.1"

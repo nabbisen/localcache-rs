@@ -64,6 +64,27 @@ Encoding tags stored in the database reflect the compression state
 (`"raw"` vs `"zstd"`), so mixing compressed and uncompressed entries in
 the same namespace works correctly.
 
+### The decompression limit
+
+A few kilobytes of compressed data can expand to gigabytes, so decompression
+is bounded: `CacheOptions::max_decompressed_bytes` (builder
+`.max_decompressed_bytes(n)`, default `DEFAULT_MAX_DECOMPRESSED_BYTES`, **64 MiB**)
+is the largest size a compressed payload may have once decompressed.
+
+- **On read**, a stored compressed entry that expands past the limit returns
+  `LocalFileCacheError::PayloadTooLarge { limit }`. It is refused as soon as
+  the limit is passed (or, if the frame header declares a size above it, before
+  anything is decompressed), so memory stays near the limit however much the
+  data would have expanded to.
+- **On write**, a payload that is about to be compressed and is larger than the
+  limit returns the same error, so an engine never stores what it would refuse to
+  read.
+- **Uncompressed payloads are not limited**: they are exactly as large as the
+  stored blob. Each engine has its own limit; `0` is rejected when it is opened.
+
+If you store compressed payloads larger than 64 MiB once decompressed, raise the
+option on the engines that read and write them.
+
 ## json
 
 Switches the serialisation codec to **JSON** (via `serde_json`) and unlocks

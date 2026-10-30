@@ -43,10 +43,16 @@ const ENC_SUFFIX: &str = "-aes256gcm";
 // ---------------------------------------------------------------------------
 
 /// Encode `payload` for storage, returning `(bytes, encoding_tag)`.
+///
+/// With `compress`, a payload whose serialized size exceeds
+/// `max_decompressed_bytes` is refused (before any compression), because the
+/// same limit would refuse to read it back. A payload that is not compressed
+/// is not checked (RFC 025 Amendment 2, D4).
 pub(crate) fn encode_payload<T>(
     payload: &T,
     compress: bool,
     codec: Codec,
+    #[cfg(feature = "compression")] max_decompressed_bytes: usize,
     #[cfg(feature = "encryption")] encryption_key: Option<&[u8; 32]>,
 ) -> Result<(Vec<u8>, &'static str), LocalFileCacheError>
 where
@@ -59,6 +65,11 @@ where
     let (mut bytes, mut base_tag): (Vec<u8>, &'static str) = {
         #[cfg(feature = "compression")]
         if compress {
+            if serialized.len() > max_decompressed_bytes {
+                return Err(LocalFileCacheError::PayloadTooLarge {
+                    limit: max_decompressed_bytes,
+                });
+            }
             let compressed = compress_bytes(&serialized)?;
             let tag = match codec {
                 Codec::Bincode => "zstd",
@@ -109,9 +120,15 @@ where
 }
 
 /// Decode stored bytes back into `T` given the `encoding` tag.
+///
+/// A compressed payload that would decompress to more than
+/// `max_decompressed_bytes` is refused with
+/// [`LocalFileCacheError::PayloadTooLarge`] (RFC 025 Amendment 2, D3);
+/// uncompressed payloads are not limited.
 pub(crate) fn decode_payload<T>(
     bytes: &[u8],
     encoding: &str,
+    #[cfg(feature = "compression")] max_decompressed_bytes: usize,
     #[cfg(feature = "encryption")] encryption_key: Option<&[u8; 32]>,
 ) -> Result<T, LocalFileCacheError>
 where
@@ -142,7 +159,7 @@ where
 
         #[cfg(feature = "compression")]
         "zstd" => {
-            let d = decompress_bytes(data)?;
+            let d = decompress_bytes(data, max_decompressed_bytes)?;
             deserialize_bincode(&d)
         }
 
@@ -151,7 +168,7 @@ where
 
         #[cfg(all(feature = "json", feature = "compression"))]
         "json-zstd" => {
-            let d = decompress_bytes(data)?;
+            let d = decompress_bytes(data, max_decompressed_bytes)?;
             deserialize_json(&d)
         }
 
@@ -223,9 +240,60 @@ fn compress_bytes(data: &[u8]) -> Result<Vec<u8>, LocalFileCacheError> {
     zstd::encode_all(Cursor::new(data), 3).map_err(LocalFileCacheError::Io)
 }
 
+/// Decompress a zstd frame into at most `limit` bytes (RFC 025 Amendment 2).
+///
+/// A few kilobytes of compressed data can expand to gigabytes, so neither the
+/// frame header nor the stream is trusted:
+///
+/// 1. a header that *declares* a content size above `limit` is refused before
+///    anything is allocated;
+/// 2. otherwise the stream is decoded in small chunks into a buffer that never
+///    grows past `limit`, and a stream that yields more than `limit` bytes is
+///    refused as soon as the byte after the limit appears.
+///
+/// A malformed frame is an [`Io`](LocalFileCacheError::Io) error, as before.
+/// This is the only place a zstd frame is decoded.
 #[cfg(feature = "compression")]
-fn decompress_bytes(data: &[u8]) -> Result<Vec<u8>, LocalFileCacheError> {
-    zstd::decode_all(Cursor::new(data)).map_err(LocalFileCacheError::Io)
+fn decompress_bytes(data: &[u8], limit: usize) -> Result<Vec<u8>, LocalFileCacheError> {
+    use std::io::{ErrorKind, Read};
+
+    let too_large = || LocalFileCacheError::PayloadTooLarge { limit };
+
+    // A header that cannot be parsed is left to the decoder, which reports it
+    // as a malformed frame.
+    let declared = zstd::zstd_safe::get_frame_content_size(data).ok().flatten();
+    if declared.is_some_and(|size| size > limit as u64) {
+        return Err(too_large());
+    }
+
+    // `declared <= limit`, so this pre-size is at most the limit.
+    let mut out: Vec<u8> = Vec::with_capacity(declared.map_or(0, |size| size as usize));
+    let mut decoder = zstd::stream::read::Decoder::new(data).map_err(LocalFileCacheError::Io)?;
+    let mut chunk = [0_u8; 16 * 1024];
+    loop {
+        let n = match decoder.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(error) if error.kind() == ErrorKind::Interrupted => continue,
+            Err(error) => return Err(LocalFileCacheError::Io(error)),
+        };
+        if n > limit - out.len() {
+            return Err(too_large());
+        }
+        if n > out.capacity() - out.len() {
+            // Double, but never past the limit: the buffer's capacity (and
+            // so the memory held, apart from one reallocation) is bounded by
+            // `limit`, where `Vec`'s own growth would reach twice it.
+            let target = out
+                .capacity()
+                .saturating_mul(2)
+                .max(out.len() + n)
+                .min(limit);
+            out.reserve_exact(target - out.len());
+        }
+        out.extend_from_slice(&chunk[..n]);
+    }
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------

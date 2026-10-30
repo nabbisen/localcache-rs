@@ -39,6 +39,8 @@ pub use cache::entry::{
     CacheEntry, CacheStats, CacheStatus, Diagnosis, EntryInfo, ExportRecord, FileMetadata,
     MetadataDiff, PayloadVersionInfo, PreloadReport,
 };
+#[cfg(feature = "compression")]
+pub use cache::options::DEFAULT_MAX_DECOMPRESSED_BYTES;
 pub use cache::options::{
     CacheOptions, ChangeDetectionMode, Codec, JournalMode, ScanOptions, SynchronousMode,
 };

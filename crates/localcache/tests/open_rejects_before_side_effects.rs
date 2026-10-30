@@ -4,8 +4,9 @@
 //!
 //! Every rejection the library makes from the options alone is run through
 //! every entry point: an encryption key of the wrong length (with the
-//! `encryption` feature), `max_entries(0)`, and a TTL under one second (RFC 025
-//! R6, v0.22.0).
+//! `encryption` feature), `max_entries(0)`, a TTL under one second (RFC 025
+//! R6, v0.22.0), and `max_decompressed_bytes(0)` (with the `compression`
+//! feature, RFC 025 Amendment 2).
 
 mod common;
 
@@ -28,6 +29,8 @@ enum Rejection {
     ZeroMaxEntries,
     ZeroTtl,
     SubSecondTtl,
+    #[cfg(feature = "compression")]
+    ZeroMaxDecompressedBytes,
     #[cfg(feature = "encryption")]
     ShortKey,
 }
@@ -36,6 +39,8 @@ const REJECTIONS: &[Rejection] = &[
     Rejection::ZeroMaxEntries,
     Rejection::ZeroTtl,
     Rejection::SubSecondTtl,
+    #[cfg(feature = "compression")]
+    Rejection::ZeroMaxDecompressedBytes,
     #[cfg(feature = "encryption")]
     Rejection::ShortKey,
 ];
@@ -50,6 +55,8 @@ impl Rejection {
             Self::ZeroMaxEntries => options.max_entries = Some(0),
             Self::ZeroTtl => options.ttl = Some(Duration::ZERO),
             Self::SubSecondTtl => options.ttl = Some(Duration::from_millis(999)),
+            #[cfg(feature = "compression")]
+            Self::ZeroMaxDecompressedBytes => options.max_decompressed_bytes = 0,
             #[cfg(feature = "encryption")]
             Self::ShortKey => options.encryption_key = Some(vec![0x5A; 31]),
         }
@@ -61,6 +68,8 @@ impl Rejection {
             Self::ZeroMaxEntries => builder.max_entries(0),
             Self::ZeroTtl => builder.ttl(Duration::ZERO),
             Self::SubSecondTtl => builder.ttl(Duration::from_millis(999)),
+            #[cfg(feature = "compression")]
+            Self::ZeroMaxDecompressedBytes => builder.max_decompressed_bytes(0),
             #[cfg(feature = "encryption")]
             Self::ShortKey => builder.encryption_key(vec![0x5A; 31]),
         }
@@ -80,6 +89,11 @@ impl Rejection {
             Self::SubSecondTtl => (
                 "ttl",
                 "invalid configuration: ttl: must be at least one second, got 999ms",
+            ),
+            #[cfg(feature = "compression")]
+            Self::ZeroMaxDecompressedBytes => (
+                "max_decompressed_bytes",
+                "invalid configuration: max_decompressed_bytes: must be at least 1",
             ),
             #[cfg(feature = "encryption")]
             Self::ShortKey => (

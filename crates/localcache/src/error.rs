@@ -76,6 +76,27 @@ pub enum LocalFileCacheError {
     #[error("unknown payload encoding: {0}")]
     UnknownEncoding(String),
 
+    /// A compressed payload would be larger than
+    /// [`CacheOptions::max_decompressed_bytes`](crate::CacheOptions::max_decompressed_bytes)
+    /// once decompressed. Found on **read**, for a stored compressed payload
+    /// that expands past the limit (a few kilobytes of compressed data can
+    /// expand to gigabytes, so decompression is bounded instead of trusted),
+    /// and on **write**, for a payload that is about to be compressed and
+    /// would not be readable back under the same limit.
+    ///
+    /// `limit` is the configured limit. The real size is not reported:
+    /// decompression stops as soon as the limit is passed, and a frame's
+    /// declared size is not to be trusted.
+    ///
+    /// Raise the option if the payload is legitimate; otherwise treat the
+    /// entry as unusable. Uncompressed payloads are not limited, and this
+    /// variant exists only with the `compression` Cargo feature.
+    #[cfg(feature = "compression")]
+    #[error(
+        "payload exceeds the {limit}-byte limit for compressed payloads (CacheOptions::max_decompressed_bytes)"
+    )]
+    PayloadTooLarge { limit: usize },
+
     /// A lock guarding shared cache state was poisoned by a panic in another
     /// thread. The data behind it may reflect a partially completed operation;
     /// this error stops the panic propagating to callers who did nothing wrong,
@@ -108,7 +129,8 @@ pub enum LocalFileCacheError {
     ///
     /// `option` names the [`CacheOptions`](crate::CacheOptions) field or
     /// argument at fault: `database_path`, `read_only`, `encryption_key`,
-    /// `size`, `max_entries` or `ttl`; `reason` says what is wrong. Fix the option and open again;
+    /// `size`, `max_entries` or `ttl` (and, with the `compression` feature,
+    /// `max_decompressed_bytes`); `reason` says what is wrong. Fix the option and open again;
     /// nothing was created or changed.
     #[error("invalid configuration: {option}: {reason}")]
     InvalidConfiguration {
@@ -181,6 +203,8 @@ pub(crate) enum ConfigOption {
     Size,
     MaxEntries,
     Ttl,
+    #[cfg(feature = "compression")]
+    MaxDecompressedBytes,
 }
 
 impl ConfigOption {
@@ -193,6 +217,8 @@ impl ConfigOption {
             Self::Size => "size",
             Self::MaxEntries => "max_entries",
             Self::Ttl => "ttl",
+            #[cfg(feature = "compression")]
+            Self::MaxDecompressedBytes => "max_decompressed_bytes",
         }
     }
 }

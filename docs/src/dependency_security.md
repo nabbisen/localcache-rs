@@ -206,6 +206,14 @@ Tell us. A short note describing which side you are on, and what your own MSRV f
 actually is, is more useful than a patch — the two cases above needed opposite fixes,
 and neither was the one first proposed.
 
+## The `zstd` features
+
+From v0.22.0 the `compression` feature builds `zstd` with `default-features = false`,
+which leaves out the decoders for pre-2016 frame formats (`legacy`), array-sized
+buffers (`arrays`) and dictionary training (`zdict_builder`): `localcache` writes and
+reads only standard frames, and the compatibility fixtures written by released versions
+decode unchanged.
+
 ## Advisory policy
 
 Dependency security is one command, `cargo deny`, configured by `deny.toml` at the

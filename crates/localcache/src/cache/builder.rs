@@ -226,6 +226,20 @@ where
         self
     }
 
+    /// Set the largest size, in bytes, a compressed payload may have once
+    /// decompressed (default [`DEFAULT_MAX_DECOMPRESSED_BYTES`](crate::DEFAULT_MAX_DECOMPRESSED_BYTES),
+    /// 64 MiB). `0` is rejected when the engine is built.
+    ///
+    /// Applies to compressed payloads only, on read and on write; see
+    /// [`CacheOptions::max_decompressed_bytes`].
+    ///
+    /// Requires the `compression` Cargo feature.
+    #[cfg(feature = "compression")]
+    pub fn max_decompressed_bytes(mut self, limit: usize) -> Self {
+        self.opts.max_decompressed_bytes = limit;
+        self
+    }
+
     /// Set the AES-256-GCM encryption key (exactly 32 bytes).
     ///
     /// Encrypts payload content only — paths, namespaces, file sizes,

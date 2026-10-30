@@ -228,6 +228,8 @@ fn mixed_encoding_namespace_with_field_predicate_matches_all_decode_path() {
         &value,
         true,
         Codec::Bincode,
+        #[cfg(feature = "compression")]
+        crate::DEFAULT_MAX_DECOMPRESSED_BYTES,
         #[cfg(feature = "encryption")]
         None,
     )
@@ -537,6 +539,8 @@ fn offset_counts_only_successfully_decoded_rows_tier3() {
         &Scored { score: 5.0 },
         true,
         Codec::Bincode,
+        #[cfg(feature = "compression")]
+        crate::DEFAULT_MAX_DECOMPRESSED_BYTES,
         #[cfg(feature = "encryption")]
         None,
     )

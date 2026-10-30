@@ -130,6 +130,20 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `resource` with `"ConnectionPool"`. The other values (`"AsyncCacheEngine"`, `"ReadPool"`,
   `"CacheWatcher"`) are unchanged, and the `ReadPool` error for a `:memory:` database already names
   `SyncCacheEngine`.
+- **Breaking** *(with the `compression` feature)*: decompression is bounded (RFC 025 Amendment 2).
+  `CacheOptions` gains **`max_decompressed_bytes: usize`** (builder `max_decompressed_bytes(n)`,
+  default **`DEFAULT_MAX_DECOMPRESSED_BYTES`, 64 MiB**; `0` is rejected at open with
+  `InvalidConfiguration { option: "max_decompressed_bytes" }`), and `LocalFileCacheError` gains
+  **`PayloadTooLarge { limit }`**. It applies to **compressed payloads only**, on read and on write:
+  a stored `zstd`/`json-zstd` entry (encrypted or not) that decompresses to more than the limit is
+  refused with `PayloadTooLarge` (a query lists it as a skipped entry and `run()` returns the error),
+  and `set` refuses a payload about to be compressed whose serialized size is over the limit
+  (`batch_set` reports it per item), so an engine never stores what it would refuse to read.
+  **Uncompressed payloads are not limited**, and import, export and key rotation do not decompress.
+  Affected: code that builds `CacheOptions` with every field and no `..CacheOptions::default()` (it
+  stops compiling with the feature), and users who stored compressed payloads larger than 64 MiB once
+  decompressed: raise `max_decompressed_bytes` on the engine that reads and writes them. Without the
+  `compression` feature the API does not change, and the stored format does not change.
 
 ### Removed
 
@@ -152,6 +166,20 @@ Everything below was deprecated in v0.21.5 with a `#[deprecated]` note naming it
   and remove them, and the planner behaves as it did without a hint.
 - **The CLI `migrate` command.** Use `copy --from-db` (with `--upgrade-source` to upgrade an
   old-schema source). `localcache migrate` is now an unknown subcommand and exits with status 2.
+
+### Security
+
+- **A compressed payload can no longer abort a read (with the `compression` feature).** The
+  unbounded decompression announced as a Known issue in v0.21.6 is fixed: a stored payload of a few
+  kilobytes that expands to gigabytes is refused with `PayloadTooLarge` once it passes
+  `max_decompressed_bytes` (64 MiB by default) and is never decompressed in full; a frame header that
+  *declares* a size above the limit is refused before anything is allocated. Measured: refusing a
+  1 GiB bomb under an 8 MiB limit grew the process by about 10 MiB, and a header claiming a 128 MiB
+  decoder window about 18 MiB, resident. Whoever can write the database file, or an `ExportRecord`
+  that is imported, can no longer make a reader abort this way.
+- **`zstd` is built without its legacy decoders** (`default-features = false`): frames in pre-2016
+  formats, which this crate never wrote, are no longer decodable; the compatibility fixtures written
+  by released versions decode unchanged.
 
 ---
 

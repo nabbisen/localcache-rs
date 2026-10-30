@@ -17,10 +17,11 @@ Existing exhaustive matches must add a `_` arm to upgrade to v0.21.0.
 | `InvalidPath { path }` | Path cannot be represented as an exact SQLite `TEXT` key | Use a valid UTF-8 filesystem/database path |
 | `ReadOnly` | Mutation requested on a read-only engine | Use a deliberately writable engine if mutation is intended |
 | `UnknownEncoding(String)` | Stored encoding tag not recognised | Wrong feature enabled for decoding |
+| `PayloadTooLarge { limit }` *(compression)* | A compressed payload would be larger than `max_decompressed_bytes` once decompressed: found when reading a stored compressed entry, or when writing a payload that is about to be compressed | Raise `max_decompressed_bytes` if the payload is legitimate; otherwise treat the entry as unusable. Uncompressed payloads are never refused |
 | `Poisoned { resource: &'static str }` | A lock guarding shared cache state was poisoned by a panic in another thread | The poisoning caller's bug, not yours — recreate the pool/engine/watcher |
 | `EncryptionError(String)` *(encryption)* | Wrong key or corrupt data — *not* a missing feature or a missing key (see below) | Verify encryption key |
 | `AsyncTaskPanicked` *(async / async-std / smol)* | `spawn_blocking` task panicked | Check payload type and encoding |
-| `InvalidConfiguration { option, reason }` | A configuration option is invalid or unsupported: `option` is `database_path`, `read_only`, `encryption_key`, `size`, `max_entries` or `ttl`. Found before the database is touched | Fix the named option and open again; nothing was created or changed |
+| `InvalidConfiguration { option, reason }` | A configuration option is invalid or unsupported: `option` is `database_path`, `read_only`, `encryption_key`, `size`, `max_entries` or `ttl` (and, with `compression`, `max_decompressed_bytes`). Found before the database is touched | Fix the named option and open again; nothing was created or changed |
 | `InvalidArgument { argument, reason }` | A call's argument is invalid: `argument` is `new_key`, `path_glob`, `index_name`, `records` or `items` | Correct that argument and call again |
 | `SchemaNotCurrent` | A read-only open of a database whose schema is not the current one (older, or empty) | Open it writable once to migrate it, or use the CLI's `copy --from-db --upgrade-source`; the database was not modified |
 | `IncompatibleSchema(String)` | The schema is newer than this version understands, is not a localcache database, or is damaged; the message says what was found | Use a version that matches the database, or restore a backup; the database was not modified |
@@ -64,6 +65,25 @@ handles errors no longer depends on which `rusqlite` version this crate uses.
 - Another `rusqlite::Error` variant, for example `QueryReturnedNoRows`, has no
   counterpart: `sqlite_extended_code()` is `None` for it, and the message is its
   only description.
+
+### v0.22.0 migration note: `PayloadTooLarge`
+
+With the `compression` feature, v0.22.0 adds the variant `PayloadTooLarge { limit }` and the option
+`CacheOptions::max_decompressed_bytes` (default 64 MiB, `DEFAULT_MAX_DECOMPRESSED_BYTES`). A few kilobytes of
+compressed data can expand to gigabytes, and before v0.22.0 a read of such a stored payload could abort the
+process; it now returns this error instead.
+
+- **On read**, a stored compressed entry (`zstd`, `json-zstd`, and their encrypted forms) that decompresses
+  to more than the limit returns `PayloadTooLarge`. A query lists it as a skipped entry and `run()` returns
+  the error (see [Entries a query cannot decode](./querying.md#entries-a-query-cannot-decode-run_report)).
+- **On write**, a payload that is about to be compressed and whose serialized size exceeds the limit returns
+  `PayloadTooLarge` from `set` (a per-item failure in `batch_set`), because the same engine would refuse to
+  read it back.
+- **Upgrading:** an entry you stored compressed that is larger than 64 MiB once decompressed reads as
+  `PayloadTooLarge` until you raise the option (`max_decompressed_bytes(n)`) on the engine that reads it.
+- **Not limited:** uncompressed payloads, of any size, exactly as before. Without the `compression` feature
+  neither the option nor the variant exists.
+- A new variant means a `match` with a `_` arm needs no change (the enum is `#[non_exhaustive]`).
 
 ### v0.22.0 migration note: the `Poisoned` resource of `SyncCacheEngine`
 

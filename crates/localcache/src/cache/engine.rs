@@ -128,6 +128,10 @@ pub struct CacheEngine<T> {
     pub(crate) read_only: bool,
     pub(crate) payload_version: u32,
     pub(crate) compress: bool,
+    /// RFC 025 Amendment 2: the bound on a compressed payload's decompressed
+    /// size, enforced on read and on write.
+    #[cfg(feature = "compression")]
+    pub(crate) max_decompressed_bytes: usize,
     pub(crate) max_entries: Option<usize>,
     /// Optional callback invoked with the path of each LRU-evicted entry.
     pub(crate) evict_callback: Option<EvictCallback>,
@@ -248,6 +252,8 @@ where
             read_only,
             payload_version: options.payload_version,
             compress,
+            #[cfg(feature = "compression")]
+            max_decompressed_bytes: options.max_decompressed_bytes,
             max_entries: options.max_entries,
             evict_callback: None,
             #[cfg(feature = "encryption")]
@@ -268,6 +274,19 @@ where
     ///
     /// Updates `last_accessed_at` on a cache hit (LRU tracking).
     /// No change-detection or version check is performed.
+    ///
+    /// # Errors
+    ///
+    /// * [`LocalFileCacheError::Serialization`], [`LocalFileCacheError::Io`]
+    ///   (a malformed compressed frame), [`LocalFileCacheError::UnknownEncoding`]
+    ///   — the stored payload cannot be decoded.
+    /// * `LocalFileCacheError::PayloadTooLarge` (`compression` feature) — a
+    ///   stored compressed payload would be larger than
+    ///   `CacheOptions::max_decompressed_bytes`
+    ///   once decompressed. The entry is refused without being decompressed
+    ///   in full. Uncompressed payloads are never refused for their size.
+    /// * [`LocalFileCacheError::Database`] — including a busy database
+    ///   after the busy timeout.
     pub fn get<P>(&self, path: P) -> Result<Option<CacheEntry<T>>, LocalFileCacheError>
     where
         P: AsRef<Path>,
@@ -413,6 +432,11 @@ where
     ///   hashing it failed.
     /// * [`LocalFileCacheError::Serialization`] — encoding `payload`
     ///   failed.
+    /// * `LocalFileCacheError::PayloadTooLarge` (`compression` feature) —
+    ///   the engine compresses payloads and the serialized payload is larger
+    ///   than `CacheOptions::max_decompressed_bytes`,
+    ///   so it could not be read back. Nothing was stored. A payload that is
+    ///   not compressed is not checked.
     /// * [`LocalFileCacheError::EncryptionError`] — encrypting the payload
     ///   failed (`encryption` feature).
     /// * [`LocalFileCacheError::Database`] — including a busy database
@@ -495,7 +519,9 @@ where
     ///   the batch holds more distinct paths than `max_entries`. Nothing was
     ///   encoded or written.
     /// * [`LocalFileCacheError::Database`] — including a busy database
-    ///   after the busy timeout. Per-item preparation failures are
+    ///   after the busy timeout. Per-item preparation failures (including
+    ///   `PayloadTooLarge`, for an item that would be compressed above
+    ///   `CacheOptions::max_decompressed_bytes`) are
     ///   reported in [`BatchSetReport::failed`](BatchSetReport), not
     ///   returned as an error of the call.
     pub fn batch_set<P>(&self, items: &[(P, T)]) -> Result<BatchSetReport, LocalFileCacheError>
@@ -1265,6 +1291,8 @@ where
             payload,
             self.compress,
             self.codec,
+            #[cfg(feature = "compression")]
+            self.max_decompressed_bytes,
             #[cfg(feature = "encryption")]
             key.as_ref(),
         )
@@ -1276,6 +1304,8 @@ where
         decode_payload(
             bytes,
             encoding,
+            #[cfg(feature = "compression")]
+            self.max_decompressed_bytes,
             #[cfg(feature = "encryption")]
             key.as_ref(),
         )
@@ -1291,6 +1321,8 @@ where
         EngineCore {
             conn: &self.conn,
             namespace: &self.namespace,
+            #[cfg(feature = "compression")]
+            max_decompressed_bytes: self.max_decompressed_bytes,
             #[cfg(feature = "encryption")]
             encryption_key: &self.encryption_key,
         }
@@ -1303,7 +1335,7 @@ where
 /// reinterpretation of `CacheEngine<T>`.
 ///
 /// Mirrors every `#[cfg]` gate on the corresponding `CacheEngine<T>` field —
-/// today only `encryption_key`. `database_path` / `watch_dirs`
+/// `encryption_key` and `max_decompressed_bytes`. `database_path` / `watch_dirs`
 /// (`watching`-gated) are not read by the query path and are intentionally
 /// not part of this type.
 ///
@@ -1314,6 +1346,8 @@ where
 pub(crate) struct EngineCore<'e> {
     pub(crate) conn: &'e Connection,
     pub(crate) namespace: &'e str,
+    #[cfg(feature = "compression")]
+    pub(crate) max_decompressed_bytes: usize,
     #[cfg(feature = "encryption")]
     pub(crate) encryption_key: &'e std::cell::Cell<Option<[u8; 32]>>,
 }
@@ -1335,6 +1369,8 @@ where
     decode_payload(
         bytes,
         encoding,
+        #[cfg(feature = "compression")]
+        core.max_decompressed_bytes,
         #[cfg(feature = "encryption")]
         key.as_ref(),
     )
@@ -1408,6 +1444,14 @@ fn check_configuration(
         return Err(invalid_configuration(
             ConfigOption::Ttl,
             format!("must be at least one second, got {ttl:?}"),
+        ));
+    }
+    // RFC 025 Amendment 2: a limit that admits nothing.
+    #[cfg(feature = "compression")]
+    if options.max_decompressed_bytes == 0 {
+        return Err(invalid_configuration(
+            ConfigOption::MaxDecompressedBytes,
+            "must be at least 1",
         ));
     }
 

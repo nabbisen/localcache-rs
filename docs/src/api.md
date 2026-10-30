@@ -161,6 +161,7 @@ CacheOptions {
     max_entries:            Option<usize>,     // Some(0) is rejected; None means no limit
     watch_dirs:             bool,         // watching feature: directory-level watching
     compress_payloads:      bool,         // compression feature
+    max_decompressed_bytes: usize,        // compression feature; default 64 MiB, applies to compressed payloads only
     encryption_key:         Option<Vec<u8>>,  // encryption feature
 }
 ```

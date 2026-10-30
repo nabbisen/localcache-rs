@@ -65,7 +65,7 @@ engine.set(path, payload)
   ├── compute_hash_for_mode(path)   → Option<BLAKE3 hash>
   ├── encode_payload(payload)       → (bytes, encoding_tag)
   │     codec (bincode / json)
-  │     compress? (zstd)
+  │     compress? (zstd; refused above max_decompressed_bytes)
   │     encrypt? (AES-256-GCM + nonce)
   │
   ├── BEGIN IMMEDIATE
@@ -92,7 +92,7 @@ engine.get_if_fresh(path)
   ├── repository::load_payload()    → (content, encoding)
   ├── decode_payload(content)       → T
   │     decrypt? (AES-256-GCM)
-  │     decompress? (zstd)
+  │     decompress? (zstd; bounded by max_decompressed_bytes)
   │     deserialise (bincode / json)
   └── touch_last_accessed()         → UPDATE last_accessed_at
 ```
@@ -134,6 +134,11 @@ User payload (T: Serialize)
   ↓  encrypt  (AES-256-GCM, optional)
 → BLOB stored in payloads.content
 ```
+
+Reading runs the steps in reverse. The decompress step is **bounded**: a compressed payload
+may not expand past `CacheOptions::max_decompressed_bytes` (default 64 MiB), on read or on
+write, and is refused with `PayloadTooLarge` otherwise; uncompressed payloads are not limited.
+See [Features](./features.md#the-decompression-limit).
 
 The inverse is applied on read, driven entirely by the stored `encoding` tag: which codec,
 whether to decompress, and whether to decrypt are all read from the tag, not from the engine's
