@@ -1664,6 +1664,22 @@ Proposal: `.git-exclude/reviewed/039-architect-v0.22.0-scope-and-schedule-2026-1
 
 **Out of scope:** Q5 / RFC 026 (schema v6, the duplicate index, AAD, require-encryption) → v0.23.0; `#[non_exhaustive]` on `CacheOptions` and `ScanOptions` → decided with the 1.0 question (it would forbid the documented `..Default::default()` idiom); `rusqlite` 0.41 (Rust 1.89, no necessity); an MSRV raise; following symlinks; the `preload` cost difference (a quiet-host measurement before the RC, no code); the security-model page (documentation, the architect, before the RC).
 
+### v0.22.0 schedule — set by the architect, 2026-10-31
+
+Gates in order; no calendar dates, because review turns decide them and the owner sets the release date at
+authorization. **Done:** Q9a–Q9c, Q3d, Q1c, Q3b, Q3c, Q2f (local commits), Q3e (reviewed 054). **Remaining:**
+
+| # | Gate | Owner of the step | Depends on |
+|---|---|---|---|
+| 1 | Q10 bounded decoding (RFC 025 Amendment 2) | owner accepts the amendment; dev builds | the owner's acceptance |
+| 2 | Security-model page for the book (documentation only; ships with the release push) | architect | none |
+| 3 | `preload` quiet-host measurement (no code) | dev | none; runs while Q10 waits |
+| 4 | One-time release setup (GitHub Environment `release`; trusted-publisher record for each crate) and the `Release` dry run from `main` | owner does the setup; architect reviews the run | none; **must finish before gate 7** |
+| 5 | Release preparation: version `0.22.0`, install examples, one consolidated breaking-change migration list in `CHANGELOG.md`; **one push** of all local commits | dev | 1, 2, 3 |
+| 6 | Release candidate = CI green on the pushed commit (including `archive`, `doc-package`) + dispatched `msrv-fresh` and `advisories`; architect's Go or No-Go | architect | 5 |
+| 7 | Owner decides `0.22.0` or `1.0.0` and authorizes the date; signed tag; `Release` on the tag with `dry_run` first, then for real | owner | 4, 6 |
+| 8 | After release: fresh-consumer checks (1.85 and the new `rusqlite` line), ROADMAP and register reconciliation, v0.23.0 planning | architect | 7 |
+
 **1.0:** the architect recommends `0.22.0`, and deciding `1.0.0` after v0.23.0, because v0.23.0 changes the stored schema again. The owner decides at the v0.22.0 RC.
 
 ### Module-size register — after Q2b (2026-09-24)
