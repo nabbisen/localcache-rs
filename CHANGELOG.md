@@ -7,7 +7,50 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [Unreleased]
+## [0.22.0] — Unreleased
+
+*Date set at owner authorization.*
+
+**A breaking release,** the first since v0.21.0. Every change in it was announced in v0.21.4,
+v0.21.5 or v0.21.6. The stored payload format and the database schema do
+**not** change: an existing database opens unchanged.
+
+Who is affected: code that matches on `LocalFileCacheError` or reads its `Database` payload; code
+that calls anything removed below; programs that open a database with `max_entries(0)`, a TTL under
+one second, or a batch or import larger than `max_entries`; programs that relied on `QueryBuilder::run`
+leaving undecodable entries out, or on the default journal mode converting an existing database to WAL;
+anything that compared `Poisoned { resource }` with `"ConnectionPool"`; programs that build
+`CacheOptions` field by field with the `compression` feature; crates that depend on `rusqlite`
+directly; and scripts that run `localcache migrate`.
+
+**Migration, one line per breaking change** (each is described in full in the entry of that name below):
+1. **`rusqlite` 0.40.2** (and `links`): a crate that depends on `rusqlite` directly must use 0.40.2 or
+   later in the 0.40 line (**Changed**, `rusqlite` 0.39 → 0.40.2).
+2. **`Database` wraps the opaque `DatabaseError`**: replace a match on `rusqlite::Error` with
+   `sqlite_extended_code()` (**Changed**, `LocalFileCacheError::Database`).
+3. **Seven variants replace `UnsupportedFeature` and `PayloadVersionMismatch`**: match on the variant
+   (**Changed**, `UnsupportedFeature` and `PayloadVersionMismatch` are removed).
+4. **Four inputs are now rejected, before anything is written**: `max_entries(0)`, a TTL under one
+   second, a `batch_set` with more distinct paths than `max_entries` (**Changed**, three inputs
+   announced), and an `import_entries`/`import_from` with more distinct entries than `max_entries`
+   (**Changed**, imports honour `max_entries`).
+5. **`QueryBuilder::run()` returns an undecodable entry's error** instead of leaving it out; use
+   `run_report()` to tolerate it (**Changed**, `QueryBuilder::run()`).
+6. **`JournalMode::Preserve` is the default and `JournalMode` is `#[non_exhaustive]`**: an existing
+   database keeps its journal mode; set `JournalMode::Wal` for the old behaviour (**Changed**, journal
+   mode).
+7. **Imports honour `max_entries`**: an import that fits now evicts older entries in its own
+   transaction instead of leaving the namespace over the bound (**Changed**, `import_entries` and
+   `import_from`).
+8. **Removals** (**Removed**): the eight bool sort methods of `QueryBuilder`; `ConnectionPool`,
+   `SharedEngine` and `shared_engine`; `CacheEngine::namespace_copy`; `CacheWatcher::watched_count`;
+   `create_path_index` (sync and async) and `QueryBuilder::index_hint`; and the CLI `migrate`
+   command (use `copy --from-db`).
+9. **`Poisoned { resource }` for a poisoned `SyncCacheEngine` is `"SyncCacheEngine"`**, not
+   `"ConnectionPool"` (**Changed**, the `resource` of `Poisoned`).
+10. **With the `compression` feature, `max_decompressed_bytes` and `PayloadTooLarge`**: compressed
+    payloads larger than 64 MiB once decompressed need the option raised (**Changed**, decompression
+    is bounded; **Security**).
 
 ### Changed
 
@@ -180,6 +223,15 @@ Everything below was deprecated in v0.21.5 with a `#[deprecated]` note naming it
 - **`zstd` is built without its legacy decoders** (`default-features = false`): frames in pre-2016
   formats, which this crate never wrote, are no longer decodable; the compatibility fixtures written
   by released versions decode unchanged.
+
+### Known issues
+
+> **Known issue.** A stored uncompressed (`raw`/bincode) payload whose length prefix is forged can make `get`
+> abort the process with an allocation failure when the payload type contains a `String` or another type that
+> bincode decodes through its own string and byte-buffer path. It needs write access to the database file, or
+> an imported export. Entries encrypted with a key are not affected (the forgery fails authentication first);
+> `Codec::Json` payloads are not affected. It will be fixed in v0.23.0 by decoding the legacy format with a
+> bounds-checked decoder of our own.
 
 ---
 
@@ -1574,7 +1626,8 @@ Namespaces, batch ops, TTL, PRAGMAs, schema migration.
 ## [0.1.0] — 2026-05-03
 Initial release.
 
-[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/0.21.6...HEAD
+[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/0.22.0...HEAD
+[0.22.0]: https://github.com/nabbisen/localcache-rs/compare/0.21.6...0.22.0
 [0.21.6]: https://github.com/nabbisen/localcache-rs/compare/0.21.5...0.21.6
 [0.21.5]: https://github.com/nabbisen/localcache-rs/compare/0.21.4...0.21.5
 [0.21.4]: https://github.com/nabbisen/localcache-rs/compare/0.21.3...0.21.4
