@@ -56,7 +56,7 @@ CI_REQUIRED_JOBS: tuple[str, ...] = (
     "standard-gates",
     "bench-compile",
     "msrv",
-    "dependency-security",
+    "standard-deny",
     "archive",
     "doc-package",
 )

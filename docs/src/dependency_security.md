@@ -5,13 +5,14 @@ version (MSRV). A successful build on current stable Rust does not substitute
 for this contract. Dependency changes must preserve all four locked MSRV rows:
 
 ```sh
-cargo +1.85.0 check -p localcache --all-targets --all-features --locked
-cargo +1.85.0 check -p localcache --all-targets \
-  --no-default-features --features localcache/async-std --locked
-cargo +1.85.0 check -p localcache --all-targets \
-  --no-default-features --features localcache/smol --locked
-cargo +1.85.0 check -p localcache-cli --all-targets --all-features --locked
+cargo check -p localcache --all-targets --all-features --locked
+cargo check -p localcache --all-targets --no-default-features --features async-std --locked
+cargo check -p localcache --all-targets --no-default-features --features smol --locked
+cargo check -p localcache-cli --all-targets --all-features --locked
 ```
+
+They are one task, run on the declared toolchain: `rustup run 1.85.0 cargo make
+gate-msrv`. CI runs the same task on Rust 1.85.0.
 
 The separate async-std and smol rows are required because enabling all
 features selects Tokio by runtime priority. `--all-targets` also keeps
@@ -31,11 +32,13 @@ The declared MSRV changes only under a written rule
 - **A 12-month age floor** on the new MSRV, waived for security necessities.
 - **Notice one release ahead** in `CHANGELOG.md` and on this page; a security
   raise is announced in the release that makes it, and says so.
-- **Verification:** the four locked rows above in CI and the release gate, and
-  after each publication a fresh consumer crate with `rust-version = "1.85"` builds
-  the published version on the declared toolchain. A fresh-resolution check — no
-  lockfile, resolved by the declared toolchain's Cargo, then the same four rows —
-  runs weekly and at every release, and a drift there blocks the release.
+- **Verification:** the four locked rows above (`gate-msrv`) in CI on every push,
+  and after each publication a fresh consumer crate with `rust-version = "1.85"`
+  builds the published version on the declared toolchain. A fresh-resolution check —
+  the tracked tree without its lockfile, resolved by the declared toolchain's
+  Cargo, then the same four rows — runs weekly and on request
+  (`.github/workflows/msrv-fresh.yaml`); run it before a release, and a drift there
+  blocks the release.
 - **The previous minor line** gets security, data-loss, and corruption fixes for
   6 months after a raise, where the fix does not itself need the raise.
 
@@ -87,8 +90,8 @@ With `libsqlite3-sys 0.38.2` locked, `rusqlite =0.40.0` and `=0.40.1` still fail
 
 The gain is a newer bundled SQLite (3.51.3 → 3.53.2). The cost of staying on
 `^0.39` until then is the older one: no advisory currently affects it, and the
-dependency-security gate below scans `libsqlite3-sys` along with everything else,
-so a future one would surface there.
+advisory check below scans `libsqlite3-sys` along with everything else, so a
+future one would surface there.
 
 ### Why this cannot be worked around downstream
 
@@ -187,98 +190,69 @@ and neither was the one first proposed.
 
 ## Advisory policy
 
-`security/advisory-policy.json` is the sole checked-in disposition for RustSec
-findings. `scripts/check_advisories.py` runs pinned cargo-audit 0.22.2, freezes
-the exact RustSec revision, and independently fetches a fresh crates.io sparse
-index record for every eligible package in `Cargo.lock`. Every registry record
-must match the locked package name, version, and checksum. Missing, malformed,
-duplicate, unavailable, or yanked records fail the gate.
-
-Run the live gate with a new or empty evidence directory:
+Dependency security is one command, `cargo deny`, configured by `deny.toml` at the
+repository root:
 
 ```sh
-python3 scripts/check_advisories.py .git-exclude/advisory-evidence
+cargo make gate-deny
+# the command it runs:
+cargo deny --locked check -D advisory-not-detected advisories sources
 ```
 
-The normal command has no date, policy, finding, ignore, or snapshot override.
-It records the raw audit reports, RustSec Git identity, registry responses and
-manifest digest, lockfile and policy digests, scan time, summary, and exit
-status beneath the supplied output directory.
+**What it checks.** The RustSec advisory database is fetched fresh on every run,
+and a failed fetch fails the run: there is no silent fallback to an old copy.
+Against it, the gate denies
 
-The same gate also runs weekly and on request, in
-`.github/workflows/advisories.yaml`, separately from the push-time CI. A failure
-there means a new advisory or yank has reached the locked dependency graph.
+- vulnerabilities, unsound reports (`unsound = "all"`, so transitive dependencies
+  too), unmaintained crates (`unmaintained = "all"`) and yanked versions, unless
+  an `ignore` entry in `deny.toml` names the advisory;
+- an `ignore` entry that no longer matches anything (`-D advisory-not-detected`),
+  so a disposition cannot outlive its cause;
+- a dependency from any registry other than crates.io, or from a Git repository
+  (`[sources]`).
 
-Vulnerabilities, unsoundness, yanked packages, unknown findings, malformed
-input, and stale or expired policy entries are denied by default. A zero exit
-status means every current finding exactly matches reviewed policy; it does
-not mean the dependency graph has no warnings.
+The graph it scans is the one that can be built: every feature on
+(`all-features = true`), all targets, development dependencies included. A package
+that sits in `Cargo.lock` only because of an optional dependency that no feature
+of this workspace enables cannot be part of any build, and is not scanned.
 
-### Output labels
+**Where the dispositions live.** In `deny.toml`, under `[advisories] ignore`. Each
+entry is the advisory id and a `reason` that says why it is accepted *and* the
+condition that would change the decision, because an `ignore` has no expiry date:
 
-Every classified finding renders as exactly one of three labels — a
-knowingly accepted vulnerability or unsound finding is never a bare `PASS`:
-
-| Label | Meaning |
-|---|---|
-| `WARN` | `unmaintained`/`notice`, `action: "warn"` — visible, not denied |
-| `EXCEPTION` | `vulnerability`/`unsound`, `action: "exception"` — a knowingly accepted defect, deliberately distinguished from `WARN` |
-| `DENY` | no exact policy disposition, a stale entry, an expired one, or a yanked package |
-
-The final `RESULT` line reports `findings`, `warnings`, `exceptions`, and
-`denied` counts separately. The coverage line also reports how many locked
-packages were excluded from advisory coverage because they have no crates.io
-registry source (`path` or `git` dependencies) — see each excluded package's
-name, version, and reason in the evidence bundle's registry manifest, under
-`excluded`, so completeness does not require a manual `Cargo.lock`
-cross-check.
-
-### Standing dispositions vs. deferred fixes
-
-Each policy entry matches exactly one finding: `(advisory ID, package,
-version, kind)`. A finding with no matching entry is denied, and an entry
-matching no current finding is denied as stale — so any version change, or a
-new advisory of a different `kind` against the same package, re-raises the
-finding immediately, on its own, with no calendar involved.
-
-`unmaintained` and `notice` dispositions may rely on exactly that and omit
-`expires` entirely (or set it `null`), becoming a **standing disposition**:
-valid until the version, the kind, or the dependency graph changes, with no
-date to renew. This applies because "unmaintained" is a **standing
-condition** — either acceptable or not, and the answer does not change on a
-particular date — and because a newly published `vulnerability` advisory
-against the same package is a *different* policy key that no `unmaintained`
-entry can cover, so it is denied the day it appears rather than waiting for
-an expiry.
-
-`vulnerability` and `unsound` dispositions still require `expires`, and it
-must still post-date `approved`. Accepting one of these is a **deferred
-fix** for a known defect, not a standing condition, and a deferral needs a
-deadline that forces reconsideration — that is what the scheduled expiry is
-for.
-
-A standing disposition's `follow-up` field must state the **condition** that
-would change the decision (for example, "reassess if a maintained fork gains
-adoption, or if any vulnerability advisory is published against this
-package") rather than a date — there is no date to point to. Gate output
-for a standing disposition reads `standing disposition` and names that
-condition directly, rather than printing a date that does not exist:
-
-```text
-WARN RUSTSEC-2025-0052/async-std/1.13.2/unmaintained: warn, standing disposition
-(localcache maintainers) — reassess if a maintained fork of async-std gains
-adoption, or any vulnerability or unsound advisory is published against
-async-std at the locked version.
+```toml
+{ id = "RUSTSEC-2025-0052", reason = "Preserve the advertised async-std runtime feature. Follow-up: Reassess if a maintained fork of async-std gains adoption, or if any vulnerability or unsound advisory is published against async-std at the locked version." },
 ```
 
-Two unmaintained-package findings are currently acknowledged as standing
-dispositions:
+Two unmaintained-crate findings are accepted this way today:
 
-- `RUSTSEC-2025-0052` for `async-std 1.13.2`, preserving the advertised
-  optional runtime feature; and
-- `RUSTSEC-2025-0141` for `bincode 2.0.1`, preserving the established legacy
-  payload wire format.
+- `RUSTSEC-2025-0052` for `async-std`, preserving the advertised optional runtime
+  feature; and
+- `RUSTSEC-2025-0141` for `bincode`, preserving the established legacy payload
+  wire format.
 
-Both are warnings rather than known vulnerabilities, remain visible on every
-scan, and have no expiry date — see `security/advisory-policy.json` for each
-entry's exact re-raise condition.
+Both stay visible as notes on every run (`cargo deny -L info check advisories
+sources`). A newly published vulnerability or unsound advisory against either
+crate has a different id, so no existing entry covers it and the gate fails the
+day it appears.
+
+**To accept a finding:** add an `ignore` entry with its reason and follow-up
+condition, and get the change reviewed like any other. **To retire one:** delete
+the entry. If the advisory is still reported, the gate fails again; if the crate
+is gone or fixed, leaving the entry in fails the gate instead (`advisory-not-detected`),
+which is the prompt to delete it.
+
+**When it runs.** In CI on every push and pull request (job "Standard gates
+(dependency security)", required by the release gate), and every Monday in
+`.github/workflows/advisories.yaml`, also on request. The weekly run is the
+point: an advisory is published without any push, and a failure there means a new
+advisory or yank has reached the locked graph. Dependabot alerts for Cargo
+dependencies (a repository setting) back it up between runs.
+
+**Pinned tool versions.** `cargo-deny` 0.20.2, `cargo-hack` 0.6.45 and
+`cargo-make` 0.37.24, each installed with `cargo install <tool> --version <v>
+--locked`. They are written in the header of `Makefile.toml` and in the "Cache
+pinned gate tools" and "Install pinned gate tools" steps of
+`.github/workflows/ci.yaml`, `advisories.yaml` and `msrv-fresh.yaml`.
+Dependabot does not track tools installed this way, so raising a version means
+editing all of those places together.

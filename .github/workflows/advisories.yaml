@@ -1,27 +1,24 @@
 name: Dependency advisories
 
-# Phase 24 Q6: the RFC 014 / RFC 009 R13 fail-closed advisory gate, on a
-# schedule. `ci.yaml` runs the same gate only on a push or a pull request, so
-# an advisory published against the locked graph between two pushes went
+# The weekly run of the same gate CI runs on every push (`cargo make
+# gate-deny`, `deny.toml`). A new advisory appears without any push, so an
+# advisory published against the locked graph between two pushes would go
 # unnoticed until someone ran the gate by hand.
 #
 # This is its own workflow, not a `schedule:` on ci.yaml: a failure caused by
 # an upstream publication must not turn unrelated pushes red, and must not run
-# the whole CI weekly. It is deliberately NOT part of `aggregate-ci`, and not a
-# `needs:` of `release-gate`. The same gate also runs inside the `security`
-# step of `scripts/release.py release`, where it blocks a release.
-#
-# A failure here means a new advisory or a yank has reached the locked graph.
-# The gate fails closed: there is no `continue-on-error`, and the exit status of
-# `scripts/release.py security` is the job's. GitHub then notifies the
+# the whole CI weekly. A failure here means a new advisory or a yank has
+# reached the locked graph, or a stale `ignore` entry needs retiring. The gate
+# fails closed (there is no `continue-on-error`), and GitHub then notifies the
 # repository owner.
 #
 # Read-only, no secrets, no `pull_request_target`, actions pinned by full SHA
 # with the same pins as ci.yaml (RFC 009 R16). The runner image and the pins
 # change only by a deliberate, CI-verified change (RFC 022 R3 items 6-7).
 #
-# Deliberately no cache step: a cached advisory database would hide exactly
-# what this workflow exists to find.
+# Deliberately no cache of the advisory database: a cached database would hide
+# exactly what this workflow exists to find. Only the pinned tool binaries are
+# cached.
 
 on:
   schedule:
@@ -42,16 +39,18 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
-      - name: Install pinned cargo-audit
-        run: cargo install cargo-audit --version 0.22.2 --locked
-      - name: Run fail-closed advisory policy (RFC 009 R13)
-        run: >-
-          python3 scripts/release.py security
-          --output-dir "$RUNNER_TEMP/localcache-advisory-evidence"
-      - name: Preserve advisory evidence
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - name: Cache pinned gate tools
+        id: tools
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          name: dependency-security-evidence
-          path: ${{ runner.temp }}/localcache-advisory-evidence
-          if-no-files-found: error
+          path: |
+            ~/.cargo/bin/cargo-make
+            ~/.cargo/bin/cargo-deny
+          key: ubuntu-24.04-gate-tools-make-0.37.24-deny-0.20.2
+      - name: Install pinned gate tools
+        if: steps.tools.outputs.cache-hit != 'true'
+        run: |
+          cargo install cargo-make --version 0.37.24 --locked
+          cargo install cargo-deny --version 0.20.2 --locked
+      - name: cargo deny (advisories and sources, a stale ignore fails)
+        run: cargo make gate-deny

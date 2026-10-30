@@ -10,7 +10,7 @@ schema-version = 1
 
 [implementations.release-runner]
 path = "scripts/release.py"
-sha256 = "c1ae2adbe4d58738a8b825728af6217dc3a2287c0e547b8ff000103436f26429"
+sha256 = "e2efe7721507b884bca38144c5ce5feb0f8107da0485fdd182b44dea78f3b273"
 
 [implementations.archive-parser-writer-compressor]
 path = "scripts/release_archive.py"
@@ -19,7 +19,3 @@ sha256 = "cb6ed66d0a4edd0a5b481305028249ddba748d19cf839a462406c6879df8eafe"
 [implementations.source-integrity]
 path = "scripts/source_integrity.py"
 sha256 = "07587f3ece397b3be523a2142ce9a68130936599cda67a22b3c5b56383907f77"
-
-[implementations.check-advisories]
-path = "scripts/check_advisories.py"
-sha256 = "9925277fcb7aa3c5df1735aa44be65cb8391e34029ccb29e51417f5a4ddfa54f"

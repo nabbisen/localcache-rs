@@ -1,12 +1,14 @@
-# cargo-deny policy: `cargo deny check advisories sources`
+# cargo-deny policy: `cargo deny check advisories sources` (RFC 027 R2)
 #
-# RFC 027 R2. The checks mirror the dependency-security gate of RFC 009 R13
-# (`scripts/release.py security`), which still runs beside this one until Q9b.
-# Pinned cargo-deny: 0.20.2 (see Makefile.toml and .github/workflows/ci.yaml).
+# Run it with `cargo make gate-deny`. CI runs it on every push and weekly
+# (`.github/workflows/advisories.yaml`). This file is the one place a
+# dependency-security disposition lives: see docs/src/dependency_security.md.
+# Pinned cargo-deny: 0.20.2 (Makefile.toml header and the CI workflows).
 
 [graph]
-# The optional dependencies (async-std, smol, notify, bincode, ...) must be in
-# the graph: the old gate reads all of Cargo.lock.
+# Every optional dependency (async-std, smol, notify, bincode, ...) must be in
+# the graph, so all features are on. The graph is what can be built: all
+# targets, dev-dependencies included.
 all-features = true
 
 [advisories]

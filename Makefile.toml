@@ -128,16 +128,6 @@ script = [
     '''
 ]
 
-[tasks.security-check]
-description = "Run the RFC 009 R13 fail-closed dependency-security gate"
-command = "python3"
-args = [
-    "scripts/release.py",
-    "security",
-    "--output-dir",
-    ".git-exclude/security-evidence",
-]
-
 [tasks.release]
 description = "RFC 009 R12 canonical release entry point: source, msrv, doc-package, security in order, fail-fast, one consolidated evidence bundle"
 command = "python3"

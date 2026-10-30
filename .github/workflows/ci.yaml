@@ -170,27 +170,6 @@ jobs:
       - name: Check the declared-MSRV matrix (RFC 009 R8)
         run: cargo make gate-msrv
 
-  dependency-security:
-    name: Dependency security policy
-    needs: source-integrity
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
-      - name: Install pinned cargo-audit
-        run: cargo install cargo-audit --version 0.22.2 --locked
-      - name: Run fail-closed advisory policy (RFC 009 R13)
-        run: >-
-          python3 scripts/release.py security
-          --output-dir "$RUNNER_TEMP/localcache-advisory-evidence"
-      - name: Preserve advisory evidence
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: dependency-security-evidence
-          path: ${{ runner.temp }}/localcache-advisory-evidence
-          if-no-files-found: error
-
   # RFC 009 M6c item 3, RFC 017: builds and verifies the project source
   # archive on this runner. RFC 017 retired the canonical Docker producer and
   # the canonical/noncanonical distinction entirely — this is now the
@@ -284,17 +263,12 @@ jobs:
       - standard-gates
       - bench-compile
       - msrv
-      - dependency-security
+      - standard-deny
       - archive
       - doc-package
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Download dependency-security evidence
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: dependency-security-evidence
-          path: ${{ runner.temp }}/dependency-security-evidence
       - name: Download project archive evidence
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -316,10 +290,9 @@ jobs:
           --require-job "standard-gates=${{ needs.standard-gates.result }}"
           --require-job "bench-compile=${{ needs.bench-compile.result }}"
           --require-job "msrv=${{ needs.msrv.result }}"
-          --require-job "dependency-security=${{ needs.dependency-security.result }}"
+          --require-job "standard-deny=${{ needs.standard-deny.result }}"
           --require-job "archive=${{ needs.archive.result }}"
           --require-job "doc-package=${{ needs.doc-package.result }}"
-          --evidence-manifest "$RUNNER_TEMP/dependency-security-evidence/manifest.json"
           --evidence-manifest "$RUNNER_TEMP/project-archive-evidence/evidence/manifest.json"
           --evidence-manifest "$RUNNER_TEMP/doc-package-evidence/manifest.json"
       - name: Preserve aggregation evidence
