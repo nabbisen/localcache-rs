@@ -53,6 +53,7 @@ REQUIRED_PATHS = (
 CI_REQUIRED_JOBS: tuple[str, ...] = (
     "source-integrity",
     "fmt",
+    "version-consistency",
     "standard-gates",
     "bench-compile",
     "msrv",

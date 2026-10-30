@@ -249,3 +249,8 @@ script = [
     cargo check -p localcache-cli --all-targets --all-features --locked
     '''
 ]
+
+[tasks.gate-versions]
+description = "Install examples and CHANGELOG name the workspace version (RFC 009 R10, R11)"
+command = "python3"
+args = ["scripts/check_versions.py"]

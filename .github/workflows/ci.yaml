@@ -45,6 +45,17 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all --check
 
+  # RFC 009 R10/R11 (RFC 027 R2): install examples and the CHANGELOG name the
+  # workspace version. Standard library only, no toolchain needed.
+  version-consistency:
+    name: Version consistency
+    needs: source-integrity
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check install examples and CHANGELOG against the workspace version
+        run: python3 scripts/check_versions.py
+
   # RFC 027 Q9a/Q9b: the feature matrix is `cargo make gate-features`
   # (`cargo hack --each-feature` plus the two runtime-suite rows, the CLI rows
   # and the doctests), so the local command is the CI command.
@@ -260,6 +271,7 @@ jobs:
     needs:
       - source-integrity
       - fmt
+      - version-consistency
       - standard-gates
       - bench-compile
       - msrv
@@ -287,6 +299,7 @@ jobs:
           --sha "${{ github.sha }}"
           --require-job "source-integrity=${{ needs.source-integrity.result }}"
           --require-job "fmt=${{ needs.fmt.result }}"
+          --require-job "version-consistency=${{ needs.version-consistency.result }}"
           --require-job "standard-gates=${{ needs.standard-gates.result }}"
           --require-job "bench-compile=${{ needs.bench-compile.result }}"
           --require-job "msrv=${{ needs.msrv.result }}"
