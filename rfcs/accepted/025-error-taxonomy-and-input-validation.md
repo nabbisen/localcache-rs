@@ -434,3 +434,100 @@ the database exactly as it found them.
 - **Test:** a rejected `open` on a path that does not exist leaves it absent; on an existing database
   it leaves the file byte-identical, `user_version` unchanged, and the journal mode as it was. Write
   it failing-before, as the Phase 24 rule requires.
+
+## Amendment 2 (architect, 2026-10-31) — Bounded payload decoding; an eighth variant
+
+**Status: proposed to the owner; not in force until accepted.** It adds one variant, so R3's rule
+("a new variant needs a review") applies; this amendment is that review.
+
+### The defect (reproduced; announced as a Known issue in v0.21.6)
+
+`serialization::decompress_bytes` calls `zstd::decode_all` with no limit. A stored payload of about 32 KB can
+expand to 1 GiB, and `get` aborts the process (exit 134, `.git-exclude/tmp/`, registered 2026-10-29). Anyone
+who can write the database file, or an `ExportRecord` that is imported, can make a reader abort. An abort is
+not an error a caller can handle. The same unbounded read is on every decode path, because they all end in
+`decode_payload`.
+
+### What the project measures
+
+The largest payload any benchmark, test or example in the repository stores is a 1536-element `Vec<f32>`
+(`benches/cache_bench.rs`): **6,152 bytes** with the bincode codec (8-byte length plus 6,144), and at most
+about 17 KB as JSON (1,536 numbers of at most 10 characters plus separators). The CLI stores arbitrary bytes,
+so user payloads are not bounded by the project. The measured maximum therefore fixes only the lower end of
+the choice; the default is chosen for safety (D2).
+
+### Decisions
+
+**D1 — The error.** A new variant, in every feature combination:
+
+```rust
+/// A payload is larger than `max_payload_bytes`, on read or on write.
+#[error("payload exceeds the {limit}-byte limit (CacheOptions::max_payload_bytes)")]
+PayloadTooLarge { limit: usize },
+```
+
+A caller acts on it differently from corruption: raise the option, or treat the entry as unusable. It is not
+`Serialization` (not matchable), not `Io` (what `decode_all` returned for a malformed frame), and not
+`UnknownEncoding`. Only the limit is reported: while streaming, the real size is unknown (it is "more than the
+limit"), and a frame's declared size is not to be trusted.
+
+**D2 — The option and its default.** `CacheOptions::max_payload_bytes: usize` (builder:
+`max_payload_bytes(n)`), default **64 MiB** (`67_108_864`), a documented public constant
+`DEFAULT_MAX_PAYLOAD_BYTES`. `0` is rejected as `InvalidConfiguration { option: "max_payload_bytes" }`
+(a limit that admits nothing). The limit applies to the payload's **decoded bytes**: the bytes the
+deserializer receives, after decryption and decompression, and symmetrically to the **serialized bytes
+before compression and encryption** on write. 64 MiB is about 10,000 times the largest measured payload and
+bounds a read's transient memory to roughly three times the limit (stream buffer, decoded bytes, the value).
+A consumer with larger payloads raises it explicitly, and the error says how.
+
+**D3 — Enforcement on read.** In `decode_payload` (the one function every read ends in: `get`,
+`get_if_fresh`, `batch_get`, every query tier, `preload`), after decryption and for every codec:
+- for a `zstd` frame, first the **declared content size** (`zstd_safe::get_frame_content_size`): if it is
+  present and greater than the limit, return the error **without allocating**; then decode through the
+  streaming `zstd::stream::read::Decoder` behind `Read::take(limit + 1)` into a buffer pre-sized to
+  `min(declared, limit)` when the size is known, and return the error if more than `limit` bytes arrive;
+- for an uncompressed payload, `data.len() > limit` is the error.
+A malformed frame stays `Io` as today. Query tiers record `PayloadTooLarge` as a skipped entry's error like
+any other decode failure (RFC 024 B1 then makes `run()` return it).
+
+**D4 — Enforcement on write.** In `encode_payload`, the serialized length before compression and encryption
+is checked against the limit and returns `PayloadTooLarge` (for `batch_set` a per-item failure, as other
+encode errors are). Without this, `set` could store what the same engine can no longer read.
+
+**D5 — Import and export do not decode.** `export_entries` writes stored bytes and `import_entries` stores
+them; neither runs `decode_payload`. After D3 a hostile record is harmless: the next read returns
+`PayloadTooLarge`. Adding a decode to every import record would make imports pay a decompression for a
+condition that D3 already handles at the one place it matters. `rotate_encryption_key` re-encrypts stored
+bytes and does not decode either.
+
+**D6 — `zstd` with `default-features = false`.** The default features (`legacy`, `arrays`, `zdict_builder`)
+add decoders for pre-2016 frame formats, array-sized buffers and dictionary training. localcache writes and
+reads only standard frames; the workspace requirement becomes `zstd = { version = "0.14", default-features =
+false }`. The compat fixtures (payloads written by released versions) are the proof that nothing is lost.
+
+**D7 — A probe the implementation must run.** A crafted `raw` (bincode) payload whose length prefix claims a
+huge `Vec` may allocate before the deserializer finds the bytes missing. The handoff requires a probe; if it
+allocates beyond the payload's length, the bincode configuration gets a limit consistent with D2 and the
+amendment's rule is extended to "no stored byte sequence of at most S bytes makes a read allocate more than a
+constant multiple of the limit". If the probe shows no problem, the test records that.
+
+### Compatibility
+
+Breaking, in v0.22.0 (announced in v0.21.6): a `CacheOptions` field is added (exhaustive struct literals
+without `..Default::default()` stop compiling; that idiom is the documented one); an entry stored by an earlier
+version whose decoded size exceeds 64 MiB is refused by default until the option is raised; a `set` of a
+payload over the limit is rejected. The error names the option. Nothing in the file format changes.
+
+### Test plan
+
+A crafted 32 KB-class frame expanding past the limit is refused with `PayloadTooLarge` on `get`,
+`get_if_fresh`, `batch_get`, every query tier and `preload`, without the process aborting and with memory
+bounded (measured peak resident size for the bomb is below a stated multiple of the limit); a frame with a
+forged small declared size is refused after the streaming bound; a payload exactly at the limit round-trips and
+one byte over is refused on both `set` and `get`; the limit option is honoured per engine, rejected at 0; the
+compat fixtures decode unmodified under `default-features = false`; the bincode probe (D7).
+
+### Decision requested of the owner
+
+Accept D1 to D7 as written, including the **default of 64 MiB** and the variant name `PayloadTooLarge`.
+Recommended: accept. If you prefer a different default, name it; nothing else changes.
