@@ -166,9 +166,14 @@ script = [
 ]
 
 [tasks.gate-versions]
-description = "Install examples and CHANGELOG name the workspace version (RFC 009 R10, R11)"
-command = "python3"
-args = ["scripts/check_versions.py"]
+description = "Script tests, then install examples and CHANGELOG name the workspace version (RFC 009 R10, R11)"
+script = [
+    '''
+    set -e
+    python3 -m unittest discover -s scripts/tests
+    python3 scripts/check_versions.py
+    '''
+]
 
 [tasks.gate-docs]
 description = "Rustdoc, mdBook and the joint package check (RFC 009 R9). Needs a clean committed tree."
