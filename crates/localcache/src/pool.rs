@@ -391,7 +391,8 @@ where
     }
 
     /// Execute a query built from a closure, and report the entries it could
-    /// not decode. See [`QueryBuilder::run_report`].
+    /// not decode instead of failing on the first. See
+    /// [`QueryBuilder::run_report`].
     ///
     /// Holds the mutex for the build and the run, like
     /// [`query_run`](Self::query_run).

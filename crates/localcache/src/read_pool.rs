@@ -385,7 +385,8 @@ where
     }
 
     /// Run a [`QueryBuilder`] closure against one pool slot, and report the
-    /// entries it could not decode. See [`QueryBuilder::run_report`].
+    /// entries it could not decode instead of failing on the first. See
+    /// [`QueryBuilder::run_report`].
     pub fn query_run_report<F>(&self, build: F) -> Result<QueryReport<T>, LocalFileCacheError>
     where
         F: for<'e> FnOnce(QueryBuilder<'e, T>) -> QueryBuilder<'e, T>,

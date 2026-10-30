@@ -90,6 +90,17 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     still reported in `BatchSetReport::failed`. A batch of exactly `max_entries` distinct paths
     is accepted. (It used to store everything and leave the namespace over the bound until the
     next write.)
+- **Breaking:** `QueryBuilder::run()` (and `query_run` on `SyncCacheEngine`, `ReadPool` and
+  `AsyncCacheEngine`) now **returns the error of an entry it cannot decode** instead of leaving
+  the entry out (RFC 024 B1). It fails exactly when `run_report()` would list a skipped entry for
+  the same query, with the first skipped entry's error, in the order the query would have returned
+  its entries. Under the wrong encryption key a query now fails with `EncryptionError` where it
+  returned `Ok(vec![])`; an entry with an unknown encoding tag fails with `UnknownEncoding`; a
+  payload that decodes but cannot be converted to JSON for a field predicate or sort fails with
+  `Serialization`. Affected: callers whose namespace may hold undecodable entries. To tolerate
+  them, call `run_report()` and ignore `skipped`: it returns the same entries the old `run()` did.
+  A query that skips nothing returns exactly what it did, and an entry with no payload row is
+  still just left out. `get`, `batch_get` and `dry_run()` are unchanged.
 
 ---
 

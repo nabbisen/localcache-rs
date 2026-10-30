@@ -110,8 +110,10 @@ engine.query()
 
 ### Pagination
 
-`offset` and `limit` count only entries that decode successfully; entries that cannot be decoded
-are skipped, never counted.
+`offset` and `limit` count returned entries only. An entry that cannot be decoded is never
+counted, and `run()` returns its error instead of a page (see
+[Entries a query cannot decode](#entries-a-query-cannot-decode-run_report)); `run_report()` pages
+past it.
 
 ```rust
 let page_size = 20;
@@ -126,26 +128,29 @@ let results = engine.query()
 
 ### Entries a query cannot decode: `run_report`
 
-`run()` leaves out an entry whose payload cannot be decoded, and says nothing.
-Under the wrong encryption key, every payload fails to decode, so a query
-returns an empty `Vec` with no error. `run_report()` returns the same entries and
-also lists what it left out and why:
+`run()` returns an error when the query meets an entry whose payload cannot be decoded: the
+error of the first such entry, in the order the query would have returned its entries, exactly as
+`get` does. Under the wrong encryption key every payload fails to decode, so a query fails with
+`EncryptionError` instead of returning an empty `Vec`; an entry with an unknown encoding tag fails
+with `UnknownEncoding`. To tolerate undecodable entries, ask to skip them with `run_report()`,
+which returns the entries that decode and lists what it passed over and why:
 
 ```rust
 let report = engine.query().path_like("%/docs/%").run_report()?;
 
-// Exactly what run() would have returned.
+// The entries that decode: what run() returns when nothing was skipped.
 for entry in &report.entries {
     println!("{}", entry.path.display());
 }
 
-// What run() would have dropped silently, with the error for each.
+// What run() would have failed on, with the error for each.
 for skipped in &report.skipped {
     eprintln!("cannot decode {}: {}", skipped.path.display(), skipped.error);
 }
 ```
 
-`offset` and `limit` count returned entries only, as for `run()`. `skipped` lists
+`run()` and `run_report()` run the same query: `run()` fails exactly when `skipped` is not
+empty. `offset` and `limit` count returned entries only. `skipped` lists
 every undecodable entry the scan passed while producing the page, in scan
 order, including those passed while skipping `offset` entries. Entries beyond the
 page are never examined, so they are not listed. A query with a payload
@@ -157,11 +162,10 @@ treats it as a miss as well.
 `SyncCacheEngine`, `ReadPool` and `AsyncCacheEngine` have `query_run_report`,
 taking the same closure as their `query_run`.
 
-**Change in v0.22.0.** `run()` will return the first undecodable entry's error,
-as `get` does, instead of leaving the entry out. A query under the wrong key will
-then fail with an error instead of returning nothing. To keep tolerating
-undecodable entries, use `run_report()`: it is available now and will not change.
-The decision is recorded in
+**Change in v0.22.0.** Before v0.22.0, `run()` left an undecodable entry out and said nothing, so
+a query under the wrong key returned an empty `Vec`. If your code relied on that, call
+`run_report()` and ignore `skipped`: it returns the same entries the old `run()` did. The decision
+is recorded in
 [RFC 024](https://github.com/nabbisen/localcache-rs/blob/main/rfcs/accepted/024-api-consistency.md)
 (B1).
 

@@ -1773,20 +1773,21 @@ mod run_report_tests {
         (engine, database, stored)
     }
 
+    /// RFC 024 B1: `run()` returns the error of the entry `run_report()` lists
+    /// as skipped, where v0.21.x left it out and returned `Ok`.
     #[test]
-    fn run_report_lists_what_run_leaves_out() {
+    fn run_returns_the_error_of_the_entry_run_report_lists() {
         let dir = TempDir::new().unwrap();
         let (engine, _database, stored) = engine_with_one_corrupt_entry(&dir);
 
-        let run = engine
+        let error = engine
             .query()
             .order_by(SortKey::Path, SortOrder::Asc)
             .run()
-            .unwrap();
-        assert_eq!(
-            run.iter().map(|e| e.path.clone()).collect::<Vec<_>>(),
-            [stored[0].clone(), stored[2].clone()],
-            "run() silently leaves the corrupt entry out"
+            .unwrap_err();
+        assert!(
+            matches!(error, LocalFileCacheError::Serialization(_)),
+            "unexpected error: {error:?}"
         );
 
         let report = engine
@@ -1796,8 +1797,8 @@ mod run_report_tests {
             .unwrap();
         assert_eq!(
             report.entries.iter().map(|e| &e.path).collect::<Vec<_>>(),
-            run.iter().map(|e| &e.path).collect::<Vec<_>>(),
-            "entries are exactly what run() returns"
+            [&stored[0], &stored[2]],
+            "run_report() still returns the entries that decode"
         );
         assert_eq!(report.skipped.len(), 1);
         assert_eq!(report.skipped[0].path, stored[1]);
@@ -1809,6 +1810,137 @@ mod run_report_tests {
             "unexpected error: {:?}",
             report.skipped[0].error
         );
+    }
+
+    /// An entry whose encoding tag is unknown is an undecodable entry too.
+    #[test]
+    fn run_returns_unknown_encoding_for_an_entry_with_an_unknown_tag() {
+        let dir = TempDir::new().unwrap();
+        let (engine, database, stored) = engine_with_one_corrupt_entry(&dir);
+        // Replace the corruption with an unknown tag on the same entry.
+        engine.set(&stored[1], &vec![1.0_f32]).unwrap();
+        common::set_payload_encoding(&database, &stored[1], "bogus");
+
+        match engine.query().run().unwrap_err() {
+            LocalFileCacheError::UnknownEncoding(tag) => assert_eq!(tag, "bogus"),
+            other => panic!("unexpected error: {other:?}"),
+        }
+        let report = engine.query().run_report().unwrap();
+        assert_eq!(report.skipped.len(), 1);
+        assert!(matches!(
+            report.skipped[0].error,
+            LocalFileCacheError::UnknownEncoding(_)
+        ));
+    }
+
+    /// "First" is in the order the entries would have been returned: with a
+    /// corrupt first and a bogus-tagged last entry, ascending order reports
+    /// the first's error and descending order the last's.
+    #[test]
+    fn run_returns_the_first_error_in_result_order() {
+        let dir = TempDir::new().unwrap();
+        let (engine, database, stored) = engine_with_one_corrupt_entry(&dir);
+        // stored[1] is corrupt (Serialization); make stored[2] unknown-tagged.
+        common::set_payload_encoding(&database, &stored[2], "bogus");
+
+        let ascending = engine
+            .query()
+            .order_by(SortKey::Path, SortOrder::Asc)
+            .run()
+            .unwrap_err();
+        assert!(
+            matches!(ascending, LocalFileCacheError::Serialization(_)),
+            "ascending reaches the corrupt entry first: {ascending:?}"
+        );
+        let descending = engine
+            .query()
+            .order_by(SortKey::Path, SortOrder::Desc)
+            .run()
+            .unwrap_err();
+        assert!(
+            matches!(descending, LocalFileCacheError::UnknownEncoding(_)),
+            "descending reaches the bogus-tagged entry first: {descending:?}"
+        );
+    }
+
+    /// `get` and `batch_get` already report an undecodable entry; B1 leaves
+    /// them as they were.
+    #[test]
+    fn get_and_batch_get_still_report_the_undecodable_entry() {
+        let dir = TempDir::new().unwrap();
+        let (engine, _database, stored) = engine_with_one_corrupt_entry(&dir);
+
+        assert!(engine.get(&stored[1]).is_err());
+        let results = engine.batch_get(&stored);
+        assert_eq!(results.len(), 3);
+        assert!(results[0].as_ref().unwrap().is_some());
+        assert!(results[1].is_err());
+        assert!(results[2].as_ref().unwrap().is_some());
+    }
+
+    /// Guards: with nothing undecodable, `run()` returns exactly the entries
+    /// `run_report()` returns, for every tier, ordering and page. The tiers
+    /// that test a payload need the `json` feature.
+    #[cfg(feature = "json")]
+    #[test]
+    fn run_is_unchanged_when_nothing_is_skipped() {
+        let dir = TempDir::new().unwrap();
+        // `serde_json::Value` cannot round-trip through bincode.
+        let engine: CacheEngine<serde_json::Value> = CacheEngine::builder()
+            .database(":memory:")
+            .codec(localcache::Codec::Json)
+            .build()
+            .unwrap();
+        for i in 0..6 {
+            let p = write_file(&dir, &format!("{i}.txt"), b"x");
+            engine
+                .set(
+                    &p,
+                    &serde_json::json!({"n": i, "kind": if i % 2 == 0 { "even" } else { "odd" }}),
+                )
+                .unwrap();
+        }
+        type Build = fn(
+            localcache::QueryBuilder<'_, serde_json::Value>,
+        ) -> localcache::QueryBuilder<'_, serde_json::Value>;
+        let builds: [(&str, Build); 6] = [
+            ("tier 1", |q| q.order_by(SortKey::Path, SortOrder::Asc)),
+            ("tier 1 page", |q| {
+                q.order_by(SortKey::Path, SortOrder::Desc)
+                    .offset(1)
+                    .limit(3)
+            }),
+            ("tier 2", |q| {
+                q.field_gt("n", 1.0).order_by(SortKey::Path, SortOrder::Asc)
+            }),
+            ("tier 2 page", |q| {
+                q.field_gt("n", 1.0)
+                    .order_by(SortKey::Path, SortOrder::Desc)
+                    .offset(1)
+                    .limit(2)
+            }),
+            ("tier 3", |q| {
+                q.field_eq("kind", serde_json::json!("even"))
+                    .order_by(SortKey::Path, SortOrder::Asc)
+            }),
+            ("tier 3 page", |q| {
+                q.field_eq("kind", serde_json::json!("odd"))
+                    .order_by(SortKey::Path, SortOrder::Asc)
+                    .offset(1)
+                    .limit(1)
+            }),
+        ];
+        for (name, build) in builds {
+            let run = build(engine.query()).run().unwrap();
+            let report = build(engine.query()).run_report().unwrap();
+            assert!(report.skipped.is_empty(), "{name}: nothing is skipped");
+            assert!(!run.is_empty(), "{name}: the query selects something");
+            assert_eq!(
+                run.iter().map(|e| &e.path).collect::<Vec<_>>(),
+                report.entries.iter().map(|e| &e.path).collect::<Vec<_>>(),
+                "{name}"
+            );
+        }
     }
 
     #[test]
@@ -1826,11 +1958,11 @@ mod run_report_tests {
         assert_eq!(report.entries.len(), engine.query().run().unwrap().len());
     }
 
-    /// The RFC 024 failing-before: under the wrong key, `run()` returned
-    /// `Ok(vec![])` and nothing said why.
+    /// RFC 024 B1: under the wrong key, `run()` returns the decryption error
+    /// where v0.21.x returned `Ok(vec![])` and nothing said why.
     #[cfg(feature = "encryption")]
     #[test]
-    fn wrong_key_run_is_empty_and_run_report_says_why() {
+    fn wrong_key_run_returns_the_error_and_run_report_lists_every_row() {
         let dir = TempDir::new().unwrap();
         let database = dir.path().join("wrong-key.sqlite3");
         let key_a = vec![0xAA_u8; 32];
@@ -1856,8 +1988,11 @@ mod run_report_tests {
         stored.sort();
         assert_eq!(stored.len(), 3);
 
-        // Unchanged in v0.21.5: an empty result, and no error.
-        assert!(wrong.query().run().unwrap().is_empty());
+        let error = wrong.query().run().unwrap_err();
+        assert!(
+            matches!(error, LocalFileCacheError::EncryptionError(_)),
+            "unexpected error: {error:?}"
+        );
 
         let report = wrong
             .query()

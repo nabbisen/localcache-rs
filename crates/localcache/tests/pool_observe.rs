@@ -258,9 +258,9 @@ fn sync_cache_engine_query_dry_run_returns_a_plan_without_loading_payloads() {
     assert_eq!(plan, direct);
 }
 
-// RFC 024 R9 — `query_run_report` reports what `query_run` leaves out.
+// RFC 024 R9, B1 — `query_run` returns the error of what `query_run_report` lists.
 #[test]
-fn sync_cache_engine_query_run_report_lists_what_query_run_leaves_out() {
+fn sync_cache_engine_query_run_returns_the_error_query_run_report_lists() {
     let dir = TempDir::new().unwrap();
     let (database, stored) = common::database_with_one_corrupt_entry(&dir, "sync-report.sqlite3");
     let shared = localcache::SyncCacheEngine::<Vec<f32>>::open(CacheOptions {
@@ -269,17 +269,17 @@ fn sync_cache_engine_query_run_report_lists_what_query_run_leaves_out() {
     })
     .unwrap();
 
-    let run = shared
+    let error = shared
         .query_run(|q| q.order_by(SortKey::Path, SortOrder::Asc))
-        .unwrap();
+        .unwrap_err();
+    assert!(
+        matches!(error, localcache::LocalFileCacheError::Serialization(_)),
+        "unexpected error: {error:?}"
+    );
     let report = shared
         .query_run_report(|q| q.order_by(SortKey::Path, SortOrder::Asc))
         .unwrap();
-    assert_eq!(
-        report.entries.iter().map(|e| &e.path).collect::<Vec<_>>(),
-        run.iter().map(|e| &e.path).collect::<Vec<_>>()
-    );
-    assert_eq!(run.len(), 2);
+    assert_eq!(report.entries.len(), 2);
     assert_eq!(report.skipped.len(), 1);
     assert_eq!(report.skipped[0].path, stored[1]);
 }
@@ -1425,7 +1425,7 @@ mod rfc024_async_bodies {
         assert_eq!(second.stored, 0);
     }
 
-    pub async fn query_run_report_lists_what_query_run_leaves_out() {
+    pub async fn query_run_returns_the_error_query_run_report_lists() {
         let dir = TempDir::new().unwrap();
         let (database, stored) =
             super::common::database_with_one_corrupt_entry(&dir, "async-report.sqlite3");
@@ -1436,19 +1436,19 @@ mod rfc024_async_bodies {
         .await
         .unwrap();
 
-        let run: Vec<localcache::CacheEntry<Vec<f32>>> = engine
+        let result: Result<Vec<localcache::CacheEntry<Vec<f32>>>, _> = engine
             .query_run(|q| q.order_by(localcache::SortKey::Path, localcache::SortOrder::Asc))
-            .await
-            .unwrap();
+            .await;
+        let error = result.unwrap_err();
+        assert!(
+            matches!(error, localcache::LocalFileCacheError::Serialization(_)),
+            "unexpected error: {error:?}"
+        );
         let report: localcache::QueryReport<Vec<f32>> = engine
             .query_run_report(|q| q.order_by(localcache::SortKey::Path, localcache::SortOrder::Asc))
             .await
             .unwrap();
-        assert_eq!(run.len(), 2);
-        assert_eq!(
-            report.entries.iter().map(|e| &e.path).collect::<Vec<_>>(),
-            run.iter().map(|e| &e.path).collect::<Vec<_>>()
-        );
+        assert_eq!(report.entries.len(), 2);
         assert_eq!(report.skipped.len(), 1);
         assert_eq!(report.skipped[0].path, stored[1]);
     }
@@ -1535,9 +1535,9 @@ macro_rules! rfc024_async_delegation_tests {
         }
 
         #[test]
-        fn async_query_run_report_lists_what_query_run_leaves_out() {
+        fn async_query_run_returns_the_error_query_run_report_lists() {
             $block_on_fn(
-                super::rfc024_async_bodies::query_run_report_lists_what_query_run_leaves_out(),
+                super::rfc024_async_bodies::query_run_returns_the_error_query_run_report_lists(),
             );
         }
 
@@ -1567,8 +1567,8 @@ macro_rules! rfc024_async_delegation_tests {
         }
 
         #[tokio::test]
-        async fn async_query_run_report_lists_what_query_run_leaves_out() {
-            super::rfc024_async_bodies::query_run_report_lists_what_query_run_leaves_out().await;
+        async fn async_query_run_returns_the_error_query_run_report_lists() {
+            super::rfc024_async_bodies::query_run_returns_the_error_query_run_report_lists().await;
         }
 
         #[cfg(feature = "watching")]

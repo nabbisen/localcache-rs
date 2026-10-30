@@ -53,6 +53,26 @@ pub fn corrupt_payload(database: &std::path::Path, stored_path: &std::path::Path
     assert_eq!(changed, 1, "expected exactly one payload row to corrupt");
 }
 
+/// Change the stored encoding tag of the entry at `stored_path` (the path as
+/// `keys()` returns it) to `encoding`, straight in the database. Reaches an
+/// `UnknownEncoding` failure that no public call produces.
+#[allow(dead_code)]
+pub fn set_payload_encoding(
+    database: &std::path::Path,
+    stored_path: &std::path::Path,
+    encoding: &str,
+) {
+    let conn = rusqlite::Connection::open(database).unwrap();
+    let changed = conn
+        .execute(
+            "UPDATE payloads SET encoding = ?1
+             WHERE file_id = (SELECT id FROM files WHERE path = ?2)",
+            rusqlite::params![encoding, stored_path.to_str().unwrap()],
+        )
+        .unwrap();
+    assert_eq!(changed, 1, "expected exactly one payload row to retag");
+}
+
 /// A file-backed database holding three `Vec<f32>` entries (`a.txt`, `b.txt`,
 /// `c.txt`) whose second entry in path order is corrupted. Returns the
 /// database path and the stored paths in path order.

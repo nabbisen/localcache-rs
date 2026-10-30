@@ -69,15 +69,16 @@ thread_local! {
 /// The result of [`QueryBuilder::run_report`]: the entries a query returns,
 /// and the entries it passed over because they could not be decoded.
 ///
-/// `run()` returns only [`entries`](Self::entries); it discards
-/// [`skipped`](Self::skipped). A query under the wrong encryption key or with
-/// a corrupted payload therefore returns fewer entries, or none, without
-/// saying why. `run_report()` says why.
+/// [`run()`](QueryBuilder::run) returns an error exactly when
+/// [`skipped`](Self::skipped) is not empty: the first skipped entry's error.
+/// `run_report()` is how to ask to skip undecodable entries instead: a query
+/// under the wrong encryption key or with a corrupted payload returns the
+/// entries that decode, and `skipped` says what was passed over and why.
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct QueryReport<T> {
-    /// The entries the query returns: exactly what `run()` returns for the
-    /// same query.
+    /// The entries that decode: what `run()` returns for the same query when
+    /// [`skipped`](Self::skipped) is empty.
     pub entries: Vec<CacheEntry<T>>,
     /// Entries the query passed over because they could not be decoded, with
     /// the error each produced, in scan order.
@@ -95,6 +96,9 @@ pub struct QueryReport<T> {
 }
 
 /// One entry a query could not decode. See [`QueryReport::skipped`].
+///
+/// [`QueryBuilder::run`] returns the first one's `error`; only
+/// [`QueryBuilder::run_report`] skips it.
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct SkippedEntry {
@@ -636,23 +640,28 @@ where
 
     /// Execute the query.
     ///
-    /// An entry whose payload cannot be decoded is left out of the result
-    /// without an error: under the wrong encryption key, a query returns an
-    /// empty `Vec`. Use [`run_report`](Self::run_report) to see what was
-    /// left out and why.
+    /// An entry whose payload cannot be decoded is an error, as it is for
+    /// `get`: `run()` returns the error of the first such entry, in the order
+    /// the query would have returned its entries. Under the wrong encryption
+    /// key it returns [`LocalFileCacheError::EncryptionError`]; an entry with
+    /// an unknown encoding tag gives [`LocalFileCacheError::UnknownEncoding`].
+    /// It fails exactly when [`run_report`](Self::run_report) would list a
+    /// skipped entry for the same query, because the two run the same code.
+    /// Use `run_report()` to ask to skip undecodable entries instead.
     ///
-    /// **From v0.22.0**, `run()` will return the first undecodable entry's
-    /// error instead, as `get` does; `run_report()` will remain the way to
-    /// tolerate them. See RFC 024 B1.
+    /// An entry whose payload row is missing is not an error; it is left out,
+    /// as `get` treats it as a miss.
     pub fn run(self) -> Result<Vec<CacheEntry<T>>, LocalFileCacheError> {
         execute_query(self)
     }
 
-    /// Execute the query and report the entries it could not decode.
+    /// Execute the query, skipping the entries it could not decode, and
+    /// report them.
     ///
-    /// `entries` is exactly what [`run`](Self::run) returns; `skipped` lists
-    /// each undecodable entry with its error. `offset` and `limit` count
-    /// returned entries only, as for `run()`.
+    /// `entries` is what [`run`](Self::run) would return if nothing were
+    /// undecodable; `skipped` lists each undecodable entry with its error,
+    /// and `run()` returns the first of those errors. `offset` and `limit`
+    /// count returned entries only.
     ///
     /// ```no_run
     /// use localcache::CacheEngine;

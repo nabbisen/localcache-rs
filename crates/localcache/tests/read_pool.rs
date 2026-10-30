@@ -471,11 +471,11 @@ fn read_pool_namespace_list_reports_every_namespace() {
 }
 
 // ---------------------------------------------------------------------------
-// RFC 024 R9 — `query_run_report`
+// RFC 024 R9, B1 — `query_run_report`, and `query_run` returning its error
 // ---------------------------------------------------------------------------
 
 #[test]
-fn read_pool_query_run_report_lists_what_query_run_leaves_out() {
+fn read_pool_query_run_returns_the_error_query_run_report_lists() {
     use localcache::{SortKey, SortOrder};
 
     let dir = TempDir::new().unwrap();
@@ -489,17 +489,17 @@ fn read_pool_query_run_report_lists_what_query_run_leaves_out() {
     )
     .unwrap();
 
-    let run = pool
+    let error = pool
         .query_run(|q| q.order_by(SortKey::Path, SortOrder::Asc))
-        .unwrap();
+        .unwrap_err();
+    assert!(
+        matches!(error, localcache::LocalFileCacheError::Serialization(_)),
+        "unexpected error: {error:?}"
+    );
     let report = pool
         .query_run_report(|q| q.order_by(SortKey::Path, SortOrder::Asc))
         .unwrap();
-    assert_eq!(run.len(), 2);
-    assert_eq!(
-        report.entries.iter().map(|e| &e.path).collect::<Vec<_>>(),
-        run.iter().map(|e| &e.path).collect::<Vec<_>>()
-    );
+    assert_eq!(report.entries.len(), 2);
     assert_eq!(report.skipped.len(), 1);
     assert_eq!(report.skipped[0].path, stored[1]);
 }

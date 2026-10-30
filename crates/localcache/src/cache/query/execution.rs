@@ -33,15 +33,22 @@ impl PreparedPathFilters {
     }
 }
 
-/// The one place a query runs. `run()` is this with `skipped` discarded, so
-/// the offset/limit logic (RFC 022 R2) exists once.
+/// The one place a query runs. `run()` is `run_report()` that returns the
+/// first skipped entry's error instead of the report (RFC 024 B1), so the
+/// offset/limit logic (RFC 022 R2) and the rule for which entries count as
+/// undecodable exist once: `run()` fails exactly when `run_report().skipped`
+/// is non-empty.
 pub(crate) fn execute_query<T>(
     q: QueryBuilder<'_, T>,
 ) -> Result<Vec<CacheEntry<T>>, LocalFileCacheError>
 where
     T: Serialize + DeserializeOwned,
 {
-    execute_report(q).map(|report| report.entries)
+    let report = execute_report(q)?;
+    match report.skipped.into_iter().next() {
+        Some(skipped) => Err(skipped.error),
+        None => Ok(report.entries),
+    }
 }
 
 #[cfg(feature = "json")]

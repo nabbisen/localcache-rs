@@ -467,7 +467,9 @@ where
     }
 
     /// Like [`query_run`](Self::query_run), and also reports the entries the
-    /// query could not decode. See [`crate::QueryBuilder::run_report`].
+    /// query skipped because it could not decode them. `query_run` returns
+    /// the first such entry's error instead. See
+    /// [`crate::QueryBuilder::run_report`].
     ///
     /// ```no_run
     /// # use localcache::{AsyncCacheEngine, CacheOptions};

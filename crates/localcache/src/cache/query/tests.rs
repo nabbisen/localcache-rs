@@ -463,6 +463,8 @@ fn limit_offset_boundaries() {
 //    with backfill from later candidates so `limit` is still honoured.
 // ---------------------------------------------------------------------------
 
+/// Read through `run_report()`: since RFC 024 B1, `run()` returns the corrupt
+/// row's error instead of the entries (asserted at the end).
 #[test]
 fn undecodable_payload_and_missing_payload_row_are_skipped_and_backfilled() {
     let dir = TempDir::new().unwrap();
@@ -503,7 +505,7 @@ fn undecodable_payload_and_missing_payload_row_are_skipped_and_backfilled() {
 
     // All 5 candidates, only 3 decodable — must not error, and must return
     // exactly the 3 good ones.
-    let all = engine.query().run().unwrap();
+    let all = engine.query().run_report().unwrap().entries;
     assert_eq!(all.len(), 3);
     let mut paths: Vec<_> = all.iter().map(|e| e.path.clone()).collect();
     paths.sort();
@@ -518,12 +520,19 @@ fn undecodable_payload_and_missing_payload_row_are_skipped_and_backfilled() {
         .query()
         .order_by(SortKey::Path, SortOrder::Asc)
         .limit(3)
-        .run()
-        .unwrap();
+        .run_report()
+        .unwrap()
+        .entries;
     assert_eq!(limited.len(), 3, "backfill must reach past both bad rows");
     let mut limited_paths: Vec<_> = limited.iter().map(|e| e.path.clone()).collect();
     limited_paths.sort();
     assert_eq!(limited_paths, expected);
+
+    // B1: `run()` returns the corrupt row's error; the orphan alone would not.
+    assert!(matches!(
+        engine.query().run(),
+        Err(crate::error::LocalFileCacheError::Serialization(_))
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -587,22 +596,25 @@ fn offset_counts_only_successfully_decoded_rows() {
         .order_by(SortKey::Path, SortOrder::Asc)
         .offset(0)
         .limit(2)
-        .run()
-        .unwrap();
+        .run_report()
+        .unwrap()
+        .entries;
     let page1 = engine
         .query()
         .order_by(SortKey::Path, SortOrder::Asc)
         .offset(2)
         .limit(2)
-        .run()
-        .unwrap();
+        .run_report()
+        .unwrap()
+        .entries;
     let page2 = engine
         .query()
         .order_by(SortKey::Path, SortOrder::Asc)
         .offset(4)
         .limit(2)
-        .run()
-        .unwrap();
+        .run_report()
+        .unwrap()
+        .entries;
 
     assert_eq!(paths_of(&page0), vec![p_a.clone(), p_b.clone()], "offset 0");
     assert_eq!(paths_of(&page1), vec![p_c.clone(), p_d.clone()], "offset 2");
@@ -669,9 +681,9 @@ fn offset_counts_only_successfully_decoded_rows_tier3() {
             .field_gt("score", -1.0)
             .order_by(SortKey::Path, SortOrder::Asc)
     };
-    let page0 = query().offset(0).limit(2).run().unwrap();
-    let page1 = query().offset(2).limit(2).run().unwrap();
-    let page2 = query().offset(4).limit(2).run().unwrap();
+    let page0 = query().offset(0).limit(2).run_report().unwrap().entries;
+    let page1 = query().offset(2).limit(2).run_report().unwrap().entries;
+    let page2 = query().offset(4).limit(2).run_report().unwrap().entries;
 
     assert_eq!(
         paths_of3(&page0),
@@ -723,8 +735,9 @@ fn check_offset_around_bad_rows(dir: &TempDir, label: &str, bad_positions: &[usi
         .query()
         .order_by(SortKey::Path, SortOrder::Asc)
         .offset(1)
-        .run()
-        .unwrap();
+        .run_report()
+        .unwrap()
+        .entries;
     let expected = if good_paths.len() > 1 {
         good_paths[1..].to_vec()
     } else {
@@ -773,8 +786,9 @@ fn orphan_row_behaves_like_corrupt_row_for_offset() {
         .order_by(SortKey::Path, SortOrder::Asc)
         .offset(1)
         .limit(2)
-        .run()
-        .unwrap();
+        .run_report()
+        .unwrap()
+        .entries;
 
     // Both engines have row 0 bad and rows 1..4 good; offset(1) skips the
     // first good row (index 1), so the page is indices 2 and 3.
@@ -805,9 +819,15 @@ fn offset_far_beyond_materializable_count_returns_empty_not_err() {
     }
     make_bad_row(&engine, &paths[0], BadKind::Corrupt);
 
-    let result = engine.query().offset(1000).run().unwrap();
+    let result = engine.query().offset(1000).run_report().unwrap().entries;
     assert!(result.is_empty());
-    let result = engine.query().offset(1000).limit(10).run().unwrap();
+    let result = engine
+        .query()
+        .offset(1000)
+        .limit(10)
+        .run_report()
+        .unwrap()
+        .entries;
     assert!(result.is_empty());
 }
 
@@ -842,8 +862,9 @@ fn decode_count_is_bounded_by_offset_plus_limit_plus_bad_rows() {
         .order_by(SortKey::Path, SortOrder::Asc)
         .offset(offset)
         .limit(limit)
-        .run()
-        .unwrap();
+        .run_report()
+        .unwrap()
+        .entries;
     assert_eq!(results.len(), limit);
     assert!(
         decode_calls() <= offset + limit + bad_rows_encountered,
@@ -885,14 +906,18 @@ fn run_report_lists_bad_rows_passed_in_scan_order_including_the_offset_region() 
             .offset(1)
             .limit(2)
     }
-    let run = build(&engine).run().unwrap();
     let report = build(&engine).run_report().unwrap();
 
-    assert_eq!(paths_of(&run), [paths[3].clone(), paths[4].clone()]);
     assert_eq!(
         paths_of(&report.entries),
-        paths_of(&run),
-        "entries equal run()'s page"
+        [paths[3].clone(), paths[4].clone()]
+    );
+    assert!(
+        matches!(
+            build(&engine).run(),
+            Err(crate::error::LocalFileCacheError::Serialization(_))
+        ),
+        "run() returns the first skipped entry's error (B1)"
     );
     assert_eq!(
         skipped_paths(&report),
@@ -912,7 +937,9 @@ fn run_report_lists_bad_rows_passed_in_scan_order_including_the_offset_region() 
 }
 
 /// `run_report` and `run` agree on every page, for every `offset`/`limit`
-/// over a namespace with bad rows at the start, middle, and end.
+/// over a namespace with bad rows at the start, middle, and end: `run()`
+/// returns the page exactly when nothing was skipped, and the first skipped
+/// entry's error exactly when `run_report()` lists one (RFC 024 B1).
 #[test]
 fn run_report_entries_equal_run_for_every_offset_and_limit() {
     let dir = TempDir::new().unwrap();
@@ -944,13 +971,23 @@ fn run_report_entries_equal_run_for_every_offset_and_limit() {
 
     for offset in 0..6 {
         for limit in [None, Some(0), Some(1), Some(2), Some(10)] {
-            let run = build(&engine, offset, limit).run().unwrap();
+            let run = build(&engine, offset, limit).run();
             let report = build(&engine, offset, limit).run_report().unwrap();
-            assert_eq!(
-                paths_of(&report.entries),
-                paths_of(&run),
-                "offset={offset} limit={limit:?}"
-            );
+            match (run, report.skipped.first()) {
+                (Ok(run), None) => assert_eq!(
+                    paths_of(&report.entries),
+                    paths_of(&run),
+                    "offset={offset} limit={limit:?}"
+                ),
+                (Err(error), Some(first)) => assert_eq!(
+                    error.to_string(),
+                    first.error.to_string(),
+                    "offset={offset} limit={limit:?}"
+                ),
+                (run, skipped) => panic!(
+                    "offset={offset} limit={limit:?}: run() = {run:?} but skipped = {skipped:?}"
+                ),
+            }
         }
     }
 }
@@ -982,7 +1019,7 @@ fn run_report_does_not_list_a_row_with_no_payload() {
 
 /// A payload predicate routes to the decode-everything tier. An undecodable
 /// row cannot be tested against the predicate, so it is reported whether or
-/// not it would have matched, and the entries still equal `run()`.
+/// not it would have matched. `run()` returns its error (RFC 024 B1).
 #[test]
 fn run_report_on_the_decode_everything_tier_lists_undecodable_rows() {
     let dir = TempDir::new().unwrap();
@@ -1004,11 +1041,13 @@ fn run_report_on_the_decode_everything_tier_lists_undecodable_rows() {
             .field_eq("kind", json!("even"))
             .order_by(SortKey::Path, SortOrder::Asc)
     }
-    let run = build(&engine).run().unwrap();
     let report = build(&engine).run_report().unwrap();
 
-    assert_eq!(paths_of(&run), [paths[0].clone()]);
-    assert_eq!(paths_of(&report.entries), paths_of(&run));
+    assert!(matches!(
+        build(&engine).run(),
+        Err(crate::error::LocalFileCacheError::Serialization(_))
+    ));
+    assert_eq!(paths_of(&report.entries), [paths[0].clone()]);
     assert_eq!(skipped_paths(&report), [paths[2].clone()]);
 }
 
@@ -1021,8 +1060,8 @@ enum Convertible {
 }
 
 /// A payload that decodes but cannot be turned into JSON, on the tier that
-/// must do that to test a predicate: `run()` leaves it out as it always did,
-/// and `run_report()` lists it with `Serialization`. (RFC 024 R9, review 021
+/// must do that to test a predicate: `run_report()` lists it with
+/// `Serialization`, and since RFC 024 B1 `run()` returns that error. (RFC 024 R9, review 021
 /// K1: the branch that used to be silent.)
 #[test]
 fn run_report_lists_a_payload_that_decodes_but_cannot_become_json() {
@@ -1052,13 +1091,14 @@ fn run_report_lists_a_payload_that_decodes_but_cannot_become_json() {
             .field_eq("Plain", json!(7))
             .order_by(SortKey::Path, SortOrder::Asc)
     }
-    let run = build(&engine).run().unwrap();
     let report = build(&engine).run_report().unwrap();
 
-    assert_eq!(
-        run.iter().map(|e| e.path.clone()).collect::<Vec<_>>(),
-        [paths[0].clone()],
-        "run() omits the unconvertible entries, as before"
+    assert!(
+        matches!(
+            build(&engine).run(),
+            Err(crate::error::LocalFileCacheError::Serialization(_))
+        ),
+        "run() returns the unconvertible entries' error"
     );
     assert_eq!(
         report
@@ -1066,7 +1106,7 @@ fn run_report_lists_a_payload_that_decodes_but_cannot_become_json() {
             .iter()
             .map(|e| e.path.clone())
             .collect::<Vec<_>>(),
-        run.iter().map(|e| e.path.clone()).collect::<Vec<_>>()
+        [paths[0].clone()]
     );
     let mut skipped: Vec<_> = report.skipped.iter().map(|s| s.path.clone()).collect();
     skipped.sort();
