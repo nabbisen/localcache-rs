@@ -160,8 +160,10 @@ let pool: ReadPool<Vec<f32>> = ReadPool::open(
 
 ## SQLite concurrency notes
 
-`localcache` uses SQLite's **WAL (Write-Ahead Logging)** journal mode by
-default, which allows one writer and multiple concurrent readers.
+`localcache` gives a **new** database SQLite's **WAL (Write-Ahead Logging)** journal mode, which
+allows one writer and multiple concurrent readers. An existing database keeps the journal mode it
+has unless you choose one with `journal_mode(JournalMode::Wal)` or `Delete` (see
+[the builder](builder.md#journal_modemode)).
 
 - `CacheEngine` is `Send` but not `Sync` — it can be moved to another
   thread, but not shared across threads through a `&CacheEngine` (an

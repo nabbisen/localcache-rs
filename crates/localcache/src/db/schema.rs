@@ -19,6 +19,10 @@ const CURRENT_VERSION: u8 = 5;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct InitializationOutcome {
     pub(crate) schema_migration_committed: bool,
+    /// The database had no localcache schema when it was opened (the file
+    /// did not exist, or it was empty) and this call created it. Decides
+    /// what `JournalMode::Preserve` does.
+    pub(crate) database_created: bool,
 }
 
 /// Initialize or migrate a writable database.
@@ -78,6 +82,7 @@ fn initialize_with_hook(
         validate_current_read_snapshot(conn)?;
         return Ok(InitializationOutcome {
             schema_migration_committed: false,
+            database_created: false,
         });
     }
     if !(0..i64::from(CURRENT_VERSION)).contains(&preliminary_version) {
@@ -108,9 +113,11 @@ fn initialize_with_hook(
         transaction.commit().db()?;
         return Ok(InitializationOutcome {
             schema_migration_committed: false,
+            database_created: false,
         });
     }
 
+    let database_created = matches!(state, SchemaState::Fresh);
     let mut snapshot = StartingSnapshot::capture(&transaction, state)?;
     match state {
         SchemaState::Fresh => migration::create_fresh(&transaction)?,
@@ -153,6 +160,7 @@ fn initialize_with_hook(
 
     Ok(InitializationOutcome {
         schema_migration_committed: true,
+        database_created,
     })
 }
 
@@ -180,14 +188,9 @@ pub(crate) fn apply_runtime_configuration(
     conn: &Connection,
     journal_mode: JournalMode,
     synchronous: SynchronousMode,
-    schema_migration_committed: bool,
+    outcome: &InitializationOutcome,
 ) -> Result<(), LocalFileCacheError> {
-    configuration::apply_runtime_configuration(
-        conn,
-        journal_mode,
-        synchronous,
-        schema_migration_committed,
-    )
+    configuration::apply_runtime_configuration(conn, journal_mode, synchronous, outcome)
 }
 
 pub(crate) fn enable_foreign_keys(conn: &Connection) -> Result<(), LocalFileCacheError> {

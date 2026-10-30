@@ -215,7 +215,7 @@ where
                     &conn,
                     options.journal_mode,
                     options.synchronous,
-                    outcome.schema_migration_committed,
+                    &outcome,
                 )?;
             }
         }

@@ -134,7 +134,7 @@ the batch methods, one such error per requested path. See
 | `CacheStatus` | `Fresh`, `Stale`, `Missing` |
 | `ChangeDetectionMode` | `MetadataOnly`, `MetadataThenPartialHash`, `MetadataThenFullHash`, `StrictFullHash` |
 | `Codec` | `Bincode`, `Json` |
-| `JournalMode` | `Wal`, `Delete`, `Memory` |
+| `JournalMode` | `Preserve` (default), `Wal`, `Delete`, `Memory` — `#[non_exhaustive]` |
 | `SynchronousMode` | `Off`, `Normal`, `Full`, `Extra` |
 | `InvalidationReason` | `FileModified`, `FileRemoved`, `FileRenamed` |
 | `SortKey` | `Field(String)` *(json)*, `Mtime`, `LastAccessed`, `Path` — `#[non_exhaustive]` |
@@ -151,7 +151,7 @@ CacheOptions {
     database_path:          PathBuf,
     change_detection_mode:  ChangeDetectionMode,
     codec:                  Codec,
-    journal_mode:           JournalMode,
+    journal_mode:           JournalMode,  // default Preserve: WAL for a new database, an existing one is left alone
     synchronous:            SynchronousMode,
     ttl:                    Option<Duration>,  // at least one second; resolution one second
     namespace:              String,

@@ -119,7 +119,7 @@ no longer exceed the bound; `max_entries(0)` is rejected at open. The bound is n
 
 | PRAGMA | Default | Purpose |
 |---|---|---|
-| `journal_mode` | `WAL` | Concurrent reads during writes |
+| `journal_mode` | `Preserve`: `WAL` for a new database, unchanged for an existing one | Concurrent reads during writes, without converting a database you did not ask to convert |
 | `synchronous` | `NORMAL` | Balanced durability vs speed |
 | `foreign_keys` | `ON` | Cascade deletes payloads with files |
 

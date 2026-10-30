@@ -62,9 +62,28 @@ Selects the payload serialisation format.  `Codec::Json` requires the
 
 ### `journal_mode(mode)`
 
-SQLite journal mode: `JournalMode::Wal`, `Delete`, or `Memory`.
+SQLite journal mode: `JournalMode::Preserve`, `Wal`, `Delete`, or `Memory`. The enum is
+`#[non_exhaustive]`.
 
-**Default**: `JournalMode::Wal`
+**Default**: `JournalMode::Preserve`, which chooses nothing: a **new** database gets WAL, and an
+**existing** database keeps the journal mode it has.
+
+- *New* means the database has no localcache schema when the engine opens it: the file did not
+  exist, or it is an empty file. A database that already has a localcache schema, current or
+  older, is existing, and keeps its mode through a schema migration.
+- `Wal` and `Delete` are explicit choices, applied every time a writable engine opens the
+  database: `Wal` converts a database in the rollback journal, `Delete` converts a WAL database.
+  `Memory` is applied to the connection and is not stored in the file.
+- Read-only engines and `ReadPool` never change a journal mode. An in-memory database has none to
+  preserve.
+- Only WAL is stored in the database file. A new connection to a file in any other mode sees the
+  rollback journal, so a database never reaches an open in `OFF` or `MEMORY` mode; the migration
+  precondition (an existing rollback-capable or WAL journal) is unchanged.
+
+**Before v0.22.0** the default was `Wal`, so any writable open converted an existing database to
+WAL. To keep doing that, set `journal_mode(JournalMode::Wal)`. A WAL database also needs its
+`-wal` and `-shm` files kept with it, which a program that only wanted to read or add an entry
+did not ask for.
 
 ### `synchronous(mode)`
 

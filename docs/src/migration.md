@@ -170,7 +170,10 @@ the same backup and maintenance-window planning described above. The deprecated
 ### Durability and runtime SQLite settings
 
 Caller-selected journal and synchronous modes are delayed until schema
-migration commits or an existing v5 schema passes no-write validation. A
+migration commits or an existing v5 schema passes no-write validation. (The
+default, `JournalMode::Preserve`, selects nothing: it applies WAL only when
+this open created the database, and otherwise leaves the journal mode as it
+is, including through a migration.) A
 file-backed migration requires an existing WAL or disk-backed rollback journal
 and uses verified `synchronous=FULL` during the transaction. Requested
 `synchronous` is applied and verified after commit, followed by requested

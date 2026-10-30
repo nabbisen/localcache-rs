@@ -62,14 +62,39 @@ pub enum Codec {
 // ---------------------------------------------------------------------------
 
 /// SQLite journal mode.
+///
+/// The default, [`Preserve`](Self::Preserve), chooses nothing: it gives a new
+/// database WAL and leaves an existing database as it is. Choose
+/// [`Wal`](Self::Wal) or [`Delete`](Self::Delete) to set the mode every time
+/// the database is opened.
+///
+/// `#[non_exhaustive]`: a `match` needs a wildcard arm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum JournalMode {
-    /// Write-Ahead Logging — recommended for most workloads.
+    /// Do not choose a journal mode. The engine applies WAL to a **new**
+    /// database and leaves an **existing** database's journal mode
+    /// unchanged. This is the default.
+    ///
+    /// *New* means the database has no localcache schema when the engine
+    /// opens it: the file did not exist, or it is an empty file. A database
+    /// that already has a localcache schema, current or older, is existing,
+    /// and keeps its mode through a migration.
+    ///
+    /// Read-only engines and [`ReadPool`](crate::ReadPool) never change a
+    /// journal mode, whatever is chosen. An in-memory database has no
+    /// journal mode to preserve.
     #[default]
+    Preserve,
+    /// Write-Ahead Logging — recommended for most workloads. Applied every
+    /// time a writable engine opens the database, converting it if it is in
+    /// another mode.
     Wal,
-    /// The classic rollback journal.
+    /// The classic rollback journal. Applied every time a writable engine
+    /// opens the database, converting it if it is in WAL.
     Delete,
-    /// In-memory journal (ephemeral).
+    /// In-memory journal (ephemeral). Applied to the connection after the
+    /// schema work, as before; it is not stored in the database file.
     Memory,
 }
 
@@ -138,7 +163,10 @@ pub struct CacheOptions {
     /// Payload serialization codec.
     pub codec: Codec,
 
-    /// SQLite journal mode.  Defaults to [`JournalMode::Wal`].
+    /// SQLite journal mode.  Defaults to [`JournalMode::Preserve`]: WAL for a
+    /// new database, an existing database's mode left unchanged. Before
+    /// v0.22.0 the default was WAL, which converted an existing database
+    /// to WAL; choose [`JournalMode::Wal`] to keep doing that.
     pub journal_mode: JournalMode,
 
     /// SQLite `synchronous` setting.  Defaults to [`SynchronousMode::Normal`].
@@ -267,7 +295,7 @@ impl Default for CacheOptions {
             database_path: PathBuf::from("localcache.sqlite3"),
             change_detection_mode: ChangeDetectionMode::MetadataOnly,
             codec: Codec::Bincode,
-            journal_mode: JournalMode::Wal,
+            journal_mode: JournalMode::Preserve,
             synchronous: SynchronousMode::Normal,
             ttl: None,
             namespace: "default".to_owned(),

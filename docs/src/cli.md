@@ -25,9 +25,12 @@ Options:
 ```
 
 Every writable command (`cleanup`, `vacuum`, `purge-version`, `import`, `copy`, `migrate`,
-`watch`) opens its database with SQLite's `WAL` journal mode and `synchronous = NORMAL` — the
-library's defaults. WAL persists in the database file as a `-wal` file until checkpointed; this
-is documented current behaviour, not something the CLI changes for you.
+`watch`) uses the library's defaults: `synchronous = NORMAL`, and the `Preserve` journal mode. A
+**new** database is created in `WAL`; an **existing** database keeps its journal mode, so
+`import`, `cleanup` and the other writable commands no longer convert a rollback-journal database
+to WAL. (Before v0.22.0 they did.) WAL persists in the database file as a `-wal` file until
+checkpointed. The CLI has no option to choose a journal mode; to convert a database, open it once
+from the library with `journal_mode(JournalMode::Wal)` or `Delete`.
 
 Commands that colour their status labels (`scan` and `query`) do so only when
 stdout is a terminal, and never when the `NO_COLOR` environment variable is set

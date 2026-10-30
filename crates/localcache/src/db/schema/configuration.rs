@@ -3,6 +3,7 @@
 use crate::error::SqliteResultExt;
 use rusqlite::Connection;
 
+use super::InitializationOutcome;
 use crate::{JournalMode, LocalFileCacheError, SynchronousMode};
 
 pub(super) fn prepare_file_migration(conn: &Connection) -> Result<(), LocalFileCacheError> {
@@ -27,8 +28,9 @@ pub(super) fn apply_runtime_configuration(
     conn: &Connection,
     requested_journal: JournalMode,
     requested_synchronous: SynchronousMode,
-    schema_migration_committed: bool,
+    outcome: &InitializationOutcome,
 ) -> Result<(), LocalFileCacheError> {
+    let schema_migration_committed = outcome.schema_migration_committed;
     if let Err(cause) = set_synchronous(conn, requested_synchronous) {
         return Err(configuration_error(
             conn,
@@ -49,7 +51,13 @@ pub(super) fn apply_runtime_configuration(
         ));
     }
 
-    let observed_journal = match set_journal_mode(conn, requested_journal) {
+    // `Preserve` on an existing database applies nothing: whatever journal
+    // mode it is in stays, and there is nothing to verify.
+    let Some(journal_to_apply) = journal_to_apply(requested_journal, outcome.database_created)
+    else {
+        return Ok(());
+    };
+    let observed_journal = match set_journal_mode(conn, journal_to_apply) {
         Ok(value) => value,
         Err(cause) => {
             return Err(configuration_error(
@@ -61,7 +69,7 @@ pub(super) fn apply_runtime_configuration(
             ));
         }
     };
-    if observed_journal != journal_name(requested_journal) {
+    if observed_journal != journal_name(journal_to_apply) {
         return Err(configuration_error(
             conn,
             requested_journal,
@@ -71,6 +79,17 @@ pub(super) fn apply_runtime_configuration(
         ));
     }
     Ok(())
+}
+
+/// The journal mode to set, or `None` to leave the database's alone.
+/// `Preserve` gives a database this open created WAL, and changes nothing
+/// otherwise; an explicit mode is always applied.
+fn journal_to_apply(requested: JournalMode, database_created: bool) -> Option<JournalMode> {
+    match requested {
+        JournalMode::Preserve if database_created => Some(JournalMode::Wal),
+        JournalMode::Preserve => None,
+        explicit => Some(explicit),
+    }
 }
 
 fn set_synchronous(conn: &Connection, mode: SynchronousMode) -> Result<(), rusqlite::Error> {
@@ -85,6 +104,8 @@ fn set_synchronous(conn: &Connection, mode: SynchronousMode) -> Result<(), rusql
 fn set_journal_mode(conn: &Connection, mode: JournalMode) -> Result<String, rusqlite::Error> {
     conn.query_row(
         match mode {
+            // A query, not a change; `journal_to_apply` never passes it.
+            JournalMode::Preserve => "PRAGMA journal_mode;",
             JournalMode::Wal => "PRAGMA journal_mode = WAL;",
             JournalMode::Delete => "PRAGMA journal_mode = DELETE;",
             JournalMode::Memory => "PRAGMA journal_mode = MEMORY;",
@@ -113,6 +134,7 @@ fn observed_synchronous(conn: &Connection) -> Result<String, rusqlite::Error> {
 
 fn journal_name(mode: JournalMode) -> &'static str {
     match mode {
+        JournalMode::Preserve => "preserve",
         JournalMode::Wal => "wal",
         JournalMode::Delete => "delete",
         JournalMode::Memory => "memory",

@@ -74,7 +74,12 @@ fn migration_preparation_accepts_wal_and_forces_full_synchronous() {
 
 #[test]
 fn every_runtime_option_is_applied_only_after_atomic_initialization() {
-    for journal in [JournalMode::Wal, JournalMode::Delete, JournalMode::Memory] {
+    for journal in [
+        JournalMode::Preserve,
+        JournalMode::Wal,
+        JournalMode::Delete,
+        JournalMode::Memory,
+    ] {
         for synchronous in [
             SynchronousMode::Off,
             SynchronousMode::Normal,
@@ -87,19 +92,14 @@ fn every_runtime_option_is_applied_only_after_atomic_initialization() {
             let outcome = initialize(&mut conn, false).unwrap();
             assert!(outcome.schema_migration_committed);
 
-            apply_runtime_configuration(
-                &conn,
-                journal,
-                synchronous,
-                outcome.schema_migration_committed,
-            )
-            .unwrap();
+            apply_runtime_configuration(&conn, journal, synchronous, &outcome).unwrap();
 
             let observed_journal: String = conn
                 .query_row("PRAGMA journal_mode", [], |row| row.get(0))
                 .unwrap();
             let expected_journal = match journal {
-                JournalMode::Wal => "wal",
+                // The database was just created, so `Preserve` applies WAL.
+                JournalMode::Preserve | JournalMode::Wal => "wal",
                 JournalMode::Delete => "delete",
                 JournalMode::Memory => "memory",
             };
@@ -129,14 +129,10 @@ fn post_commit_configuration_error_reports_stable_recovery_fields() {
     conn.busy_timeout(Duration::ZERO).unwrap();
     conn.execute_batch("BEGIN IMMEDIATE;").unwrap();
 
-    let error = apply_runtime_configuration(
-        &conn,
-        JournalMode::Wal,
-        SynchronousMode::Off,
-        outcome.schema_migration_committed,
-    )
-    .unwrap_err()
-    .to_string();
+    let error =
+        apply_runtime_configuration(&conn, JournalMode::Wal, SynchronousMode::Off, &outcome)
+            .unwrap_err()
+            .to_string();
     assert!(
         error.starts_with("database state: runtime configuration failed:"),
         "{error}"
@@ -168,14 +164,10 @@ fn no_migration_configuration_error_reports_false_and_observed_state() {
     assert!(!outcome.schema_migration_committed);
     conn.execute_batch("BEGIN IMMEDIATE;").unwrap();
 
-    let error = apply_runtime_configuration(
-        &conn,
-        JournalMode::Memory,
-        SynchronousMode::Off,
-        outcome.schema_migration_committed,
-    )
-    .unwrap_err()
-    .to_string();
+    let error =
+        apply_runtime_configuration(&conn, JournalMode::Memory, SynchronousMode::Off, &outcome)
+            .unwrap_err()
+            .to_string();
     assert!(
         error.starts_with("database state: runtime configuration failed:"),
         "{error}"
@@ -203,14 +195,10 @@ fn journal_failure_after_synchronous_change_reports_committed_state() {
     reader
         .query_row("SELECT count(*) FROM files", [], |row| row.get::<_, i64>(0))
         .unwrap();
-    let error = apply_runtime_configuration(
-        &conn,
-        JournalMode::Wal,
-        SynchronousMode::Off,
-        outcome.schema_migration_committed,
-    )
-    .unwrap_err()
-    .to_string();
+    let error =
+        apply_runtime_configuration(&conn, JournalMode::Wal, SynchronousMode::Off, &outcome)
+            .unwrap_err()
+            .to_string();
     assert!(error.contains("schema_migration_committed=true"), "{error}");
     assert!(error.contains("requested_synchronous=off"), "{error}");
     assert!(error.contains("observed_synchronous=off"), "{error}");
@@ -264,4 +252,60 @@ fn a_failed_migration_postcondition_keeps_the_rollback_clause() {
         text.ends_with("; transaction will be rolled back"),
         "{text}"
     );
+}
+
+/// RFC 024 B2: `database_created` is true only when this call found no
+/// localcache schema and created one; it decides what `Preserve` does.
+#[test]
+fn database_created_is_true_only_for_a_database_with_no_schema() {
+    let directory = TempDir::new().unwrap();
+
+    // The file did not exist.
+    let path = directory.path().join("new.sqlite3");
+    let mut conn = Connection::open(&path).unwrap();
+    assert!(initialize(&mut conn, false).unwrap().database_created);
+    // Already current: an existing database.
+    assert!(!initialize(&mut conn, false).unwrap().database_created);
+    drop(conn);
+    let mut reopened = Connection::open(&path).unwrap();
+    assert!(!initialize(&mut reopened, false).unwrap().database_created);
+
+    // An empty file.
+    let empty = directory.path().join("empty.sqlite3");
+    std::fs::write(&empty, b"").unwrap();
+    let mut conn = Connection::open(&empty).unwrap();
+    assert!(initialize(&mut conn, false).unwrap().database_created);
+
+    // An older schema is migrated, and is not created.
+    let old = directory.path().join("old.sqlite3");
+    let mut conn = open_v1(&old);
+    let outcome = initialize(&mut conn, false).unwrap();
+    assert!(outcome.schema_migration_committed);
+    assert!(!outcome.database_created);
+}
+
+#[test]
+fn preserve_applies_wal_to_a_created_database_and_nothing_to_an_existing_one() {
+    let directory = TempDir::new().unwrap();
+    for (database_created, expected) in [(true, "wal"), (false, "delete")] {
+        let path = directory
+            .path()
+            .join(format!("preserve-{database_created}.sqlite3"));
+        let mut conn = Connection::open(&path).unwrap();
+        let mut outcome = initialize(&mut conn, false).unwrap();
+        outcome.database_created = database_created;
+
+        apply_runtime_configuration(
+            &conn,
+            JournalMode::Preserve,
+            SynchronousMode::Normal,
+            &outcome,
+        )
+        .unwrap();
+
+        let observed: String = conn
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(observed, expected, "database_created={database_created}");
+    }
 }

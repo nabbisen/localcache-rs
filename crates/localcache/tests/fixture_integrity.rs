@@ -393,7 +393,7 @@ fn public_open_migrates_v0_1_atomically_for_every_runtime_option() {
                 .unwrap();
             let expected_journal = match journal_mode {
                 JournalMode::Wal => "wal",
-                JournalMode::Delete | JournalMode::Memory => "delete",
+                _ => "delete",
             };
             assert_eq!(observed_journal, expected_journal);
             drop(conn);

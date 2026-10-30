@@ -101,6 +101,19 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   them, call `run_report()` and ignore `skipped`: it returns the same entries the old `run()` did.
   A query that skips nothing returns exactly what it did, and an entry with no payload row is
   still just left out. `get`, `batch_get` and `dry_run()` are unchanged.
+- **Breaking:** an engine that does not choose a journal mode **leaves an existing database's
+  journal mode alone** (RFC 024 B2). `JournalMode` gains `Preserve`, which is now the `#[default]`
+  (so `CacheOptions::default().journal_mode`, the builder and the CLI all use it), and `JournalMode`
+  becomes `#[non_exhaustive]`. On a **new** database (no localcache schema when the engine opens
+  it: the file did not exist, or it is empty) `Preserve` applies WAL, as the old default did; on an
+  **existing** database, current or older schema, it applies nothing, so a database in the rollback
+  journal stays in it and a WAL database stays WAL. `Wal`, `Delete` and `Memory` are applied as
+  before. Read-only engines, `ReadPool` and in-memory databases are unchanged. Affected: programs
+  that opened an existing non-WAL database with the defaults and relied on the conversion to WAL
+  (and on the `-wal`/`-shm` files that come with it), and code that matches `JournalMode`
+  exhaustively, which now needs a wildcard arm. To keep the old behaviour, set
+  `journal_mode(JournalMode::Wal)`. The CLI's writable commands (`import`, `cleanup`, `vacuum`,
+  `purge-version`, `copy`, `watch`) no longer convert an existing database to WAL.
 
 ---
 

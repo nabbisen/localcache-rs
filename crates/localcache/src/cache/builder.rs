@@ -76,7 +76,10 @@ where
         self
     }
 
-    /// SQLite journal mode.
+    /// SQLite journal mode. Defaults to [`JournalMode::Preserve`]: a new
+    /// database gets WAL and an existing one keeps its mode. Choose
+    /// [`JournalMode::Wal`] or [`JournalMode::Delete`] to set it on every
+    /// open.
     pub fn journal_mode(mut self, mode: JournalMode) -> Self {
         self.opts.journal_mode = mode;
         self
