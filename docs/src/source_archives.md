@@ -39,17 +39,11 @@ Nothing untrusted produces or supplies the file, so there is no archive parser
 and no export manifest. The task needs a committed tree, because the archive is
 of `HEAD`; it creates no tag and publishes nothing.
 
-## Source integrity
+## Uncommitted files
 
-`gate-archive` builds from the commit, so it cannot see a file that was never
-committed: an untracked `build.rs` or `src/main.rs` is simply absent from the
-archive, and the archive builds without it. The source-integrity check
-(`cargo make source-integrity`, CI job "Source integrity") covers that gap
-without invoking Cargo. It discovers the virtual workspace members under
-`crates/` and covers their manifest-declared targets plus the conventional
-`src/lib.rs`, `src/main.rs` and `build.rs` roots; in source context those
-target files must also be Git-tracked. Auto-discovered nested targets (for
-example a file under `tests/`) are left to Cargo metadata and compilation.
+The archive is of `HEAD`, so a file that was never committed is not in it.
+`cargo package --workspace --locked` (in `cargo make gate-docs`) refuses a
+working tree that has uncommitted or untracked files, so run it before pushing.
 
 ## Publishing
 

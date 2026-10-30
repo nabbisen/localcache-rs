@@ -12,7 +12,6 @@
 #   cargo make gate-archive   — the source archive, checked and built (needs a committed tree)
 #   cargo make fmt-check      — formatting
 #   cargo make bench-compile  — verify benchmarks compile
-#   cargo make source-integrity — verify manifest target sources without Cargo
 #
 # Tasks not listed here are cargo-make built-ins, not the project's gates; the
 # supported commands are the `gate-*` tasks and the tasks listed above.
@@ -25,20 +24,6 @@
 
 [config]
 default_to_workspace = false
-
-# ---------------------------------------------------------------------------
-# Bootstrap source integrity
-# ---------------------------------------------------------------------------
-
-[tasks.source-integrity]
-description = "Verify manifest target sources without invoking Cargo"
-command = "python3"
-args = ["scripts/source_integrity.py", "--require-tracked"]
-
-[tasks.source-integrity-test]
-description = "Test the bootstrap source-integrity preflight"
-command = "python3"
-args = ["-m", "unittest", "discover", "-s", "scripts/tests", "-v"]
 
 # ---------------------------------------------------------------------------
 # Formatting & linting

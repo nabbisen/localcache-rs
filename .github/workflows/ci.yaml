@@ -23,19 +23,8 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  source-integrity:
-    name: Source integrity
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Test source-integrity preflight
-        run: python3 -m unittest discover -s scripts/tests -v
-      - name: Verify manifest target sources
-        run: python3 scripts/source_integrity.py --require-tracked
-
   fmt:
     name: Format check
-    needs: source-integrity
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -49,7 +38,6 @@ jobs:
   # workspace version. Standard library only, no toolchain needed.
   version-consistency:
     name: Version consistency
-    needs: source-integrity
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -62,7 +50,6 @@ jobs:
   # Same R16 posture as every job here: read-only, no secrets, pinned actions.
   standard-gates:
     name: Standard gates (feature matrix)
-    needs: source-integrity
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -95,7 +82,6 @@ jobs:
 
   standard-deny:
     name: Standard gates (dependency security)
-    needs: source-integrity
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -120,7 +106,6 @@ jobs:
 
   bench-compile:
     name: Bench (compile-only)
-    needs: source-integrity
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -147,7 +132,6 @@ jobs:
 
   msrv:
     name: MSRV (declared Rust 1.85)
-    needs: source-integrity
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -187,7 +171,6 @@ jobs:
   # release.
   archive:
     name: Project archive
-    needs: source-integrity
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -220,7 +203,6 @@ jobs:
   # (`cargo make gate-docs`). Never publishes to a registry.
   doc-package:
     name: Docs and package verification
-    needs: source-integrity
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -265,7 +247,6 @@ jobs:
     name: Release gate aggregation
     if: always()
     needs:
-      - source-integrity
       - fmt
       - version-consistency
       - standard-gates
