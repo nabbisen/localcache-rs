@@ -4,7 +4,7 @@
 use rusqlite::Connection;
 
 use super::{build_path_sql, explain_query, keys, path_filter_clauses, range_upper_bound};
-use crate::db::{indexes, schema};
+use crate::db::schema;
 
 const SEP: char = std::path::MAIN_SEPARATOR;
 
@@ -23,7 +23,7 @@ fn conn_with(paths: &[&str]) -> Connection {
 }
 
 fn in_dir(conn: &Connection, prefix: &str, recursive: bool) -> Vec<String> {
-    keys(conn, "ns", None, None, Some((prefix, recursive)), None)
+    keys(conn, "ns", None, Some((prefix, recursive)), None)
         .unwrap()
         .into_iter()
         .map(|p| p.to_str().unwrap().to_owned())
@@ -187,8 +187,7 @@ fn plans_use_a_range_on_path_for_both_forms() {
     let prefix = format!("{SEP}d{SEP}");
     for recursive in [false, true] {
         // The covering path listing (`dry_run`).
-        let plan =
-            explain_query(&conn, "ns", None, None, Some((&prefix, recursive)), None).unwrap();
+        let plan = explain_query(&conn, "ns", None, Some((&prefix, recursive)), None).unwrap();
         assert_range_on_path(&plan, &format!("listing, recursive={recursive}"));
 
         // The wider RFC 021 candidate query shares the clause builder; its
@@ -213,28 +212,8 @@ fn plans_use_a_range_on_path_for_both_forms() {
 }
 
 #[test]
-fn plans_use_the_range_with_an_index_hint() {
-    let conn = conn_with(&["/d/a", "/d/b/c"]);
-    let full = indexes::create_path_index(&conn, "q7").unwrap();
-    let prefix = format!("{SEP}d{SEP}");
-    for recursive in [false, true] {
-        let plan = explain_query(
-            &conn,
-            "ns",
-            None,
-            Some(&full),
-            Some((&prefix, recursive)),
-            None,
-        )
-        .unwrap();
-        assert!(plan.contains(&full), "the hinted index is used:\n{plan}");
-        assert_range_on_path(&plan, &format!("hinted, recursive={recursive}"));
-    }
-}
-
-#[test]
 fn sql_text_does_not_vary_with_the_directory() {
-    let (a, _) = build_path_sql("ns", None, None, Some(("/a/", false)), None);
-    let (b, _) = build_path_sql("ns", None, None, Some(("/b/é%/", false)), None);
+    let (a, _) = build_path_sql("ns", None, Some(("/a/", false)), None);
+    let (b, _) = build_path_sql("ns", None, Some(("/b/é%/", false)), None);
     assert_eq!(a, b);
 }

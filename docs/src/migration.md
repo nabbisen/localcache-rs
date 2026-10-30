@@ -164,8 +164,8 @@ missing.
 Use a writable open only when an upgrade is intentional. The CLI's
 `copy --from-db` opens its source read-only and refuses an old-schema source;
 its `--upgrade-source` flag opens the source writable and upgrades it, so apply
-the same backup and maintenance-window planning described above. The deprecated
-`migrate` command always opens its source writable.
+the same backup and maintenance-window planning described above. (The `migrate`
+command, which always opened its source writable, was removed in v0.22.0.)
 
 ### Durability and runtime SQLite settings
 

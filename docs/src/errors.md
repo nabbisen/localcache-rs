@@ -37,7 +37,7 @@ codec failures:
   enum is now `#[non_exhaustive]`.
 - **Lock poisoning now returns `Poisoned`**, not the catch-all error that
   release had (removed in v0.22.0, below). At
-  v0.21.0 this affected `ConnectionPool` (renamed `SyncCacheEngine` in 0.21.5),
+  v0.21.0 this affected `SyncCacheEngine` (then called `ConnectionPool`),
   `AsyncCacheEngine`, `CacheWatcher` construction, and `ReadPool` (a
   **behaviour change**: `ReadPool`'s read methods were previously infallible
   under poisoning and silently recovered; they now return `Poisoned`
@@ -64,6 +64,14 @@ handles errors no longer depends on which `rusqlite` version this crate uses.
 - Another `rusqlite::Error` variant, for example `QueryReturnedNoRows`, has no
   counterpart: `sqlite_extended_code()` is `None` for it, and the message is its
   only description.
+
+### v0.22.0 migration note: the `Poisoned` resource of `SyncCacheEngine`
+
+A poisoned `SyncCacheEngine` lock returns `Poisoned { resource: "SyncCacheEngine" }`. Until v0.22.0 the
+value was `"ConnectionPool"`, the type's earlier name, which v0.21.5 renamed while keeping the old
+string because it is observable. Code that compared `resource` with `"ConnectionPool"` must compare it
+with `"SyncCacheEngine"`. The other values (`"AsyncCacheEngine"`, `"ReadPool"`, `"CacheWatcher"`) are
+unchanged.
 
 ### v0.22.0 migration note: purpose-named variants
 

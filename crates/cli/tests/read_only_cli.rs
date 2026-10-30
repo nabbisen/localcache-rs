@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{Duration, UNIX_EPOCH};
 
-use localcache::{CacheEngine, CacheOptions};
+use localcache::CacheEngine;
 use tempfile::TempDir;
 
 fn localcache(database: &Path, arguments: &[&str]) -> Output {
@@ -127,41 +127,6 @@ fn copy_opens_writable_destination_before_read_only_source() {
 }
 
 #[test]
-fn migrate_may_upgrade_its_source_and_populates_destination() {
-    let directory = TempDir::new().unwrap();
-    let source = directory.path().join("source.sqlite3");
-    let destination = directory.path().join("destination.sqlite3");
-    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../localcache/tests/fixtures/compat-v0_1.sqlite3");
-    fs::copy(fixture, &source).unwrap();
-
-    let output = Command::new(env!("CARGO_BIN_EXE_localcache"))
-        .args([
-            "migrate",
-            "--src-db",
-            source.to_str().unwrap(),
-            "--dst-db",
-            destination.to_str().unwrap(),
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    for database in [source, destination] {
-        CacheEngine::<Vec<u8>>::open(CacheOptions {
-            database_path: database,
-            read_only: true,
-            ..CacheOptions::default()
-        })
-        .unwrap();
-    }
-}
-
-#[test]
 fn list_truncates_long_unicode_paths_without_panicking() {
     let directory = TempDir::new().unwrap();
     let database = directory.path().join("unicode-list.sqlite3");
@@ -246,6 +211,8 @@ fn scan_reports_malformed_glob_without_panicking() {
 #[cfg(feature = "watching")]
 #[test]
 fn watch_command_is_writable_and_can_initialize_an_empty_cache() {
+    use localcache::CacheOptions;
+
     let directory = TempDir::new().unwrap();
     let database = directory.path().join("watch.sqlite3");
     let output = localcache(&database, &["watch"]);

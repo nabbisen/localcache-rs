@@ -42,10 +42,6 @@ fn every_command_has_explicit_database_authority() {
             ],
             DatabaseAuthority::Writable,
         ),
-        (
-            &["localcache", "migrate", "--src-db", "source.sqlite3"],
-            DatabaseAuthority::Writable,
-        ),
         (&["localcache", "watch"], DatabaseAuthority::Writable),
     ];
 
@@ -55,15 +51,18 @@ fn every_command_has_explicit_database_authority() {
     }
 }
 
+/// The `migrate` command was removed in v0.22.0 (RFC 024 B4): it is no longer
+/// a subcommand, and clap rejects it as an unknown one.
 #[test]
-fn migrate_help_discloses_source_schema_upgrade() {
-    let mut command = Cli::command();
-    let migrate = command
-        .find_subcommand_mut("migrate")
-        .expect("migrate subcommand");
-    let help = migrate.render_long_help().to_string();
-    assert!(help.contains("source is opened writable"), "{help}");
-    assert!(help.contains("may be upgraded"), "{help}");
+fn migrate_is_not_a_subcommand() {
+    let error = Cli::try_parse_from(["localcache", "migrate", "--src-db", "source.sqlite3"])
+        .err()
+        .expect("`migrate` must not parse");
+    assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);
+    assert!(
+        Cli::command().find_subcommand("migrate").is_none(),
+        "`migrate` is still registered"
+    );
 }
 
 // RFC 024 R11 — `NO_COLOR` (<https://no-color.org>) disables colour only when

@@ -68,13 +68,6 @@ pub struct SyncCacheEngine<T> {
     inner: Arc<Mutex<CacheEngine<T>>>,
 }
 
-/// The former name of [`SyncCacheEngine`].
-#[deprecated(
-    since = "0.21.5",
-    note = "renamed to SyncCacheEngine; it is a shared engine, not a pool"
-)]
-pub type ConnectionPool<T> = SyncCacheEngine<T>;
-
 impl<T> SyncCacheEngine<T>
 where
     T: Serialize + DeserializeOwned,
@@ -145,7 +138,7 @@ where
     /// Locks the shared engine and calls [`CacheEngine::batch_get`].
     ///
     /// If the engine's lock is poisoned, every element is
-    /// `Err(LocalFileCacheError::Poisoned { resource: "ConnectionPool" })`.
+    /// `Err(LocalFileCacheError::Poisoned { resource: "SyncCacheEngine" })`.
     pub fn batch_get<P: AsRef<Path>>(
         &self,
         paths: &[P],
@@ -156,9 +149,7 @@ where
                 .iter()
                 .map(|_| {
                     Err(LocalFileCacheError::Poisoned {
-                        // Still "ConnectionPool": the string is observable, and
-                        // v0.21.5 changes no behaviour. It changes in v0.22.0.
-                        resource: "ConnectionPool",
+                        resource: "SyncCacheEngine",
                     })
                 })
                 .collect(),
@@ -168,7 +159,7 @@ where
     /// Locks the shared engine and calls [`CacheEngine::batch_get_fresh`].
     ///
     /// If the engine's lock is poisoned, every element is
-    /// `Err(LocalFileCacheError::Poisoned { resource: "ConnectionPool" })`.
+    /// `Err(LocalFileCacheError::Poisoned { resource: "SyncCacheEngine" })`.
     pub fn batch_get_fresh<P: AsRef<Path>>(
         &self,
         paths: &[P],
@@ -179,9 +170,7 @@ where
                 .iter()
                 .map(|_| {
                     Err(LocalFileCacheError::Poisoned {
-                        // Still "ConnectionPool": the string is observable, and
-                        // v0.21.5 changes no behaviour. It changes in v0.22.0.
-                        resource: "ConnectionPool",
+                        resource: "SyncCacheEngine",
                     })
                 })
                 .collect(),
@@ -229,7 +218,7 @@ where
     /// Locks the shared engine and calls [`CacheEngine::check_status_batch`].
     ///
     /// If the engine's lock is poisoned, every element is
-    /// `Err(LocalFileCacheError::Poisoned { resource: "ConnectionPool" })`.
+    /// `Err(LocalFileCacheError::Poisoned { resource: "SyncCacheEngine" })`.
     pub fn check_status_batch<P: AsRef<Path>>(
         &self,
         paths: &[P],
@@ -240,9 +229,7 @@ where
                 .iter()
                 .map(|_| {
                     Err(LocalFileCacheError::Poisoned {
-                        // Still "ConnectionPool": the string is observable, and
-                        // v0.21.5 changes no behaviour. It changes in v0.22.0.
-                        resource: "ConnectionPool",
+                        resource: "SyncCacheEngine",
                     })
                 })
                 .collect(),
@@ -510,32 +497,9 @@ where
         self.inner
             .lock()
             .map_err(|_| LocalFileCacheError::Poisoned {
-                // Still "ConnectionPool": the string is observable, and
-                // v0.21.5 changes no behaviour. It changes in v0.22.0.
-                resource: "ConnectionPool",
+                resource: "SyncCacheEngine",
             })
     }
-}
-
-/// A bare `Arc<Mutex<CacheEngine<T>>>`: a second way to share an engine that
-/// offers none of [`SyncCacheEngine`]'s methods.
-#[deprecated(
-    since = "0.21.5",
-    note = "use SyncCacheEngine, or Arc::new(Mutex::new(CacheEngine::open(..)?)) for the bare form"
-)]
-pub type SharedEngine<T> = Arc<Mutex<CacheEngine<T>>>;
-
-/// Create a [`SharedEngine`] from a [`CacheOptions`].
-#[deprecated(
-    since = "0.21.5",
-    note = "use SyncCacheEngine::open, or Arc::new(Mutex::new(CacheEngine::open(..)?)) for the bare form"
-)]
-#[allow(deprecated)]
-pub fn shared_engine<T>(options: CacheOptions) -> Result<SharedEngine<T>, LocalFileCacheError>
-where
-    T: Serialize + DeserializeOwned,
-{
-    CacheEngine::open(options).map(|e| Arc::new(Mutex::new(e)))
 }
 
 // ---------------------------------------------------------------------------

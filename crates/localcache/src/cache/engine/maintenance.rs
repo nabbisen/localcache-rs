@@ -175,23 +175,6 @@ where
         Ok(())
     }
 
-    /// Create an additional SQLite index on `files(namespace, path)`.
-    ///
-    /// `name` is a suffix of 1–64 ASCII alphanumeric/underscore bytes. The
-    /// full index name is prefixed with `"lc_user_"` and returned. Existing
-    /// structurally valid legacy indexes remain idempotently discoverable,
-    /// but an out-of-grammar legacy spelling cannot be recreated after drop.
-    /// Rejected names return [`LocalFileCacheError::InvalidArgument`] with
-    /// `argument: "index_name"`.
-    #[deprecated(
-        since = "0.21.5",
-        note = "the index duplicates the built-in unique index on (namespace, path) and cannot speed up a query"
-    )]
-    pub fn create_path_index(&self, name: &str) -> Result<String, LocalFileCacheError> {
-        self.guard_write()?;
-        indexes::create_path_index(&self.conn, name)
-    }
-
     /// Drop an owned main-schema user index by suffix.
     ///
     /// Returns `true` if it existed in `main` and was dropped, or `false` if

@@ -292,19 +292,6 @@ fn import_from_without_max_entries_nothing_changes() {
     assert_eq!(engine.entry_count().unwrap(), 9);
 }
 
-/// The deprecated `namespace_copy` calls `import_from`, so it gets the rule
-/// without code of its own.
-#[test]
-#[allow(deprecated)]
-fn namespace_copy_gets_the_rule_through_import_from() {
-    let directory = TempDir::new().unwrap();
-    let (engine, _database, _evicted) = bounded_engine(&directory, "default", Some(3));
-    let source = source_engine(&directory, 6);
-
-    assert_rejected_records(engine.namespace_copy(&source).unwrap_err(), 6, 3);
-    assert_eq!(engine.entry_count().unwrap(), 0);
-}
-
 // ---------------------------------------------------------------------------
 // Wrappers
 // ---------------------------------------------------------------------------

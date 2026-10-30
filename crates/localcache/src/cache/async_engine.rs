@@ -537,7 +537,6 @@ where
                 limit: None,
                 offset: 0,
                 path_like: None,
-                index_hint: None,
                 path_in_dir: None,
                 path_glob: None,
                 order_by: Vec::new(),
@@ -582,18 +581,6 @@ where
             q.dry_run()
         })
         .await
-    }
-
-    /// Async version of [`CacheEngine::create_path_index`].
-    #[deprecated(
-        since = "0.21.5",
-        note = "the index duplicates the built-in unique index on (namespace, path) and cannot speed up a query"
-    )]
-    // A deprecated wrapper over a deprecated method: it delegates on purpose.
-    #[allow(deprecated)]
-    pub async fn create_path_index(&self, name: String) -> Result<String, LocalFileCacheError> {
-        let inner = Arc::clone(&self.inner);
-        spawn(move || Self::lock(&inner)?.create_path_index(&name)).await
     }
 
     /// Async version of [`CacheEngine::drop_path_index`].

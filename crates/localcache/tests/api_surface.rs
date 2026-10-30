@@ -259,12 +259,7 @@ fn the_scan_sees_the_surfaces_it_is_meant_to_compare() {
         assert!(engine.contains(expected), "engine scan missed {expected}");
     }
     // Deprecated engine methods are skipped, never listed.
-    for skipped in [
-        "namespace_copy",
-        "create_path_index",
-        "drop_path_index",
-        "list_path_indexes",
-    ] {
+    for skipped in ["drop_path_index", "list_path_indexes"] {
         assert!(
             !engine.contains(skipped),
             "the scan should skip the deprecated {skipped}"

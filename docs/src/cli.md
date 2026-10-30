@@ -24,7 +24,7 @@ Options:
   -V, --version           Print version
 ```
 
-Every writable command (`cleanup`, `vacuum`, `purge-version`, `import`, `copy`, `migrate`,
+Every writable command (`cleanup`, `vacuum`, `purge-version`, `import`, `copy`,
 `watch`) uses the library's defaults: `synchronous = NORMAL`, and the `Preserve` journal mode. A
 **new** database is created in `WAL`; an **existing** database keeps its journal mode, so
 `import`, `cleanup` and the other writable commands no longer convert a rollback-journal database
@@ -230,31 +230,14 @@ Add `--upgrade-source` to open such a source writable and upgrade it to the
 current schema first. Back it up before you do. It has no effect on a source that
 already has the current schema.
 
-### `migrate` *(deprecated)*
-
-**Deprecated: `migrate` will be removed in 0.22.0. Use `copy --from-db`.** It
-prints a warning to stderr each time it runs. `copy --from-db` makes the same
-copy, and unlike `migrate` it leaves the source alone unless you pass
-`--upgrade-source`.
-
-Copy a namespace from one database to another — the source namespace is left
-in place, not removed. Defaults: `--src-ns` is `default`; `--dst-db` defaults
-to the `-d`/`--database` global option; `--dst-ns` defaults to the
-`-n`/`--namespace` global option.
-
-```sh
-localcache migrate \
-  --src-db old.sqlite3 --src-ns default \
-  --dst-db new.sqlite3 --dst-ns default
-```
-
-`migrate` opens both databases writable. Its source may be upgraded to the
-current schema before entries are copied, so back it up and plan any required
-maintenance window first. Observational commands (`list`, `stats`, `check`,
-`scan`, `export`, `query`, `inspect`, and `namespaces`) open read-only and
-therefore never create or migrate the cache. `watch` also opens writable and
+Observational commands (`list`, `stats`, `check`, `scan`, `export`, `query`, `inspect`, and
+`namespaces`) open read-only and therefore never create or migrate the cache. `watch` also opens writable and
 may initialize an empty database or upgrade an older one to the current
 schema, the same as any other writable command.
+
+> **`migrate` was removed in v0.22.0.** Use `copy --from-db` (above): it makes the same copy, and
+> unlike `migrate` it leaves the source alone unless you pass `--upgrade-source`. `localcache
+> migrate` is now an unknown subcommand and exits with status 2.
 
 ### `watch` *(requires `watching` feature)*
 

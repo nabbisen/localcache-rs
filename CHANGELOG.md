@@ -121,10 +121,37 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `InvalidArgument { argument: "records", .. }` **before anything is written**. An import that fits
   runs its eviction in its own `IMMEDIATE` transaction, evicts the least recently read older
   entries of the namespace, never a row it wrote, and calls the eviction callback after the
-  commit; `Err` means nothing changed. `namespace_copy` (deprecated) calls `import_from` and gets
-  the rule too. Affected: callers that import into an engine with `max_entries` set: split the
-  import, or raise the bound. Without `max_entries` nothing changes, and the CLI, which has no
-  such option, is unaffected.
+  commit; `Err` means nothing changed. Affected: callers that import into an engine with
+  `max_entries` set: split the import, or raise the bound. Without `max_entries` nothing changes,
+  and the CLI, which has no such option, is unaffected.
+- **Breaking:** the `resource` of `LocalFileCacheError::Poisoned` for a poisoned `SyncCacheEngine`
+  is now **`"SyncCacheEngine"`**; it was `"ConnectionPool"` (RFC 025 R9, RFC 024 B4). v0.21.5
+  renamed the type and kept the old string because it is observable. Affected: code that compared
+  `resource` with `"ConnectionPool"`. The other values (`"AsyncCacheEngine"`, `"ReadPool"`,
+  `"CacheWatcher"`) are unchanged, and the `ReadPool` error for a `:memory:` database already names
+  `SyncCacheEngine`.
+
+### Removed
+
+Everything below was deprecated in v0.21.5 with a `#[deprecated]` note naming its replacement
+(RFC 024 B4). Nothing that stays changes behaviour.
+
+- **`QueryBuilder::order_by_field`, `order_by_updated_at`, `order_by_last_accessed`,
+  `order_by_path`, `then_by_field`, `then_by_updated_at`, `then_by_last_accessed` and
+  `then_by_path`.** Use `order_by(key, order)` and `then_by(key, order)` with `SortKey` and
+  `SortOrder`. (`order_by_updated_at` sorted by the source file's mtime: use `SortKey::Mtime`.)
+- **`ConnectionPool`, `SharedEngine` and `shared_engine`.** Use `SyncCacheEngine` (`open`, `with`,
+  `with_mut`).
+- **`CacheEngine::namespace_copy`.** Use `import_from`, which it called.
+- **`CacheWatcher::watched_count`.** Use `entry_count()`, which returns a `Result` (`watched_count`
+  returned the engine's entry count, not a count of watched paths, and reported an error as `0`).
+- **`CacheEngine::create_path_index`, `AsyncCacheEngine::create_path_index` and
+  `QueryBuilder::index_hint`.** There is no replacement: the index duplicated the built-in unique
+  index on `(namespace, path)` and could not speed up a query. Indexes that an earlier release
+  created stay in the database; `drop_path_index` and `list_path_indexes` (still deprecated) find
+  and remove them, and the planner behaves as it did without a hint.
+- **The CLI `migrate` command.** Use `copy --from-db` (with `--upgrade-source` to upgrade an
+  old-schema source). `localcache migrate` is now an unknown subcommand and exits with status 2.
 
 ---
 

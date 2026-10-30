@@ -352,15 +352,6 @@ where
             .entry_count()
     }
 
-    /// Number of entries currently cached in the watcher's engine snapshot.
-    #[deprecated(
-        since = "0.21.5",
-        note = "returns the entry count, not watched paths, and reports errors as 0; use entry_count"
-    )]
-    pub fn watched_count(&self) -> usize {
-        self.entry_count().unwrap_or(0)
-    }
-
     /// Paths that failed OS-level watch registration at construction time.
     ///
     /// Construction still succeeds with partial coverage — this is how a

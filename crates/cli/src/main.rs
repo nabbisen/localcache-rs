@@ -93,16 +93,6 @@ enum Commands {
     /// writable and upgrades it to the current schema first.
     Copy(CopyArgs),
 
-    /// Deprecated: will be removed in 0.22.0; use `copy --from-db`.
-    ///
-    /// Migrate a namespace: export from the source database and import into a
-    /// new database, optionally changing namespace.
-    ///
-    /// The source is opened writable and may be upgraded to the current
-    /// localcache schema before its entries are copied. `copy --from-db`
-    /// does the same copy, and leaves the source alone unless you ask.
-    Migrate(MigrateArgs),
-
     /// Query cached entries by path prefix or suffix.
     ///
     /// Prints matching stored paths and their cache status.
@@ -221,27 +211,6 @@ struct CopyArgs {
 }
 
 #[derive(Args)]
-struct MigrateArgs {
-    /// Source database file.
-    #[arg(long)]
-    src_db: PathBuf,
-
-    /// Source namespace.
-    #[arg(long, default_value = "default")]
-    src_ns: String,
-
-    /// Destination database file (created if absent).
-    /// Defaults to the `-d / --database` global option.
-    #[arg(long)]
-    dst_db: Option<PathBuf>,
-
-    /// Destination namespace.
-    /// Defaults to the `-n / --namespace` global option.
-    #[arg(long)]
-    dst_ns: Option<String>,
-}
-
-#[derive(Args)]
 struct QueryArgs {
     /// SQL LIKE pattern matched against stored paths.
     /// Use `%` for any sequence, `_` for one character.
@@ -280,7 +249,6 @@ fn command_database_authority(command: &Commands) -> DatabaseAuthority {
         | Commands::PurgeVersion(_)
         | Commands::Import(_)
         | Commands::Copy(_)
-        | Commands::Migrate(_)
         | Commands::Watch => DatabaseAuthority::Writable,
     }
 }
@@ -317,7 +285,6 @@ fn run(cli: Cli) -> Result<(), LocalFileCacheError> {
         Commands::Export(args) => commands::read::cmd_export(opts, args),
         Commands::Import(args) => commands::write::cmd_import(opts, args),
         Commands::Copy(args) => commands::write::cmd_copy(opts, args),
-        Commands::Migrate(args) => commands::write::cmd_migrate(opts, args),
         Commands::Query(args) => commands::read::cmd_query(opts, args),
         Commands::Inspect(args) => commands::read::cmd_inspect(opts, args),
         Commands::Watch => commands::write::cmd_watch(opts),

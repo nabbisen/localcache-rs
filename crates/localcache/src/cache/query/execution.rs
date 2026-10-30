@@ -76,7 +76,6 @@ where
                 q.core.conn,
                 q.core.namespace,
                 q.path_like.as_deref(),
-                q.index_hint.as_deref(),
                 prepared.path_in_dir(),
                 prepared.path_glob(),
             )?;
@@ -103,7 +102,6 @@ where
                 q.core.conn,
                 q.core.namespace,
                 q.path_like.as_deref(),
-                q.index_hint.as_deref(),
                 prepared.path_in_dir(),
                 prepared.path_glob(),
                 &select_fields,
@@ -147,7 +145,6 @@ where
         q.core.conn,
         q.core.namespace,
         q.path_like.as_deref(),
-        q.index_hint.as_deref(),
         prepared.path_in_dir(),
         prepared.path_glob(),
     )?;
@@ -183,7 +180,6 @@ where
         q.core.conn,
         q.core.namespace,
         q.path_like.as_deref(),
-        q.index_hint.as_deref(),
         prepared.path_in_dir(),
         prepared.path_glob(),
     )?;
@@ -365,7 +361,7 @@ enum QueryPlan {
     /// payloads are uniformly `encoding = 'json'`.
     Tier2 {
         /// Distinct field paths that must come back as a column (the field
-        /// keys used by `order_by`/`then_by_field`), in stable order.
+        /// keys used by `order_by`/`then_by` with `SortKey::Field`), in stable order.
         select_fields: Vec<String>,
         /// `select_fields[path]` — position of each path's column.
         field_index: std::collections::HashMap<String, usize>,

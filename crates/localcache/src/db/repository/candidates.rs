@@ -10,7 +10,6 @@ use rusqlite::params;
 #[cfg(feature = "json")]
 use super::FullCandidateRow;
 use super::{CandidateRow, ID_LIST_CHUNK, path_filter_clauses};
-use crate::db::indexes;
 use crate::error::{LocalFileCacheError, SqliteResultExt};
 
 // ---------------------------------------------------------------------------
@@ -25,24 +24,16 @@ pub(crate) fn query_candidates(
     conn: &Connection,
     namespace: &str,
     pattern: Option<&str>,
-    index_hint: Option<&str>,
     path_in_dir: Option<(&str, bool)>,
     path_glob: Option<&[String]>,
 ) -> Result<Vec<CandidateRow>, LocalFileCacheError> {
-    let transaction =
-        rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Deferred).db()?;
-    let authorized = indexes::authorize_query_index_in_snapshot(&transaction, index_hint)?;
-    let table = match authorized.as_ref() {
-        Some(idx) => format!("main.files INDEXED BY {}", idx.as_sql()),
-        None => "main.files".to_owned(),
-    };
     let (clauses, params) = path_filter_clauses(namespace, pattern, path_in_dir, path_glob);
     let sql = format!(
-        "SELECT id, path, mtime, file_size, hash, last_accessed_at FROM {table} \
+        "SELECT id, path, mtime, file_size, hash, last_accessed_at FROM main.files \
          WHERE {} ORDER BY path",
         clauses.join(" AND ")
     );
-    let mut stmt = transaction.prepare(&sql).db()?;
+    let mut stmt = conn.prepare(&sql).db()?;
     let rows: Result<Vec<_>, _> = stmt
         .query_map(
             rusqlite::params_from_iter(params.iter().map(String::as_str)),
@@ -59,10 +50,7 @@ pub(crate) fn query_candidates(
         )
         .db()?
         .collect();
-    let rows = rows.db()?;
-    drop(stmt);
-    transaction.commit().db()?;
-    Ok(rows)
+    rows.db()
 }
 
 /// One tier-2 candidate row plus its per-`select_fields` extracted values,
@@ -87,7 +75,7 @@ pub(crate) type JsonPushdownRow = (CandidateRow, Vec<Option<f64>>);
 /// every `where_fields` path — exactly once, in an inner subquery, and
 /// applies the pushed-down predicates in the outer `WHERE` against the
 /// already-extracted columns. The headline case this RFC targets
-/// (`field_gt("score", …).order_by_field("score", …)`) names the same path
+/// (`field_gt("score", …)` with `order_by(SortKey::Field("score"), …)`) names the same path
 /// from both sides; extracting it twice would call `json_extract` — which
 /// re-parses the whole stored JSON text on every call, since SQLite's json1
 /// functions are not streaming — twice per row scanned for no reason. The
@@ -101,26 +89,16 @@ pub(crate) type JsonPushdownRow = (CandidateRow, Vec<Option<f64>>);
 /// JSON path. The path string itself is always bound as a parameter, never
 /// interpolated into the SQL text.
 #[cfg(feature = "json")]
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn query_candidates_json_pushdown(
     conn: &Connection,
     namespace: &str,
     pattern: Option<&str>,
-    index_hint: Option<&str>,
     path_in_dir: Option<(&str, bool)>,
     path_glob: Option<&[String]>,
     select_fields: &[String],
     where_fields: &[(String, &'static str, f64)],
 ) -> Result<Vec<JsonPushdownRow>, LocalFileCacheError> {
     use rusqlite::types::Value;
-
-    let transaction =
-        rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Deferred).db()?;
-    let authorized = indexes::authorize_query_index_in_snapshot(&transaction, index_hint)?;
-    let table = match authorized.as_ref() {
-        Some(idx) => format!("main.files AS f INDEXED BY {}", idx.as_sql()),
-        None => "main.files AS f".to_owned(),
-    };
 
     // Every distinct field path that needs extracting, select_fields first
     // (so their column position matches the caller's `field_index`), then
@@ -163,7 +141,7 @@ pub(crate) fn query_candidates_json_pushdown(
     }
 
     let inner_sql = format!(
-        "SELECT {} FROM {table} JOIN main.payloads p ON p.file_id = f.id WHERE {}",
+        "SELECT {} FROM main.files AS f JOIN main.payloads p ON p.file_id = f.id WHERE {}",
         inner_cols.join(", "),
         clauses.join(" AND "),
     );
@@ -184,7 +162,7 @@ pub(crate) fn query_candidates_json_pushdown(
     };
 
     let n_fields = select_fields.len();
-    let mut stmt = transaction.prepare(&sql).db()?;
+    let mut stmt = conn.prepare(&sql).db()?;
     let rows: Result<Vec<_>, _> = stmt
         .query_map(rusqlite::params_from_iter(params.iter()), |r| {
             let candidate = CandidateRow {
@@ -206,10 +184,7 @@ pub(crate) fn query_candidates_json_pushdown(
         })
         .db()?
         .collect();
-    let rows = rows.db()?;
-    drop(stmt);
-    transaction.commit().db()?;
-    Ok(rows)
+    rows.db()
 }
 
 /// RFC 021 pass 2: payloads for an explicit id set, one statement per
@@ -253,24 +228,16 @@ pub(crate) fn query_candidates_with_payloads(
     conn: &Connection,
     namespace: &str,
     pattern: Option<&str>,
-    index_hint: Option<&str>,
     path_in_dir: Option<(&str, bool)>,
     path_glob: Option<&[String]>,
 ) -> Result<Vec<FullCandidateRow>, LocalFileCacheError> {
-    let transaction =
-        rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Deferred).db()?;
-    let authorized = indexes::authorize_query_index_in_snapshot(&transaction, index_hint)?;
-    let table = match authorized.as_ref() {
-        Some(idx) => format!("main.files AS f INDEXED BY {}", idx.as_sql()),
-        None => "main.files AS f".to_owned(),
-    };
     let (clauses, params) = path_filter_clauses(namespace, pattern, path_in_dir, path_glob);
     let sql = format!(
         "SELECT f.path, f.mtime, f.file_size, f.hash, f.last_accessed_at, p.content, p.encoding \
-         FROM {table} LEFT JOIN main.payloads p ON p.file_id = f.id WHERE {} ORDER BY f.path",
+         FROM main.files AS f LEFT JOIN main.payloads p ON p.file_id = f.id WHERE {} ORDER BY f.path",
         clauses.join(" AND ")
     );
-    let mut stmt = transaction.prepare(&sql).db()?;
+    let mut stmt = conn.prepare(&sql).db()?;
     let rows: Result<Vec<_>, _> = stmt
         .query_map(
             rusqlite::params_from_iter(params.iter().map(String::as_str)),
@@ -288,10 +255,7 @@ pub(crate) fn query_candidates_with_payloads(
         )
         .db()?
         .collect();
-    let rows = rows.db()?;
-    drop(stmt);
-    transaction.commit().db()?;
-    Ok(rows)
+    rows.db()
 }
 
 /// RFC 021 tier-2 precondition: `true` when every payload row joined to

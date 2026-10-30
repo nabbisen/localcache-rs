@@ -124,9 +124,9 @@ pub enum SortOrder {
 /// What [`QueryBuilder::order_by`] and [`QueryBuilder::then_by`] sort by.
 ///
 /// There is deliberately no variant for the `updated_at` column: nothing has
-/// asked to sort by it, and the old `order_by_updated_at` sorted by the source
-/// file's modification time, not by `updated_at`. `#[non_exhaustive]` leaves
-/// room for a distinctly named key later.
+/// asked to sort by it, and [`Mtime`](Self::Mtime) sorts by the source file's
+/// modification time. `#[non_exhaustive]` leaves room for a distinctly named
+/// key later.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SortKey {
@@ -171,17 +171,6 @@ impl OrderBy {
             SortKey::Mtime => OrderBy::Mtime(order),
             SortKey::LastAccessed => OrderBy::LastAccessed(order),
             SortKey::Path => OrderBy::Path(order),
-        }
-    }
-}
-
-impl SortOrder {
-    /// Maps the deprecated `ascending: bool` spelling onto a direction.
-    fn from_ascending(ascending: bool) -> Self {
-        if ascending {
-            SortOrder::Asc
-        } else {
-            SortOrder::Desc
         }
     }
 }
@@ -264,8 +253,6 @@ pub struct QueryBuilder<'e, T> {
     pub(crate) limit: Option<usize>,
     pub(crate) offset: usize,
     pub(crate) path_like: Option<String>,
-    /// Nominates a specific SQLite index for the `files` table scan.
-    pub(crate) index_hint: Option<String>,
     /// Raw directory filter; resolution is deferred to fallible terminals.
     pub(crate) path_in_dir: Option<(PathBuf, bool)>,
     /// Raw glob pattern; bounded compilation is deferred to fallible terminals.
@@ -374,47 +361,11 @@ where
         self.path_glob = Some(pattern.into());
         self
     }
-    /// Force the query to use a specific index via SQLite's `INDEXED BY`.
-    ///
-    /// Requires the full name of an allowed main-schema index. Both terminal
-    /// operations validate its complete catalog shape before generating
-    /// `INDEXED BY <name>`; missing or unauthorized names return
-    /// [`LocalFileCacheError::InvalidArgument`] with `argument: "index_name"`
-    /// without planner fallback.
-    ///
-    /// Use [`crate::CacheEngine::list_path_indexes`] to discover available
-    /// user-created indexes. The schema-v5 built-ins
-    /// `idx_files_namespace_path` and `idx_files_lru` are also accepted while
-    /// their complete expected shapes remain intact. SQLite treats
-    /// `INDEXED BY` as a requirement, so this API never silently falls back
-    /// to automatic planning.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # use localcache::CacheEngine;
-    /// # let engine = CacheEngine::<Vec<f32>>::builder().database(":memory:").build()?;
-    /// let results = engine.query()
-    ///     .path_like("%/docs/%")
-    ///     .index_hint("lc_user_my_idx")
-    ///     .run()?;
-    /// # Ok::<(), localcache::LocalFileCacheError>(())
-    /// ```
-    #[deprecated(
-        since = "0.21.5",
-        note = "the index duplicates the built-in unique index on (namespace, path) and cannot speed up a query"
-    )]
-    pub fn index_hint(mut self, index_name: impl Into<String>) -> Self {
-        self.index_hint = Some(index_name.into());
-        self
-    }
-
     /// Return the SQLite query plan without executing the query.
     ///
     /// Runs `EXPLAIN QUERY PLAN` on the path-listing SQL (with any
-    /// configured [`index_hint`](QueryBuilder::index_hint) and
-    /// [`path_like`](QueryBuilder::path_like) applied) and returns the
-    /// human-readable plan, one line per step.
+    /// configured [`path_like`](QueryBuilder::path_like) applied) and returns
+    /// the human-readable plan, one line per step.
     ///
     /// No payloads are loaded and no cache entries are read.
     ///
@@ -435,7 +386,6 @@ where
             self.core.conn,
             self.core.namespace,
             self.path_like.as_deref(),
-            self.index_hint.as_deref(),
             prepared.path_in_dir(),
             prepared.path_glob(),
         )?;
@@ -534,88 +484,6 @@ where
     pub fn then_by(mut self, key: SortKey, order: SortOrder) -> Self {
         self.order_by.push(OrderBy::from_key(key, order));
         self
-    }
-
-    /// Sort results by a dot-separated JSON payload field (requires `json` feature).
-    #[cfg(feature = "json")]
-    #[deprecated(
-        since = "0.21.5",
-        note = "use order_by(SortKey::Field(path), SortOrder::Asc) or SortOrder::Desc"
-    )]
-    pub fn order_by_field(self, field_path: impl Into<String>, ascending: bool) -> Self {
-        self.order_by(
-            SortKey::Field(field_path.into()),
-            SortOrder::from_ascending(ascending),
-        )
-    }
-
-    /// Sorts by the source file's `mtime`, **not** by the `updated_at` column
-    /// its name suggests.
-    #[deprecated(
-        since = "0.21.5",
-        note = "sorts by the source file's mtime, not updated_at; use order_by(SortKey::Mtime, SortOrder::Asc) or SortOrder::Desc"
-    )]
-    pub fn order_by_updated_at(self, ascending: bool) -> Self {
-        self.order_by(SortKey::Mtime, SortOrder::from_ascending(ascending))
-    }
-
-    /// Sort results by the last **read** timestamp (primary key).
-    #[deprecated(
-        since = "0.21.5",
-        note = "use order_by(SortKey::LastAccessed, SortOrder::Asc) or SortOrder::Desc"
-    )]
-    pub fn order_by_last_accessed(self, ascending: bool) -> Self {
-        self.order_by(SortKey::LastAccessed, SortOrder::from_ascending(ascending))
-    }
-
-    /// Sort results by the stored path string (primary key).
-    #[deprecated(
-        since = "0.21.5",
-        note = "use order_by(SortKey::Path, SortOrder::Asc) or SortOrder::Desc"
-    )]
-    pub fn order_by_path(self, ascending: bool) -> Self {
-        self.order_by(SortKey::Path, SortOrder::from_ascending(ascending))
-    }
-
-    /// Add a secondary sort by a JSON payload field (requires `json` feature).
-    #[cfg(feature = "json")]
-    #[deprecated(
-        since = "0.21.5",
-        note = "use then_by(SortKey::Field(path), SortOrder::Asc) or SortOrder::Desc"
-    )]
-    pub fn then_by_field(self, field_path: impl Into<String>, ascending: bool) -> Self {
-        self.then_by(
-            SortKey::Field(field_path.into()),
-            SortOrder::from_ascending(ascending),
-        )
-    }
-
-    /// Adds a secondary sort by the source file's `mtime`, **not** by the
-    /// `updated_at` column its name suggests.
-    #[deprecated(
-        since = "0.21.5",
-        note = "sorts by the source file's mtime, not updated_at; use then_by(SortKey::Mtime, SortOrder::Asc) or SortOrder::Desc"
-    )]
-    pub fn then_by_updated_at(self, ascending: bool) -> Self {
-        self.then_by(SortKey::Mtime, SortOrder::from_ascending(ascending))
-    }
-
-    /// Add a secondary sort by the last **read** timestamp.
-    #[deprecated(
-        since = "0.21.5",
-        note = "use then_by(SortKey::LastAccessed, SortOrder::Asc) or SortOrder::Desc"
-    )]
-    pub fn then_by_last_accessed(self, ascending: bool) -> Self {
-        self.then_by(SortKey::LastAccessed, SortOrder::from_ascending(ascending))
-    }
-
-    /// Add a secondary sort by path.
-    #[deprecated(
-        since = "0.21.5",
-        note = "use then_by(SortKey::Path, SortOrder::Asc) or SortOrder::Desc"
-    )]
-    pub fn then_by_path(self, ascending: bool) -> Self {
-        self.then_by(SortKey::Path, SortOrder::from_ascending(ascending))
     }
 
     // ------------------------------------------------------------------

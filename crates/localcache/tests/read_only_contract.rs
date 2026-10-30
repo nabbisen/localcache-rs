@@ -202,8 +202,15 @@ fn exact_current_schema_supports_read_only_surfaces_without_lru_mutation() {
             .build()
             .unwrap();
         writer.set(&source, &vec![1.0, 2.0]).unwrap();
-        writer.create_path_index("readonly").unwrap();
     }
+    // A legacy path index, as an earlier release made it.
+    Connection::open(&database)
+        .unwrap()
+        .execute(
+            "CREATE INDEX lc_user_readonly ON files(namespace, path)",
+            [],
+        )
+        .unwrap();
     let before = current_snapshot(&database);
 
     let reader: CacheEngine<Vec<f32>> = CacheEngine::builder()
@@ -217,23 +224,8 @@ fn exact_current_schema_supports_read_only_surfaces_without_lru_mutation() {
         vec![1.0, 2.0]
     );
     assert_eq!(reader.list_path_indexes().unwrap(), ["lc_user_readonly"]);
-    assert_eq!(
-        reader
-            .query()
-            .index_hint("lc_user_readonly")
-            .run()
-            .unwrap()
-            .len(),
-        1
-    );
-    assert!(
-        reader
-            .query()
-            .index_hint("lc_user_readonly")
-            .dry_run()
-            .unwrap()
-            .contains("lc_user_readonly")
-    );
+    assert_eq!(reader.query().run().unwrap().len(), 1);
+    assert!(reader.query().dry_run().is_ok());
     drop(reader);
     assert_eq!(current_snapshot(&database), before);
 
@@ -383,7 +375,7 @@ fn missing_file_and_explicit_read_only_memory_never_initialize() {
     assert_eq!(shared.get(source).unwrap().unwrap().payload, vec![3.0]);
 }
 
-// Deprecated mutators (`namespace_copy`, path indexes) must still return ReadOnly.
+// The deprecated path-index mutator must still return ReadOnly.
 #[allow(deprecated)]
 #[test]
 fn every_public_mutator_returns_read_only_before_other_work() {
@@ -427,12 +419,10 @@ fn every_public_mutator_returns_read_only_before_other_work() {
             .unwrap_err(),
     );
     assert!(!factory_called.load(Ordering::SeqCst));
-    assert_read_only(reader.namespace_copy(&reader).unwrap_err());
     assert_read_only(reader.cleanup_missing_files().unwrap_err());
     assert_read_only(reader.cleanup_expired().unwrap_err());
     assert_read_only(reader.purge_stale_versions().unwrap_err());
     assert_read_only(reader.shrink_database().unwrap_err());
-    assert_read_only(reader.create_path_index("bad suffix").unwrap_err());
     assert_read_only(reader.drop_path_index("bad suffix").unwrap_err());
 
     #[cfg(feature = "encryption")]
@@ -468,10 +458,8 @@ fn every_public_mutator_returns_read_only_before_other_work() {
     assert!(!callback_called.load(Ordering::SeqCst));
 }
 
-// The subject of the last assertions is the deprecated `shared_engine` helper.
-#[allow(deprecated)]
 #[test]
-fn pool_escape_hatches_and_manual_shared_engine_keep_original_guard() {
+fn pool_escape_hatches_keep_original_guard() {
     let directory = TempDir::new().unwrap();
     let database = directory.path().join("pool.sqlite3");
     CacheEngine::<Vec<f32>>::builder()
@@ -485,17 +473,13 @@ fn pool_escape_hatches_and_manual_shared_engine_keep_original_guard() {
         ..CacheOptions::default()
     };
 
-    let pool = SyncCacheEngine::<Vec<f32>>::open(options.clone()).unwrap();
+    let pool = SyncCacheEngine::<Vec<f32>>::open(options).unwrap();
     assert_read_only(pool.touch(&missing).unwrap_err());
     assert_read_only(
         pool.with(|engine| engine.set(&missing, &vec![1.0]))
             .unwrap_err(),
     );
     assert_read_only(pool.with_mut(|engine| engine.remove(&missing)).unwrap_err());
-
-    let shared = localcache::shared_engine::<Vec<f32>>(options).unwrap();
-    let error = shared.lock().unwrap().set(missing, &vec![1.0]).unwrap_err();
-    assert_read_only(error);
 }
 
 #[cfg(any(feature = "async", feature = "async-std", feature = "smol"))]

@@ -6,7 +6,6 @@ use std::time::UNIX_EPOCH;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use crate::cache::entry::EntryInfo;
-use crate::db::indexes::{self, QuotedIdentifier};
 use crate::detection::metadata::FileMetadata;
 use crate::error::{LocalFileCacheError, SqliteResultExt};
 
@@ -745,21 +744,11 @@ pub(crate) fn keys(
     conn: &Connection,
     namespace: &str,
     pattern: Option<&str>,
-    index_hint: Option<&str>,
     path_in_dir: Option<(&str, bool)>,
     path_glob: Option<&[String]>,
 ) -> Result<Vec<std::path::PathBuf>, LocalFileCacheError> {
-    let transaction =
-        rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Deferred).db()?;
-    let authorized = indexes::authorize_query_index_in_snapshot(&transaction, index_hint)?;
-    let (sql, params_vec) = build_path_sql(
-        namespace,
-        pattern,
-        authorized.as_ref(),
-        path_in_dir,
-        path_glob,
-    );
-    let mut stmt = transaction.prepare(&sql).db()?;
+    let (sql, params_vec) = build_path_sql(namespace, pattern, path_in_dir, path_glob);
+    let mut stmt = conn.prepare(&sql).db()?;
     let paths: Result<Vec<_>, _> = stmt
         .query_map(
             rusqlite::params_from_iter(params_vec.iter().map(String::as_str)),
@@ -767,10 +756,7 @@ pub(crate) fn keys(
         )
         .db()?
         .collect();
-    let paths = paths.db()?;
-    drop(stmt);
-    transaction.commit().db()?;
-    Ok(paths)
+    paths.db()
 }
 
 /// Run `EXPLAIN QUERY PLAN <sql>` and return the human-readable plan as a
@@ -779,22 +765,12 @@ pub(crate) fn explain_query(
     conn: &Connection,
     namespace: &str,
     pattern: Option<&str>,
-    index_hint: Option<&str>,
     path_in_dir: Option<(&str, bool)>,
     path_glob: Option<&[String]>,
 ) -> Result<String, LocalFileCacheError> {
-    let transaction =
-        rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Deferred).db()?;
-    let authorized = indexes::authorize_query_index_in_snapshot(&transaction, index_hint)?;
-    let (sql, params_vec) = build_path_sql(
-        namespace,
-        pattern,
-        authorized.as_ref(),
-        path_in_dir,
-        path_glob,
-    );
+    let (sql, params_vec) = build_path_sql(namespace, pattern, path_in_dir, path_glob);
     let explain_sql = format!("EXPLAIN QUERY PLAN {sql}");
-    let mut stmt = transaction.prepare(&explain_sql).db()?;
+    let mut stmt = conn.prepare(&explain_sql).db()?;
     let rows: Result<Vec<String>, _> = stmt
         .query_map(
             rusqlite::params_from_iter(params_vec.iter().map(String::as_str)),
@@ -802,10 +778,7 @@ pub(crate) fn explain_query(
         )
         .db()?
         .collect();
-    let plan = rows.db()?.join("\n");
-    drop(stmt);
-    transaction.commit().db()?;
-    Ok(plan)
+    Ok(rows.db()?.join("\n"))
 }
 
 // ---------------------------------------------------------------------------
@@ -821,17 +794,12 @@ pub(crate) fn explain_query(
 fn build_path_sql(
     namespace: &str,
     pattern: Option<&str>,
-    index_hint: Option<&QuotedIdentifier>,
     path_in_dir: Option<(&str, bool)>,
     path_glob: Option<&[String]>,
 ) -> (String, Vec<String>) {
-    let table = match index_hint {
-        Some(idx) => format!("main.files INDEXED BY {}", idx.as_sql()),
-        None => "main.files".to_owned(),
-    };
     let (clauses, params) = path_filter_clauses(namespace, pattern, path_in_dir, path_glob);
     let sql = format!(
-        "SELECT path FROM {table} WHERE {} ORDER BY path",
+        "SELECT path FROM main.files WHERE {} ORDER BY path",
         clauses.join(" AND ")
     );
     (sql, params)

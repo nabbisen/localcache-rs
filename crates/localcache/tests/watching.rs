@@ -391,44 +391,6 @@ fn import_from_overwrites_existing_entries_across_namespaces() {
     assert_eq!(entry.payload[0], 1.0_f32);
 }
 
-// Subject: the deprecated `namespace_copy` alias.
-#[allow(deprecated)]
-#[test]
-fn namespace_copy_is_equivalent_to_import_from() {
-    let dir = TempDir::new().unwrap();
-    let db1 = dir.path().join("equiv1.sqlite3");
-    let db2 = dir.path().join("equiv2.sqlite3");
-
-    let src: CacheEngine<Vec<f32>> = CacheEngine::builder()
-        .database(db1.clone())
-        .namespace("ns")
-        .build()
-        .unwrap();
-
-    for i in 0..3u32 {
-        let p = write_file(&dir, &format!("eq{i}.txt"), b"x");
-        src.set(&p, &vec![i as f32]).unwrap();
-    }
-
-    let dst1: CacheEngine<Vec<f32>> = CacheEngine::builder()
-        .database(db1.clone())
-        .namespace("copy_dst")
-        .build()
-        .unwrap();
-    let dst2: CacheEngine<Vec<f32>> = CacheEngine::builder()
-        .database(db2)
-        .namespace("ns")
-        .build()
-        .unwrap();
-
-    let n1 = dst1.namespace_copy(&src).unwrap();
-    let n2 = dst2.import_from(&src).unwrap();
-    assert_eq!(
-        n1, n2,
-        "namespace_copy and import_from should copy the same count"
-    );
-}
-
 // ====================================================================
 // Phase 15 — metrics feature (smoke test: no panic)
 // ====================================================================

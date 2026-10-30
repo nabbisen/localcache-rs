@@ -41,12 +41,10 @@ fn entry_count_counts_the_engines_entries() {
     assert_eq!(watcher.entry_count().unwrap(), 1);
 }
 
-/// RFC 024 R7: a poisoned lock is an error from `entry_count`, where the
-/// deprecated `watched_count` reports the same fault as a plain `0` — a
-/// count that looks like "nothing is cached".
+/// RFC 024 R7: a poisoned lock is an error from `entry_count`, never a count
+/// that looks like "nothing is cached".
 #[test]
-#[allow(deprecated)]
-fn poisoned_lock_is_an_error_from_entry_count_and_a_silent_zero_from_watched_count() {
+fn poisoned_lock_is_an_error_from_entry_count() {
     let dir = TempDir::new().unwrap();
     let watcher = watcher_with_one_entry(&dir);
     assert_eq!(
@@ -61,11 +59,6 @@ fn poisoned_lock_is_an_error_from_entry_count_and_a_silent_zero_from_watched_cou
         Err(LocalFileCacheError::Poisoned { resource }) => assert_eq!(resource, "CacheWatcher"),
         other => panic!("expected Poisoned {{ resource: \"CacheWatcher\" }}, got {other:?}"),
     }
-    assert_eq!(
-        watcher.watched_count(),
-        0,
-        "the deprecated method hides the error as 0 (its documented behaviour)"
-    );
 }
 
 /// RFC 025 R4: every failure of the operating-system watcher is a `Watcher`

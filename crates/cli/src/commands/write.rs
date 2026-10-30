@@ -14,7 +14,7 @@ use localcache::{CacheEngine, CacheOptions, LocalFileCacheError};
 use crate::now_secs;
 #[cfg(feature = "watching")]
 use crate::text::format_unix_seconds;
-use crate::{CopyArgs, ImportArgs, MigrateArgs, PurgeVersionArgs};
+use crate::{CopyArgs, ImportArgs, PurgeVersionArgs};
 
 pub(crate) fn cmd_cleanup(opts: CacheOptions) -> Result<(), LocalFileCacheError> {
     let engine = CacheEngine::<Vec<u8>>::open(opts)?;
@@ -212,42 +212,6 @@ fn open_copy_source(
     }
 }
 
-pub(crate) fn cmd_migrate(
-    opts: CacheOptions,
-    args: MigrateArgs,
-) -> Result<(), LocalFileCacheError> {
-    eprintln!(
-        "warning: `migrate` is deprecated and will be removed in 0.22.0; use `copy --from-db`"
-    );
-    let dst_db = args.dst_db.unwrap_or_else(|| opts.database_path.clone());
-    let dst_ns = args.dst_ns.unwrap_or_else(|| opts.namespace.clone());
-
-    let src: CacheEngine<Vec<u8>> = CacheEngine::open(CacheOptions {
-        database_path: args.src_db.clone(),
-        namespace: args.src_ns.clone(),
-        read_only: false,
-        ..CacheOptions::default()
-    })?;
-
-    let dst: CacheEngine<Vec<u8>> = CacheEngine::open(CacheOptions {
-        database_path: dst_db.clone(),
-        namespace: dst_ns.clone(),
-        read_only: false,
-        ..CacheOptions::default()
-    })?;
-
-    let migrated = dst.import_from(&src)?;
-    eprintln!(
-        "Migrated {} entr{}: {}::{} → {}::{}",
-        migrated,
-        if migrated == 1 { "y" } else { "ies" },
-        args.src_db.display(),
-        args.src_ns,
-        dst_db.display(),
-        dst_ns,
-    );
-    Ok(())
-}
 pub(crate) fn cmd_watch(opts: CacheOptions) -> Result<(), LocalFileCacheError> {
     #[cfg(feature = "watching")]
     {

@@ -1151,7 +1151,7 @@ where
         &self,
         path_like: Option<&str>,
     ) -> Result<Vec<std::path::PathBuf>, LocalFileCacheError> {
-        repository::keys(&self.conn, &self.namespace, path_like, None, None, None)
+        repository::keys(&self.conn, &self.namespace, path_like, None, None)
     }
 
     // ------------------------------------------------------------------
@@ -1183,7 +1183,6 @@ where
             limit: None,
             offset: 0,
             path_like: None,
-            index_hint: None,
             path_in_dir: None,
             path_glob: None,
             order_by: Vec::new(),

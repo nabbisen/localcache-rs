@@ -141,9 +141,8 @@ where
         self.import_bounded(&rows)
     }
 
-    /// The one import path: `import_entries` and `import_from` (and so the
-    /// deprecated `namespace_copy`) both end here, under the rule `batch_set`
-    /// follows (RFC 024 B3, RFC 025 R6):
+    /// The one import path: `import_entries` and `import_from` both end
+    /// here, under the rule `batch_set` follows (RFC 024 B3, RFC 025 R6):
     ///
     /// * more **distinct** stored keys than `max_entries` is rejected before
     ///   anything is written, with `InvalidArgument { argument: "records" }`;
@@ -193,22 +192,5 @@ where
     /// namespaces exist before running maintenance or migration tasks.
     pub fn namespace_list(&self) -> Result<Vec<String>, LocalFileCacheError> {
         repository::list_namespaces(&self.conn)
-    }
-
-    /// Copy all entries from `source` into the current namespace.
-    ///
-    /// Identical to [`import_from`](Self::import_from), which it calls, so it
-    /// enforces `max_entries` in the same way.
-    #[deprecated(since = "0.21.5", note = "identical to import_from; use import_from")]
-    pub fn namespace_copy<U>(&self, source: &CacheEngine<U>) -> Result<usize, LocalFileCacheError>
-    where
-        U: Serialize + DeserializeOwned,
-    {
-        // Phase 23 P0 Part B: identical to `import_from` -- same three
-        // steps, same guard, same repository calls. The two names exist
-        // for different call-site framing (namespace-to-namespace copy vs.
-        // copy-from-another-engine), not different behavior, so this
-        // delegates rather than duplicating the body.
-        self.import_from(source)
     }
 }

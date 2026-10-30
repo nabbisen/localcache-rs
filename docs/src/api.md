@@ -83,9 +83,9 @@ and fails when a new engine method is not delegated or recorded as an exception.
 
 Earlier releases could create extra `lc_user_…` indexes on `(namespace, path)`.
 They duplicate the built-in unique index on that pair, so they cannot make any
-query faster, and creating them is deprecated. An index created by an earlier
-release keeps working and can be removed; the migration table below names the
-method that does it.
+query faster, and v0.22.0 can no longer create one. An index created by an earlier
+release stays in the database and can be listed and removed; the migration table
+below names the methods that do it.
 
 ### `ReadPool` poisoning (v0.21.0)
 
@@ -239,29 +239,40 @@ On case-insensitive filesystems, a file renamed only by case still satisfies
 outcome (the original canonical path still resolves to the file).  Use
 `check_status()` per entry if you need to detect case-only renames explicitly.
 
-## Migrating from deprecated names
+## Migrating from removed and deprecated names
 
-v0.21.5 deprecates the items below. Each still works and behaves as before;
-each is removed in v0.22.0 unless the last column says otherwise. The compiler
-warning names the replacement.
+v0.21.5 deprecated the items below, each with a compiler warning that named the
+replacement. **v0.22.0 removes them.** Use the replacement in the second column.
 
-| Deprecated | Use instead | Removal |
-|---|---|---|
-| `QueryBuilder::order_by_field(path, asc)` | `order_by(SortKey::Field(path.into()), SortOrder::…)` | removed in 0.22.0 |
-| `QueryBuilder::order_by_updated_at(asc)` | `order_by(SortKey::Mtime, SortOrder::…)` — it sorts by the source file's mtime, not by `updated_at` | removed in 0.22.0 |
-| `QueryBuilder::order_by_last_accessed(asc)` | `order_by(SortKey::LastAccessed, SortOrder::…)` | removed in 0.22.0 |
-| `QueryBuilder::order_by_path(asc)` | `order_by(SortKey::Path, SortOrder::…)` | removed in 0.22.0 |
-| `QueryBuilder::then_by_field(path, asc)` | `then_by(SortKey::Field(path.into()), SortOrder::…)` | removed in 0.22.0 |
-| `QueryBuilder::then_by_updated_at(asc)` | `then_by(SortKey::Mtime, SortOrder::…)` | removed in 0.22.0 |
-| `QueryBuilder::then_by_last_accessed(asc)` | `then_by(SortKey::LastAccessed, SortOrder::…)` | removed in 0.22.0 |
-| `QueryBuilder::then_by_path(asc)` | `then_by(SortKey::Path, SortOrder::…)` | removed in 0.22.0 |
-| `ConnectionPool<T>` | `SyncCacheEngine<T>` — same type, new name; `Poisoned { resource }` still reads `"ConnectionPool"` until 0.22.0 | removed in 0.22.0 |
-| `SharedEngine<T>` | `SyncCacheEngine<T>` | removed in 0.22.0 |
-| `shared_engine(opts)` | `SyncCacheEngine::open(opts)`; `with` / `with_mut` reach the inner `CacheEngine` | removed in 0.22.0 |
-| `CacheEngine::namespace_copy(src)` | `import_from(src)` — identical | removed in 0.22.0 |
-| `CacheWatcher::watched_count()` | `entry_count()` — returns the engine's entry count, not a count of watched paths, and reports a poisoned lock as an error instead of `0` | removed in 0.22.0 |
-| `CacheEngine::create_path_index(suffix)` | nothing — the index cannot speed up a query | removed in 0.22.0 |
-| `QueryBuilder::index_hint(name)` | nothing — drop the call | removed in 0.22.0 |
-| `CacheEngine::drop_path_index(suffix)` | keep using it to remove an index created by an earlier release | kept until a later release decides what happens to existing indexes |
-| `CacheEngine::list_path_indexes()` | keep using it to find indexes created by an earlier release | kept until a later release decides what happens to existing indexes |
-| `AsyncCacheEngine::create_path_index` / `drop_path_index` / `list_path_indexes` | same as the synchronous methods above | as the synchronous method |
+| Removed in v0.22.0 | Use instead |
+|---|---|
+| `QueryBuilder::order_by_field(path, asc)` | `order_by(SortKey::Field(path.into()), SortOrder::…)` |
+| `QueryBuilder::order_by_updated_at(asc)` | `order_by(SortKey::Mtime, SortOrder::…)` — it sorted by the source file's mtime, not by `updated_at` |
+| `QueryBuilder::order_by_last_accessed(asc)` | `order_by(SortKey::LastAccessed, SortOrder::…)` |
+| `QueryBuilder::order_by_path(asc)` | `order_by(SortKey::Path, SortOrder::…)` |
+| `QueryBuilder::then_by_field(path, asc)` | `then_by(SortKey::Field(path.into()), SortOrder::…)` |
+| `QueryBuilder::then_by_updated_at(asc)` | `then_by(SortKey::Mtime, SortOrder::…)` |
+| `QueryBuilder::then_by_last_accessed(asc)` | `then_by(SortKey::LastAccessed, SortOrder::…)` |
+| `QueryBuilder::then_by_path(asc)` | `then_by(SortKey::Path, SortOrder::…)` |
+| `ConnectionPool<T>` | `SyncCacheEngine<T>` — the same type under its new name |
+| `SharedEngine<T>` | `SyncCacheEngine<T>` |
+| `shared_engine(opts)` | `SyncCacheEngine::open(opts)`; `with` / `with_mut` reach the inner `CacheEngine` |
+| `CacheEngine::namespace_copy(src)` | `import_from(src)` — it was identical |
+| `CacheWatcher::watched_count()` | `entry_count()` — it returns the engine's entry count, not a count of watched paths, and reports a poisoned lock as an error instead of `0` |
+| `CacheEngine::create_path_index(suffix)`, `AsyncCacheEngine::create_path_index` | nothing — the index duplicated the built-in unique index and could not speed up a query |
+| `QueryBuilder::index_hint(name)` | nothing — drop the call |
+| the CLI command `migrate` | `copy --from-db` (add `--upgrade-source` to upgrade an old-schema source); `localcache migrate` is now an unknown subcommand and exits with status 2 |
+
+**One observable value changed with the rename.** The `resource` of
+`LocalFileCacheError::Poisoned` for a poisoned `SyncCacheEngine` is now
+`"SyncCacheEngine"`; it was `"ConnectionPool"`. Code that matched the old string
+must match the new one. The `ReadPool` error for a `:memory:` database already
+names `SyncCacheEngine`.
+
+Still deprecated, and kept so an index made by an earlier release can be found
+and removed, until a later release decides what happens to existing indexes:
+
+| Deprecated | Use |
+|---|---|
+| `CacheEngine::drop_path_index(suffix)`, `AsyncCacheEngine::drop_path_index` | keep using it to remove an index created by an earlier release |
+| `CacheEngine::list_path_indexes()`, `AsyncCacheEngine::list_path_indexes` | keep using it to find indexes created by an earlier release |

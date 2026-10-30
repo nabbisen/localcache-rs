@@ -136,11 +136,6 @@ fn sync_engine_open(database: &Path, rejection: Rejection) -> Result<(), LocalFi
     SyncCacheEngine::<Vec<f32>>::open(rejection.options(database)).map(drop)
 }
 
-#[allow(deprecated)]
-fn shared_engine_open(database: &Path, rejection: Rejection) -> Result<(), LocalFileCacheError> {
-    localcache::shared_engine::<Vec<f32>>(rejection.options(database)).map(drop)
-}
-
 #[cfg(any(feature = "async", feature = "async-std", feature = "smol"))]
 fn async_engine_open(database: &Path, rejection: Rejection) -> Result<(), LocalFileCacheError> {
     let open = async {
@@ -176,7 +171,6 @@ fn cases() -> Vec<(String, EntryPoint, Rejection)> {
         ),
         ("ReadPool::open", read_pool_open),
         ("SyncCacheEngine::open", sync_engine_open),
-        ("shared_engine", shared_engine_open),
         #[cfg(any(feature = "async", feature = "async-std", feature = "smol"))]
         ("AsyncCacheEngine::open", async_engine_open),
     ];

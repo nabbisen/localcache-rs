@@ -206,9 +206,10 @@ let copied = dst_engine.import_from(&src_engine)?;
 
 Earlier releases could create extra `lc_user_…` indexes on `(namespace, path)`.
 They duplicate the built-in unique index on that pair, so they cannot make any
-query faster, and creating them is deprecated. Nothing in a normal workflow
-needs one. An index created by an earlier release keeps working and can be
-removed; see the migration table in [API Overview](./api.md#migrating-from-deprecated-names).
+query faster, and v0.22.0 can no longer create one. Nothing in a normal workflow needs one. An
+index created by an earlier release stays in the database and can be listed and
+removed; see the migration table in
+[API Overview](./api.md#migrating-from-removed-and-deprecated-names).
 
 ## Explain plan / dry_run (v0.17.0)
 

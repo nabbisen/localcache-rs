@@ -12,9 +12,8 @@ fn released_public_legacy_user_indexes_reopen_and_remain_usable() {
     drop(engine);
 
     // These spellings were accepted by the released pre-RFC-011 API. Create
-    // their exact, structurally valid legacy shapes directly so this fixture
-    // remains a compatibility test without asking the narrowed creation API
-    // to recreate them.
+    // their exact, structurally valid legacy shapes directly, as an earlier
+    // release made them.
     let conn = Connection::open(&database).unwrap();
     conn.execute_batch(
         "CREATE INDEX \"lc_user_MixedCase_9\" ON files(namespace, path);
@@ -40,27 +39,10 @@ fn released_public_legacy_user_indexes_reopen_and_remain_usable() {
             "lc_user_éclair"
         ]
     );
-    for (suffix, catalog_name) in [
-        ("MixedCase_9", "lc_user_MixedCase_9"),
-        ("dollar$sign", "lc_user_dollar$sign"),
-        ("éclair", "lc_user_éclair"),
-    ] {
-        assert_eq!(reopened.create_path_index(suffix).unwrap(), catalog_name);
-    }
-    for full_name in [
-        "lc_user_MixedCase_9",
-        "lc_user_dollar$sign",
-        "lc_user_éclair",
-    ] {
-        assert!(reopened.query().index_hint(full_name).dry_run().is_ok());
-        assert!(reopened.query().index_hint(full_name).run().is_ok());
-    }
     for suffix in ["MixedCase_9", "dollar$sign", "éclair"] {
         assert!(reopened.drop_path_index(suffix).unwrap());
     }
-    for suffix in ["dollar$sign", "éclair"] {
-        assert!(reopened.create_path_index(suffix).is_err());
-    }
+    assert!(reopened.list_path_indexes().unwrap().is_empty());
     drop(reopened);
 
     let conn = Connection::open_with_flags(

@@ -424,7 +424,7 @@ mod query_ordering_tests {
     }
 
     #[test]
-    fn order_by_field_ascending() {
+    fn field_sort_ascending() {
         let dir = TempDir::new().unwrap();
         let engine = ordered_engine(&dir);
         let results = engine
@@ -442,7 +442,7 @@ mod query_ordering_tests {
     }
 
     #[test]
-    fn order_by_field_descending() {
+    fn field_sort_descending() {
         let dir = TempDir::new().unwrap();
         let engine = ordered_engine(&dir);
         let results = engine
@@ -460,7 +460,7 @@ mod query_ordering_tests {
     }
 
     #[test]
-    fn order_by_path_ascending() {
+    fn path_sort_ascending() {
         let dir = TempDir::new().unwrap();
         let engine = ordered_engine(&dir);
         let results = engine
@@ -719,22 +719,34 @@ fn offset_and_limit_with_mtime_order_skip_a_bad_row() {
 // Phase 11 — Persistent index management
 // ====================================================================
 
+/// A legacy path index, as an earlier release made it: raw SQL on a
+/// test-owned connection.
+fn create_legacy_index(database: &std::path::Path, suffix: &str) -> String {
+    let full = format!("lc_user_{suffix}");
+    rusqlite::Connection::open(database)
+        .unwrap()
+        .execute(
+            &format!("CREATE INDEX \"{full}\" ON files(namespace, path)"),
+            [],
+        )
+        .unwrap();
+    full
+}
+
 #[allow(deprecated)]
 #[test]
-fn create_and_list_and_drop_index() {
+fn list_and_drop_legacy_indexes() {
     let dir = TempDir::new().unwrap();
-    let engine: CacheEngine<Vec<f32>> = CacheEngine::builder()
-        .database(dir.path().join("idx.sqlite3"))
-        .build()
-        .unwrap();
+    let database = dir.path().join("idx.sqlite3");
+    let engine: CacheEngine<Vec<f32>> = CacheEngine::builder().database(&database).build().unwrap();
 
     // Start with no user indexes.
     let before = engine.list_path_indexes().unwrap();
     let initial_count = before.len();
 
-    // Create two indexes.
-    let name_a = engine.create_path_index("by_prefix").unwrap();
-    let name_b = engine.create_path_index("by_suffix").unwrap();
+    // Two legacy indexes.
+    let name_a = create_legacy_index(&database, "by_prefix");
+    let name_b = create_legacy_index(&database, "by_suffix");
     assert_eq!(name_a, "lc_user_by_prefix");
     assert_eq!(name_b, "lc_user_by_suffix");
 
@@ -755,34 +767,9 @@ fn create_and_list_and_drop_index() {
 
 #[allow(deprecated)]
 #[test]
-fn create_index_is_idempotent() {
-    let dir = TempDir::new().unwrap();
-    let engine: CacheEngine<Vec<f32>> = CacheEngine::builder()
-        .database(dir.path().join("idem.sqlite3"))
-        .build()
-        .unwrap();
-
-    engine.create_path_index("myidx").unwrap();
-    // Second call should not error.
-    engine.create_path_index("myidx").unwrap();
-
-    let indexes = engine.list_path_indexes().unwrap();
-    assert_eq!(
-        indexes
-            .iter()
-            .filter(|n| n.as_str() == "lc_user_myidx")
-            .count(),
-        1
-    );
-}
-
-#[allow(deprecated)]
-#[test]
 fn hostile_index_identifiers_fail_closed_without_mutation() {
-    use localcache::LocalFileCacheError;
     use rusqlite::Connection;
 
-    const SAFETY_ERROR: &str = "not a valid SQLite identifier or not an allowed localcache index";
     let directory = TempDir::new().unwrap();
     let database = directory.path().join("hostile-index.sqlite3");
     let engine: CacheEngine<Vec<f32>> = CacheEngine::builder().database(&database).build().unwrap();
@@ -913,29 +900,7 @@ fn hostile_index_identifiers_fail_closed_without_mutation() {
         "x'); PRAGMA user_version=99;--",
         &"a".repeat(65),
     ] {
-        let error = engine.create_path_index(suffix).unwrap_err();
-        assert!(matches!(
-            &error,
-            LocalFileCacheError::InvalidArgument { argument: "index_name", reason } if reason == SAFETY_ERROR
-        ));
-        if !suffix.is_empty() {
-            assert!(!error.to_string().contains(suffix));
-        }
         assert!(!engine.drop_path_index(suffix).unwrap());
-
-        let full = format!("lc_user_{suffix}");
-        for error in [
-            engine.query().index_hint(&full).run().unwrap_err(),
-            engine.query().index_hint(&full).dry_run().unwrap_err(),
-        ] {
-            assert!(matches!(
-                &error,
-                LocalFileCacheError::InvalidArgument { argument: "index_name", reason } if reason == SAFETY_ERROR
-            ));
-            if !suffix.is_empty() {
-                assert!(!error.to_string().contains(suffix));
-            }
-        }
         assert_eq!(snapshot(), before, "mutation for hostile suffix {suffix:?}");
     }
 
@@ -954,24 +919,6 @@ fn hostile_index_identifiers_fail_closed_without_mutation() {
 
 #[allow(deprecated)]
 #[test]
-fn index_creation_grammar_accepts_boundaries_and_reserved_words() {
-    let engine: CacheEngine<Vec<f32>> =
-        CacheEngine::builder().database(":memory:").build().unwrap();
-    for suffix in ["a", "_", "9", "Mixed_Case_9", "select"] {
-        assert_eq!(
-            engine.create_path_index(suffix).unwrap(),
-            format!("lc_user_{suffix}")
-        );
-    }
-    let boundary = "a".repeat(64);
-    assert_eq!(
-        engine.create_path_index(&boundary).unwrap(),
-        format!("lc_user_{boundary}")
-    );
-}
-
-#[allow(deprecated)]
-#[test]
 fn read_only_precedes_identifier_validation_for_index_mutations() {
     use localcache::LocalFileCacheError;
 
@@ -981,30 +928,20 @@ fn read_only_precedes_identifier_validation_for_index_mutations() {
         .database(&database)
         .build()
         .unwrap();
-    writer.create_path_index("readonly").unwrap();
     drop(writer);
+    create_legacy_index(&database, "readonly");
     let engine = CacheEngine::<Vec<f32>>::builder()
         .database(&database)
         .read_only()
         .build()
         .unwrap();
     assert!(matches!(
-        engine.create_path_index("x\";--"),
-        Err(LocalFileCacheError::ReadOnly)
-    ));
-    assert!(matches!(
         engine.drop_path_index("x\";--"),
         Err(LocalFileCacheError::ReadOnly)
     ));
     assert_eq!(engine.list_path_indexes().unwrap(), ["lc_user_readonly"]);
-    assert!(engine.query().index_hint("lc_user_readonly").run().is_ok());
-    assert!(
-        engine
-            .query()
-            .index_hint("lc_user_readonly")
-            .dry_run()
-            .is_ok()
-    );
+    assert!(engine.query().run().is_ok());
+    assert!(engine.query().dry_run().is_ok());
 }
 
 // ====================================================================
@@ -1077,32 +1014,11 @@ mod async_phase11_tests {
         .await
         .unwrap();
 
-        let name = engine
-            .create_path_index("asyncidx".to_owned())
-            .await
-            .unwrap();
+        let name = create_legacy_index(&dir.path().join("aidx.sqlite3"), "asyncidx");
         assert_eq!(name, "lc_user_asyncidx");
 
         let indexes = engine.list_path_indexes().await.unwrap();
         assert!(indexes.contains(&name));
-
-        let plan = engine
-            .query_dry_run(|query| query.index_hint("lc_user_asyncidx"))
-            .await
-            .unwrap();
-        assert!(plan.contains("lc_user_asyncidx"));
-        let error = engine
-            .query_dry_run(|query| query.index_hint("lc_user_missing"))
-            .await
-            .unwrap_err();
-        assert!(matches!(
-            error,
-            localcache::LocalFileCacheError::InvalidArgument {
-                    argument: "index_name",
-                    ref reason,
-                }
-                if reason == "not a valid SQLite identifier or not an allowed localcache index"
-        ));
 
         let dropped = engine.drop_path_index("asyncidx".to_owned()).await.unwrap();
         assert!(dropped);
@@ -1110,39 +1026,32 @@ mod async_phase11_tests {
 
     #[allow(deprecated)]
     #[tokio::test]
-    async fn async_index_identifier_rejection_matches_sync_contract() {
-        use localcache::LocalFileCacheError;
-
+    async fn async_drop_of_a_hostile_identifier_is_a_miss_and_mutates_nothing() {
         let engine: AsyncCacheEngine<Vec<f32>> = AsyncCacheEngine::open(CacheOptions {
             database_path: ":memory:".into(),
             ..CacheOptions::default()
         })
         .await
         .unwrap();
-        let error = engine
-            .create_path_index("x\"; DROP TABLE files;--".to_owned())
-            .await
-            .unwrap_err();
-        assert!(matches!(
-            error,
-            LocalFileCacheError::InvalidArgument {
-                    argument: "index_name",
-                    ref reason,
-                }
-                if reason == "not a valid SQLite identifier or not an allowed localcache index"
-        ));
+        assert!(
+            !engine
+                .drop_path_index("x\"; DROP TABLE files;--".to_owned())
+                .await
+                .unwrap()
+        );
+        assert_eq!(engine.entry_count().await.unwrap(), 0, "files still exists");
     }
 }
 
 #[cfg(all(not(feature = "async"), feature = "async-std"))]
 #[test]
-fn async_std_index_lifecycle_and_rejection_match_sync_contract() {
+fn async_std_index_lifecycle_matches_sync_contract() {
     async_std::task::block_on(async_index_parity());
 }
 
 #[cfg(all(not(feature = "async"), not(feature = "async-std"), feature = "smol"))]
 #[test]
-fn smol_index_lifecycle_and_rejection_match_sync_contract() {
+fn smol_index_lifecycle_matches_sync_contract() {
     smol::block_on(async_index_parity());
 }
 
@@ -1152,51 +1061,27 @@ fn smol_index_lifecycle_and_rejection_match_sync_contract() {
 ))]
 #[allow(deprecated)]
 async fn async_index_parity() {
-    use localcache::{AsyncCacheEngine, CacheOptions, LocalFileCacheError};
+    use localcache::{AsyncCacheEngine, CacheOptions};
 
+    let directory = TempDir::new().unwrap();
+    let database = directory.path().join("parity.sqlite3");
     let engine: AsyncCacheEngine<Vec<f32>> = AsyncCacheEngine::open(CacheOptions {
-        database_path: ":memory:".into(),
+        database_path: database.clone(),
         ..CacheOptions::default()
     })
     .await
     .unwrap();
-    let error = engine
-        .create_path_index("x\"; DROP TABLE files;--".to_owned())
-        .await
-        .unwrap_err();
-    assert!(matches!(
-        error,
-        LocalFileCacheError::InvalidArgument {
-                argument: "index_name",
-                ref reason,
-            }
-            if reason == "not a valid SQLite identifier or not an allowed localcache index"
-    ));
-    assert_eq!(
-        engine.create_path_index("parity".to_owned()).await.unwrap(),
-        "lc_user_parity"
+    assert!(
+        !engine
+            .drop_path_index("x\"; DROP TABLE files;--".to_owned())
+            .await
+            .unwrap()
     );
+    assert_eq!(create_legacy_index(&database, "parity"), "lc_user_parity");
     assert_eq!(
         engine.list_path_indexes().await.unwrap(),
         ["lc_user_parity"]
     );
-    let plan = engine
-        .query_dry_run(|query| query.index_hint("lc_user_parity"))
-        .await
-        .unwrap();
-    assert!(plan.contains("lc_user_parity"));
-    let error = engine
-        .query_dry_run(|query| query.index_hint("lc_user_missing"))
-        .await
-        .unwrap_err();
-    assert!(matches!(
-        error,
-        LocalFileCacheError::InvalidArgument {
-                argument: "index_name",
-                ref reason,
-            }
-            if reason == "not a valid SQLite identifier or not an allowed localcache index"
-    ));
     assert!(engine.drop_path_index("parity".to_owned()).await.unwrap());
     assert!(engine.list_path_indexes().await.unwrap().is_empty());
 }
@@ -1205,10 +1090,10 @@ async fn async_index_parity() {
 // Phase 12 —
 
 // ============================================================
-// RFC 002 — Query Index Hints and Explain Plan
+// RFC 002 — Explain Plan
 // ============================================================
 
-mod rfc002_index_hints {
+mod rfc002_explain_plan {
     use tempfile::TempDir;
 
     use localcache::CacheEngine;
@@ -1272,70 +1157,6 @@ mod rfc002_index_hints {
             count_before, count_after,
             "dry_run must not modify the cache"
         );
-    }
-
-    // ------------------------------------------------------------------
-    // index_hint with valid index — query returns correct results
-    // ------------------------------------------------------------------
-    #[allow(deprecated)]
-    #[test]
-    fn index_hint_valid_index_returns_results() {
-        let dir = TempDir::new().unwrap();
-        let engine = populated_engine(&dir);
-
-        let idx_full = engine.create_path_index("rfc002test").unwrap();
-        assert_eq!(idx_full, "lc_user_rfc002test");
-
-        let results = engine
-            .query()
-            .path_like("%.txt")
-            .index_hint(&idx_full)
-            .run()
-            .unwrap();
-
-        assert_eq!(results.len(), 10, "should return all 10 entries with hint");
-        engine.drop_path_index("rfc002test").unwrap();
-    }
-
-    // ------------------------------------------------------------------
-    // index_hint with invalid index — run() returns a Database error
-    // ------------------------------------------------------------------
-    #[allow(deprecated)]
-    #[test]
-    fn index_hint_invalid_index_returns_error() {
-        let dir = TempDir::new().unwrap();
-        let engine = populated_engine(&dir);
-
-        let result = engine.query().index_hint("nonexistent_index_xyz").run();
-
-        assert!(
-            result.is_err(),
-            "expected error for invalid index hint: {result:?}"
-        );
-    }
-
-    // ------------------------------------------------------------------
-    // dry_run with index_hint — plan mentions the index
-    // ------------------------------------------------------------------
-    #[allow(deprecated)]
-    #[test]
-    fn dry_run_with_index_hint_mentions_index() {
-        let dir = TempDir::new().unwrap();
-        let engine = populated_engine(&dir);
-
-        let idx_full = engine.create_path_index("dryrunidx").unwrap();
-        let plan = engine
-            .query()
-            .path_like("%.txt")
-            .index_hint(&idx_full)
-            .dry_run()
-            .unwrap();
-
-        assert!(
-            plan.contains(&idx_full),
-            "dry_run plan should mention the hinted index; got: {plan}"
-        );
-        engine.drop_path_index("dryrunidx").unwrap();
     }
 
     // ------------------------------------------------------------------

@@ -1,5 +1,4 @@
 use std::panic::AssertUnwindSafe;
-use std::path::PathBuf;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -7,7 +6,6 @@ use std::sync::{
 
 use super::*;
 use crate::CacheEngine;
-use crate::db::repository;
 use tempfile::TempDir;
 
 fn engine() -> CacheEngine<Vec<f32>> {
@@ -140,58 +138,54 @@ fn install_semantic_fixture(conn: &Connection) {
          VALUES (7, X'0001FEFF', 'fixture');
          CREATE TEMP TABLE files(namespace TEXT, path TEXT, marker TEXT);
          INSERT INTO temp.files VALUES ('temp-ns', '/temp-row', 'TEMP');
-         CREATE INDEX temp.lc_user_rollback_create ON files(path);
          CREATE INDEX temp.lc_user_rollback_drop ON files(path);
          CREATE INDEX temp.lc_user_panic_drop ON files(path);
          ATTACH ':memory:' AS other;
          CREATE TABLE other.files(namespace TEXT, path TEXT, marker TEXT);
          INSERT INTO other.files VALUES ('other-ns', '/other-row', 'ATTACHED');
-         CREATE INDEX other.lc_user_rollback_create ON files(namespace DESC);
          CREATE INDEX other.lc_user_rollback_drop ON files(namespace DESC);
          CREATE INDEX other.lc_user_panic_drop ON files(namespace DESC);",
     )
     .unwrap();
 }
 
+/// A legacy `lc_user_<suffix>` index, as an earlier release made it, created
+/// by raw SQL on a test-owned connection.
+fn legacy_index(conn: &Connection, suffix: &str) -> String {
+    let full = format!("{PUBLIC_INDEX_PREFIX}{suffix}");
+    conn.execute(
+        &format!(
+            "CREATE INDEX main.{} ON files(namespace, path)",
+            quote_identifier(&full).as_sql()
+        ),
+        [],
+    )
+    .unwrap();
+    full
+}
+
+fn main_index_exists(conn: &Connection, name: &str) -> bool {
+    conn.query_row(
+        "SELECT count(*) FROM main.sqlite_schema WHERE type = 'index' AND name = ?1",
+        [name],
+        |row| row.get::<_, i64>(0),
+    )
+    .unwrap()
+        == 1
+}
+
 #[test]
-fn grammar_equivalence_and_quoting_are_exact() {
-    for valid in ["a", "_", "9", "Mixed_Case_9", "select"] {
-        validate_new_suffix(valid).unwrap();
-    }
-    validate_new_suffix(&"a".repeat(64)).unwrap();
-    for invalid in ["", "éclair", "dollar$sign", "has space", "x;--"] {
-        assert!(
-            validate_new_suffix(invalid).is_err(),
-            "accepted {invalid:?}"
-        );
-    }
-    assert!(validate_new_suffix(&"a".repeat(65)).is_err());
+fn identifier_equality_and_quoting_are_exact() {
     assert!(identifier_eq("lc_user_Mixed", "LC_USER_mIXED"));
     assert!(!identifier_eq("lc_user_é", "lc_user_É"));
     assert_eq!(quote_identifier("a\"b").as_sql(), "\"a\"\"b\"");
 }
 
 #[test]
-fn create_and_drop_errors_after_ddl_roll_back() {
+fn drop_errors_after_ddl_roll_back() {
     let engine = engine();
     install_semantic_fixture(&engine.conn);
-    let before_create = semantic_snapshot(&engine.conn);
-    let hook = set_hook(|point| {
-        if point == TestPoint::CreateDdl {
-            return Err(LocalFileCacheError::DatabaseState("after create".into()));
-        }
-        Ok(())
-    });
-    assert!(create_path_index(&engine.conn, "rollback_create").is_err());
-    drop(hook);
-    assert_eq!(semantic_snapshot(&engine.conn), before_create);
-    assert_eq!(
-        create_path_index(&engine.conn, "rollback_create").unwrap(),
-        "lc_user_rollback_create"
-    );
-    assert!(drop_path_index(&engine.conn, "rollback_create").unwrap());
-
-    create_path_index(&engine.conn, "rollback_drop").unwrap();
+    legacy_index(&engine.conn, "rollback_drop");
     let before_drop = semantic_snapshot(&engine.conn);
     let hook = set_hook(|point| {
         if point == TestPoint::DropDdl {
@@ -209,7 +203,7 @@ fn create_and_drop_errors_after_ddl_roll_back() {
 fn panic_after_drop_ddl_rolls_back() {
     let engine = engine();
     install_semantic_fixture(&engine.conn);
-    create_path_index(&engine.conn, "panic_drop").unwrap();
+    legacy_index(&engine.conn, "panic_drop");
     let before = semantic_snapshot(&engine.conn);
     let hook = set_hook(|point| {
         if point == TestPoint::DropDdl {
@@ -229,13 +223,13 @@ fn panic_after_drop_ddl_rolls_back() {
 #[test]
 fn nested_transaction_fails_before_mutation() {
     let engine = engine();
+    legacy_index(&engine.conn, "nested");
     let outer = engine.conn.unchecked_transaction().unwrap();
-    assert!(create_path_index(&engine.conn, "nested").is_err());
+    assert!(drop_path_index(&engine.conn, "nested").is_err());
     outer.rollback().unwrap();
-    assert!(list_path_indexes(&engine.conn).unwrap().is_empty());
+    assert_eq!(list_path_indexes(&engine.conn).unwrap(), ["lc_user_nested"]);
 }
 
-#[allow(deprecated)]
 #[test]
 fn main_schema_wins_over_temp_and_attached_collisions() {
     let engine = engine();
@@ -253,10 +247,7 @@ fn main_schema_wins_over_temp_and_attached_collisions() {
         .unwrap();
     let collisions_without_main = semantic_snapshot(&engine.conn);
 
-    assert_eq!(
-        create_path_index(&engine.conn, "collision").unwrap(),
-        "lc_user_collision"
-    );
+    assert_eq!(legacy_index(&engine.conn, "collision"), "lc_user_collision");
     assert_eq!(
         list_path_indexes(&engine.conn).unwrap(),
         ["lc_user_collision"]
@@ -318,42 +309,11 @@ fn main_schema_wins_over_temp_and_attached_collisions() {
             .unwrap(),
         ("/attached-only".into(), "ATTACHED".into())
     );
-    assert!(authorize_query_index(&engine.conn, Some("lc_user_collision")).is_ok());
     assert!(
-        repository::keys(
-            &engine.conn,
-            "default",
-            None,
-            Some("lc_user_collision"),
-            None,
-            None,
-        )
-        .unwrap()
-        .is_empty()
+        engine.query().run().unwrap().is_empty(),
+        "query read a non-main collision row"
     );
-    for hint in [
-        None,
-        Some("lc_user_collision"),
-        Some("idx_files_namespace_path"),
-    ] {
-        let query = engine.query();
-        let result = match hint {
-            Some(name) => query.index_hint(name).run(),
-            None => query.run(),
-        }
-        .unwrap();
-        assert!(result.is_empty(), "query read a non-main collision row");
-
-        let query = engine.query();
-        let plan = match hint {
-            Some(name) => query.index_hint(name).dry_run(),
-            None => query.dry_run(),
-        }
-        .unwrap();
-        if let Some(name) = hint {
-            assert!(plan.contains(name), "plan did not require {name}: {plan}");
-        }
-    }
+    engine.query().dry_run().unwrap();
 
     assert!(drop_path_index(&engine.conn, "collision").unwrap());
     for schema in ["temp", "other"] {
@@ -369,27 +329,9 @@ fn main_schema_wins_over_temp_and_attached_collisions() {
         );
     }
     assert!(!drop_path_index(&engine.conn, "collision").unwrap());
-    assert!(authorize_query_index(&engine.conn, Some("lc_user_collision")).is_err());
-    assert!(
-        engine
-            .query()
-            .index_hint("lc_user_collision")
-            .run()
-            .is_err()
-    );
-    assert!(
-        engine
-            .query()
-            .index_hint("lc_user_collision")
-            .dry_run()
-            .is_err()
-    );
     assert_eq!(semantic_snapshot(&engine.conn), collisions_without_main);
 
-    assert_eq!(
-        create_path_index(&engine.conn, "collision").unwrap(),
-        "lc_user_collision"
-    );
+    assert_eq!(legacy_index(&engine.conn, "collision"), "lc_user_collision");
     assert_eq!(
         list_path_indexes(&engine.conn).unwrap(),
         ["lc_user_collision"]
@@ -420,12 +362,11 @@ fn list_fails_closed_on_an_invalid_owned_prefix_candidate() {
     );
 }
 
+/// What `drop_path_index` will and will not touch: only a structurally owned
+/// `lc_user_` index on `files(namespace, path)` is ever dropped.
 #[test]
-fn query_allowlist_rejects_every_non_owned_shape() {
+fn drop_rejects_every_non_owned_shape_and_leaves_it_in_place() {
     let engine = engine();
-    assert!(authorize_query_index(&engine.conn, Some("idx_files_namespace_path")).is_ok());
-    assert!(authorize_query_index(&engine.conn, Some("idx_files_lru")).is_ok());
-
     engine
         .conn
         .execute_batch(
@@ -441,124 +382,76 @@ fn query_allowlist_rejects_every_non_owned_shape() {
         )
         .unwrap();
 
+    // Owned-prefix names with a wrong shape are an error, never a drop.
+    for suffix in [
+        "unique",
+        "partial",
+        "desc",
+        "collation",
+        "expression",
+        "extra",
+        "wrong_table",
+    ] {
+        let error = drop_path_index(&engine.conn, suffix).unwrap_err();
+        assert!(
+            matches!(
+                error,
+                LocalFileCacheError::InvalidArgument {
+                    argument: "index_name",
+                    ..
+                }
+            ),
+            "dropped or mis-reported {suffix}: {error:?}"
+        );
+        assert!(
+            main_index_exists(&engine.conn, &format!("lc_user_{suffix}")),
+            "{suffix} was dropped"
+        );
+    }
+
+    // A name without the prefix is not an `lc_user_` index at all: the suffix
+    // form cannot even address it, and the object stays.
     let autoindex: String = engine
         .conn
         .query_row(
-            "SELECT name FROM pragma_index_list('files', 'main') WHERE origin = 'u' LIMIT 1",
+            "SELECT name FROM pragma_index_list('files', 'main') WHERE origin = 'u' AND name LIKE 'sqlite_autoindex%' LIMIT 1",
             [],
             |row| row.get(0),
         )
         .unwrap();
     for name in [
         "arbitrary_ok_shape",
-        "lc_user_unique",
-        "lc_user_partial",
-        "lc_user_desc",
-        "lc_user_collation",
-        "lc_user_expression",
-        "lc_user_extra",
         "lcXuser_lookalike",
-        "lc_user_wrong_table",
         autoindex.as_str(),
     ] {
-        assert!(
-            authorize_query_index(&engine.conn, Some(name)).is_err(),
-            "authorized {name}"
-        );
+        assert!(!drop_path_index(&engine.conn, name).unwrap());
+        assert!(main_index_exists(&engine.conn, name), "{name} was dropped");
     }
 }
 
 #[test]
-fn ascii_case_equivalent_create_returns_catalog_spelling() {
+fn ascii_case_equivalent_drop_finds_the_catalog_spelling() {
     let engine = engine();
-    assert_eq!(
-        create_path_index(&engine.conn, "MixedCase").unwrap(),
-        "lc_user_MixedCase"
-    );
-    assert_eq!(
-        create_path_index(&engine.conn, "mixedcase").unwrap(),
-        "lc_user_MixedCase"
-    );
+    assert_eq!(legacy_index(&engine.conn, "MixedCase"), "lc_user_MixedCase");
     assert_eq!(
         list_path_indexes(&engine.conn).unwrap(),
         ["lc_user_MixedCase"]
     );
+    assert!(drop_path_index(&engine.conn, "mixedcase").unwrap());
+    assert!(list_path_indexes(&engine.conn).unwrap().is_empty());
 }
 
+/// An out-of-grammar legacy spelling (which the narrowed grammar of v0.21 could
+/// no longer create, but an older release could have) is listed and can be
+/// dropped.
 #[test]
-fn authorization_metadata_is_read_from_one_snapshot() {
-    let directory = TempDir::new().unwrap();
-    let database = directory.path().join("snapshot.sqlite3");
-    let engine = CacheEngine::<Vec<f32>>::builder()
-        .database(&database)
-        .build()
-        .unwrap();
-    create_path_index(&engine.conn, "snapshot").unwrap();
-
-    let changed = Arc::new(AtomicBool::new(false));
-    let changed_in_hook = Arc::clone(&changed);
-    let database_in_hook: PathBuf = database.clone();
-    let hook = set_hook(move |point| {
-        if point == TestPoint::SchemaRead && !changed_in_hook.swap(true, Ordering::SeqCst) {
-            let writer = Connection::open(&database_in_hook).db()?;
-            writer
-                .busy_timeout(std::time::Duration::from_secs(1))
-                .db()?;
-            writer
-                .execute_batch(
-                    "DROP INDEX main.lc_user_snapshot;
-                 CREATE INDEX main.lc_user_snapshot ON files(path);",
-                )
-                .db()?;
-        }
-        Ok(())
-    });
-    let result = authorize_query_index(&engine.conn, Some("lc_user_snapshot"));
-    drop(hook);
-
-    assert!(changed.load(Ordering::SeqCst));
-    assert!(
-        result.is_ok(),
-        "mixed schema generations were observed: {result:?}"
-    );
-    assert!(authorize_query_index(&engine.conn, Some("lc_user_snapshot")).is_err());
-}
-
-#[allow(deprecated)]
-#[test]
-fn query_execution_stays_in_the_authorization_snapshot() {
-    let directory = TempDir::new().unwrap();
-    let database = directory.path().join("query-race.sqlite3");
-    let engine = CacheEngine::<Vec<f32>>::builder()
-        .database(&database)
-        .build()
-        .unwrap();
-    create_path_index(&engine.conn, "race").unwrap();
-
-    let changed = Arc::new(AtomicBool::new(false));
-    let changed_in_hook = Arc::clone(&changed);
-    let database_in_hook = database.clone();
-    let hook = set_hook(move |point| {
-        if point == TestPoint::Authorization && !changed_in_hook.swap(true, Ordering::SeqCst) {
-            let writer = Connection::open(&database_in_hook).db()?;
-            writer
-                .busy_timeout(std::time::Duration::from_secs(1))
-                .db()?;
-            writer
-                .execute_batch(
-                    "DROP INDEX main.lc_user_race;
-                 CREATE INDEX main.lc_user_race ON files(path);",
-                )
-                .db()?;
-        }
-        Ok(())
-    });
-    let result = engine.query().index_hint("lc_user_race").run();
-    drop(hook);
-
-    assert!(changed.load(Ordering::SeqCst));
-    assert!(result.unwrap().is_empty());
-    assert!(authorize_query_index(&engine.conn, Some("lc_user_race")).is_err());
+fn an_out_of_grammar_legacy_spelling_can_be_listed_and_dropped() {
+    let engine = engine();
+    let full = legacy_index(&engine.conn, "éclair$");
+    assert_eq!(full, "lc_user_éclair$");
+    assert_eq!(list_path_indexes(&engine.conn).unwrap(), [full.as_str()]);
+    assert!(drop_path_index(&engine.conn, "éclair$").unwrap());
+    assert!(!main_index_exists(&engine.conn, &full));
 }
 
 #[test]
@@ -569,7 +462,7 @@ fn list_uses_one_generation_and_later_operations_revalidate() {
         .database(&database)
         .build()
         .unwrap();
-    create_path_index(&engine.conn, "list_race").unwrap();
+    legacy_index(&engine.conn, "list_race");
 
     let changed = Arc::new(AtomicBool::new(false));
     let changed_in_hook = Arc::clone(&changed);
@@ -594,43 +487,8 @@ fn list_uses_one_generation_and_later_operations_revalidate() {
 
     assert!(changed.load(Ordering::SeqCst));
     assert_eq!(listed.unwrap(), ["lc_user_list_race"]);
-    assert!(authorize_query_index(&engine.conn, Some("lc_user_list_race")).is_err());
-}
-
-#[allow(deprecated)]
-#[test]
-fn dry_run_stays_in_the_authorization_snapshot() {
-    let directory = TempDir::new().unwrap();
-    let database = directory.path().join("dry-run-race.sqlite3");
-    let engine = CacheEngine::<Vec<f32>>::builder()
-        .database(&database)
-        .build()
-        .unwrap();
-    create_path_index(&engine.conn, "dry_race").unwrap();
-
-    let changed = Arc::new(AtomicBool::new(false));
-    let changed_in_hook = Arc::clone(&changed);
-    let database_in_hook = database.clone();
-    let hook = set_hook(move |point| {
-        if point == TestPoint::Authorization && !changed_in_hook.swap(true, Ordering::SeqCst) {
-            let writer = Connection::open(&database_in_hook).db()?;
-            writer
-                .busy_timeout(std::time::Duration::from_secs(1))
-                .db()?;
-            writer
-                .execute_batch(
-                    "DROP INDEX main.lc_user_dry_race;
-                 CREATE INDEX main.lc_user_dry_race ON files(path);",
-                )
-                .db()?;
-        }
-        Ok(())
-    });
-    let result = engine.query().index_hint("lc_user_dry_race").dry_run();
-    drop(hook);
-
-    assert!(changed.load(Ordering::SeqCst));
-    let plan = result.unwrap();
-    assert!(plan.contains("lc_user_dry_race"));
-    assert!(authorize_query_index(&engine.conn, Some("lc_user_dry_race")).is_err());
+    // The index was replaced by one of the wrong shape: the next operation
+    // revalidates it and refuses.
+    assert!(drop_path_index(&engine.conn, "list_race").is_err());
+    assert!(main_index_exists(&engine.conn, "lc_user_list_race"));
 }

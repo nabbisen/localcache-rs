@@ -1,5 +1,5 @@
-//! `copy --from-db`, `--upgrade-source`, and the deprecated `migrate`
-//! (RFC 024 R10).
+//! `copy --from-db` and `--upgrade-source` (RFC 024 R10), the replacement for
+//! the removed `migrate` command.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -16,8 +16,6 @@ const OLD_SCHEMA_FIXTURE_SHA256: &str =
     "9046c0d81ac51ba59ca45de0849a7955d3d4f04a92ff39adfd0042e35c9b31bb";
 
 const SCHEMA_REFUSAL: &str = "database schema is not current; a read-only open cannot migrate it";
-const MIGRATE_WARNING: &str =
-    "warning: `migrate` is deprecated and will be removed in 0.22.0; use `copy --from-db`";
 
 fn localcache(arguments: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_localcache"))
@@ -329,46 +327,6 @@ fn upgrade_source_does_not_touch_a_source_that_is_already_current() {
     assert!(output.status.success(), "{}", text(&output.stderr));
     assert_eq!(fs::read(&source).unwrap(), before);
     assert_eq!(entry_count(&destination, "src"), 1);
-}
-
-#[test]
-fn migrate_still_works_and_warns_first() {
-    let directory = TempDir::new().unwrap();
-    let source = current_database(&directory, "source.sqlite3", "src", 2);
-    let destination = directory.path().join("destination.sqlite3");
-
-    let output = localcache(&[
-        "migrate",
-        "--src-db",
-        path_text(&source),
-        "--src-ns",
-        "src",
-        "--dst-db",
-        path_text(&destination),
-        "--dst-ns",
-        "dst",
-    ]);
-    assert!(output.status.success(), "{}", text(&output.stderr));
-
-    let stderr = text(&output.stderr);
-    assert_eq!(
-        stderr.lines().next(),
-        Some(MIGRATE_WARNING),
-        "the warning is the first thing printed: {stderr}"
-    );
-    assert!(stderr.contains("Migrated 2 entries"), "stderr: {stderr}");
-    assert_eq!(entry_count(&destination, "dst"), 2);
-}
-
-#[test]
-fn migrate_help_says_it_is_deprecated() {
-    let output = localcache(&["migrate", "--help"]);
-    assert!(output.status.success());
-    let help = text(&output.stdout);
-    assert!(
-        help.contains("Deprecated: will be removed in 0.22.0; use `copy --from-db`"),
-        "help: {help}"
-    );
 }
 
 // ---------------------------------------------------------------------------

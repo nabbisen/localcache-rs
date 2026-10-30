@@ -308,10 +308,10 @@ fn sync_cache_engine_poisoned_mutex_yields_poisoned_error() {
         matches!(
             result,
             Err(LocalFileCacheError::Poisoned {
-                resource: "ConnectionPool"
+                resource: "SyncCacheEngine"
             })
         ),
-        "expected Poisoned {{ resource: \"ConnectionPool\" }}, got {result:?}"
+        "expected Poisoned {{ resource: \"SyncCacheEngine\" }}, got {result:?}"
     );
 }
 
@@ -344,7 +344,7 @@ fn sync_cache_engine_poisoned_mutex_batch_methods_return_one_result_per_path() {
     assert!(batch_get_results.iter().all(|r| matches!(
         r,
         Err(LocalFileCacheError::Poisoned {
-            resource: "ConnectionPool"
+            resource: "SyncCacheEngine"
         })
     )));
 
@@ -353,7 +353,7 @@ fn sync_cache_engine_poisoned_mutex_batch_methods_return_one_result_per_path() {
     assert!(batch_get_fresh_results.iter().all(|r| matches!(
         r,
         Err(LocalFileCacheError::Poisoned {
-            resource: "ConnectionPool"
+            resource: "SyncCacheEngine"
         })
     )));
 
@@ -362,7 +362,7 @@ fn sync_cache_engine_poisoned_mutex_batch_methods_return_one_result_per_path() {
     assert!(check_status_batch_results.iter().all(|r| matches!(
         r,
         Err(LocalFileCacheError::Poisoned {
-            resource: "ConnectionPool"
+            resource: "SyncCacheEngine"
         })
     )));
 }
@@ -383,39 +383,6 @@ fn cache_options_ext_ttl_helpers() {
 
     let opts_hours = CacheOptions::default().with_ttl_hours(2);
     assert_eq!(opts_hours.ttl, Some(Duration::from_secs(7200)));
-}
-
-// Subject: the deprecated `shared_engine` helper.
-#[allow(deprecated)]
-#[test]
-fn shared_engine_helper() {
-    let shared = localcache::shared_engine::<Vec<f32>>(CacheOptions {
-        database_path: ":memory:".into(),
-        ..CacheOptions::default()
-    })
-    .unwrap();
-
-    let dir = TempDir::new().unwrap();
-    let p = write_file(&dir, "se.txt", b"x");
-    let _ = shared.lock().unwrap().set(&p, &vec![1.0_f32]);
-    assert!(shared.lock().unwrap().get(&p).unwrap().is_some());
-}
-
-// Subject: the deprecated `ConnectionPool` alias of `SyncCacheEngine`.
-#[allow(deprecated)]
-#[test]
-fn connection_pool_alias_is_the_sync_cache_engine() {
-    let engine: localcache::SyncCacheEngine<Vec<f32>> =
-        localcache::ConnectionPool::<Vec<f32>>::open(CacheOptions {
-            database_path: ":memory:".into(),
-            ..CacheOptions::default()
-        })
-        .unwrap();
-
-    let dir = TempDir::new().unwrap();
-    let p = write_file(&dir, "alias.txt", b"x");
-    engine.set(&p, &vec![1.0_f32]).unwrap();
-    assert_eq!(engine.get(&p).unwrap().unwrap().payload, vec![1.0_f32]);
 }
 
 // ====================================================================
@@ -675,11 +642,11 @@ fn explain_no_stored_hash_metadata_only() {
 }
 
 // ====================================================================
-// Phase 13 — order_by_last_accessed + multi-column sort
+// Phase 13 — sorting by last access + multi-column sort
 // ====================================================================
 
 #[test]
-fn order_by_last_accessed_ascending() {
+fn last_accessed_sort_ascending() {
     let dir = TempDir::new().unwrap();
     let engine: CacheEngine<Vec<f32>> =
         CacheEngine::builder().database(":memory:").build().unwrap();
@@ -768,7 +735,7 @@ fn then_by_methods_append_sort_keys() {
         engine.set(&p, &vec![i as f32]).unwrap();
     }
 
-    // order_by_path ASC then then_by_last_accessed DESC — just verify no panic.
+    // Path ASC, then LastAccessed DESC — just verify no panic.
     let results = engine
         .query()
         .order_by(SortKey::Path, SortOrder::Asc)

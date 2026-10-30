@@ -45,8 +45,6 @@ impl QuotedIdentifier {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TestPoint {
     SchemaRead,
-    Authorization,
-    CreateDdl,
     DropDdl,
 }
 
@@ -69,36 +67,6 @@ fn test_hook(point: TestPoint) -> Result<(), LocalFileCacheError> {
         }
         Ok(())
     })
-}
-
-pub(crate) fn create_path_index(
-    conn: &Connection,
-    suffix: &str,
-) -> Result<String, LocalFileCacheError> {
-    let full = format!("{PUBLIC_INDEX_PREFIX}{suffix}");
-    let transaction =
-        rusqlite::Transaction::new_unchecked(conn, TransactionBehavior::Immediate).db()?;
-
-    if let Some(object) = resolve_schema_object(&transaction, &full)? {
-        let actual = validate_owned_path_index(&transaction, &object)?;
-        transaction.commit().db()?;
-        return Ok(actual);
-    }
-
-    validate_new_suffix(suffix)?;
-    let quoted = quote_identifier(&full);
-    let sql = format!(
-        "CREATE INDEX main.{} ON files(namespace, path)",
-        quoted.as_sql()
-    );
-    transaction.execute(&sql, []).db()?;
-    #[cfg(test)]
-    test_hook(TestPoint::CreateDdl)?;
-
-    let object = resolve_schema_object(&transaction, &full)?.ok_or_else(identifier_error)?;
-    let actual = validate_owned_path_index(&transaction, &object)?;
-    transaction.commit().db()?;
-    Ok(actual)
 }
 
 pub(crate) fn drop_path_index(
@@ -144,51 +112,6 @@ pub(crate) fn list_path_indexes(conn: &Connection) -> Result<Vec<String>, LocalF
     names.sort();
     transaction.commit().db()?;
     Ok(names)
-}
-
-#[cfg(test)]
-pub(crate) fn authorize_query_index(
-    conn: &Connection,
-    name: Option<&str>,
-) -> Result<Option<QuotedIdentifier>, LocalFileCacheError> {
-    let transaction =
-        rusqlite::Transaction::new_unchecked(conn, TransactionBehavior::Deferred).db()?;
-    let result = authorize_query_index_in_snapshot(&transaction, name)?;
-    transaction.commit().db()?;
-    Ok(result)
-}
-
-pub(crate) fn authorize_query_index_in_snapshot(
-    conn: &Connection,
-    name: Option<&str>,
-) -> Result<Option<QuotedIdentifier>, LocalFileCacheError> {
-    let Some(name) = name else {
-        return Ok(None);
-    };
-    let object = resolve_schema_object(conn, name)?.ok_or_else(identifier_error)?;
-
-    match object.name.as_str() {
-        "idx_files_namespace_path" => {
-            validate_builtin_index(conn, &object, &["namespace", "path"])?;
-        }
-        "idx_files_lru" => {
-            validate_builtin_index(
-                conn,
-                &object,
-                &["namespace", "last_accessed_at", "updated_at"],
-            )?;
-        }
-        _ => {
-            validate_owned_path_index(conn, &object)?;
-        }
-    }
-
-    // RFC 011 N-01: quote the catalog's own spelling (`object.name`), not
-    // the caller's `name` -- see the identical reasoning in `drop_path_index`.
-    let quoted = quote_identifier(&object.name);
-    #[cfg(test)]
-    test_hook(TestPoint::Authorization)?;
-    Ok(Some(quoted))
 }
 
 pub(crate) fn main_file_indexes(
@@ -273,18 +196,6 @@ pub(crate) fn validate_index_terms(
             .is_some_and(|value| value.eq_ignore_ascii_case("BINARY"))
     {
         return Err("index auxiliary row mismatch");
-    }
-    Ok(())
-}
-
-fn validate_new_suffix(suffix: &str) -> Result<(), LocalFileCacheError> {
-    if suffix.is_empty()
-        || suffix.len() > 64
-        || !suffix
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
-    {
-        return Err(identifier_error());
     }
     Ok(())
 }
@@ -374,17 +285,6 @@ fn validate_owned_path_index(
     }
     validate_index_shape(conn, &object.name, &["namespace", "path"])?;
     Ok(object.name.clone())
-}
-
-fn validate_builtin_index(
-    conn: &Connection,
-    object: &SchemaObject,
-    expected: &[&str],
-) -> Result<(), LocalFileCacheError> {
-    if object.object_type != "index" || object.table_name != "files" || object.sql.is_none() {
-        return Err(identifier_error());
-    }
-    validate_index_shape(conn, &object.name, expected)
 }
 
 fn validate_index_shape(
