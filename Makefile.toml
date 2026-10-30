@@ -176,13 +176,14 @@ script = [
 ]
 
 [tasks.gate-docs]
-description = "Rustdoc, mdBook and the joint package check (RFC 009 R9). Needs a clean committed tree."
-# Exactly the three commands of the old `doc-package` gate. `cargo package`
+description = "Rustdoc (warnings fail), mdBook and the joint package check (RFC 009 R9). Needs a clean committed tree."
+# The three commands of the old `doc-package` gate, with rustdoc warnings made
+# fatal on the `cargo doc` command only (RFC 027 Q9b-3). `cargo package`
 # refuses a dirty tree and builds each crate from its packaged files.
 script = [
     '''
     set -ex
-    cargo doc --workspace --no-deps --all-features --locked
+    RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features --locked
     mdbook build docs
     cargo package --workspace --locked
     '''
