@@ -1,5 +1,6 @@
 //! Database schema initialization and RFC 010 migration coordination.
 
+use crate::error::SqliteResultExt;
 use rusqlite::{Connection, TransactionBehavior};
 
 use crate::{JournalMode, SynchronousMode, error::LocalFileCacheError};
@@ -35,8 +36,10 @@ pub(crate) fn initialize(
 /// Configure and validate a read-only connection without initializing or
 /// migrating its schema.
 pub(crate) fn validate_read_only(conn: &mut Connection) -> Result<(), LocalFileCacheError> {
-    conn.execute_batch("PRAGMA query_only = ON;")?;
-    let query_only: i64 = conn.query_row("PRAGMA query_only", [], |row| row.get(0))?;
+    conn.execute_batch("PRAGMA query_only = ON;").db()?;
+    let query_only: i64 = conn
+        .query_row("PRAGMA query_only", [], |row| row.get(0))
+        .db()?;
     if query_only != 1 {
         return Err(LocalFileCacheError::UnsupportedFeature(
             "SQLite query-only enforcement could not be enabled".into(),
@@ -45,13 +48,15 @@ pub(crate) fn validate_read_only(conn: &mut Connection) -> Result<(), LocalFileC
 
     enable_foreign_keys(conn)?;
 
-    let transaction = conn.transaction_with_behavior(TransactionBehavior::Deferred)?;
+    let transaction = conn
+        .transaction_with_behavior(TransactionBehavior::Deferred)
+        .db()?;
     let physical_version = classifier::read_user_version(&transaction)?;
     match classifier::classify(&transaction, physical_version)? {
         SchemaState::Version {
             version: CURRENT_VERSION,
             ..
-        } => transaction.commit()?,
+        } => transaction.commit().db()?,
         SchemaState::Fresh | SchemaState::Version { .. } => {
             return Err(LocalFileCacheError::UnsupportedFeature(
                 "read-only open requires the current database schema; initialization or migration is not permitted; database was not modified"
@@ -88,7 +93,9 @@ fn initialize_with_hook(
         configuration::prepare_file_migration(conn)?;
     }
 
-    let transaction = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let transaction = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .db()?;
     let authoritative_version = classifier::read_user_version(&transaction)?;
     let state = classifier::classify(&transaction, authoritative_version)?;
     hook(MigrationPoint::AfterAuthoritativeClassification)?;
@@ -101,7 +108,7 @@ fn initialize_with_hook(
         }
     ) {
         hook(MigrationPoint::ImmediatelyBeforeCommit)?;
-        transaction.commit()?;
+        transaction.commit().db()?;
         return Ok(InitializationOutcome {
             schema_migration_committed: false,
         });
@@ -136,14 +143,16 @@ fn initialize_with_hook(
         }
     }
 
-    transaction.execute_batch(&format!("PRAGMA user_version = {CURRENT_VERSION};"))?;
+    transaction
+        .execute_batch(&format!("PRAGMA user_version = {CURRENT_VERSION};"))
+        .db()?;
     hook(MigrationPoint::AfterFinalUserVersionWrite)?;
 
     snapshot.validate_and_remove(&transaction)?;
     migration::validate_final_postconditions(&transaction)?;
     hook(MigrationPoint::AfterFinalPostconditions)?;
     hook(MigrationPoint::ImmediatelyBeforeCommit)?;
-    transaction.commit()?;
+    transaction.commit().db()?;
 
     Ok(InitializationOutcome {
         schema_migration_committed: true,
@@ -151,13 +160,15 @@ fn initialize_with_hook(
 }
 
 fn validate_current_read_snapshot(conn: &mut Connection) -> Result<(), LocalFileCacheError> {
-    let transaction = conn.transaction_with_behavior(TransactionBehavior::Deferred)?;
+    let transaction = conn
+        .transaction_with_behavior(TransactionBehavior::Deferred)
+        .db()?;
     let version = classifier::read_user_version(&transaction)?;
     match classifier::classify(&transaction, version)? {
         SchemaState::Version {
             version: CURRENT_VERSION,
             ..
-        } => transaction.commit()?,
+        } => transaction.commit().db()?,
         _ => {
             return Err(LocalFileCacheError::UnsupportedFeature(
                 "database changed while current schema was being validated; database was not modified"
@@ -183,8 +194,10 @@ pub(crate) fn apply_runtime_configuration(
 }
 
 pub(crate) fn enable_foreign_keys(conn: &Connection) -> Result<(), LocalFileCacheError> {
-    conn.execute_batch("PRAGMA foreign_keys = ON;")?;
-    let enabled: i64 = conn.query_row("PRAGMA foreign_keys", [], |row| row.get(0))?;
+    conn.execute_batch("PRAGMA foreign_keys = ON;").db()?;
+    let enabled: i64 = conn
+        .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
+        .db()?;
     if enabled != 1 {
         return Err(LocalFileCacheError::UnsupportedFeature(
             "SQLite foreign-key enforcement could not be enabled".into(),

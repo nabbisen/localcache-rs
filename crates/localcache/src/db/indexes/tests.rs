@@ -492,12 +492,16 @@ fn authorization_metadata_is_read_from_one_snapshot() {
     let database_in_hook: PathBuf = database.clone();
     let hook = set_hook(move |point| {
         if point == TestPoint::SchemaRead && !changed_in_hook.swap(true, Ordering::SeqCst) {
-            let writer = Connection::open(&database_in_hook)?;
-            writer.busy_timeout(std::time::Duration::from_secs(1))?;
-            writer.execute_batch(
-                "DROP INDEX main.lc_user_snapshot;
+            let writer = Connection::open(&database_in_hook).db()?;
+            writer
+                .busy_timeout(std::time::Duration::from_secs(1))
+                .db()?;
+            writer
+                .execute_batch(
+                    "DROP INDEX main.lc_user_snapshot;
                  CREATE INDEX main.lc_user_snapshot ON files(path);",
-            )?;
+                )
+                .db()?;
         }
         Ok(())
     });
@@ -528,12 +532,16 @@ fn query_execution_stays_in_the_authorization_snapshot() {
     let database_in_hook = database.clone();
     let hook = set_hook(move |point| {
         if point == TestPoint::Authorization && !changed_in_hook.swap(true, Ordering::SeqCst) {
-            let writer = Connection::open(&database_in_hook)?;
-            writer.busy_timeout(std::time::Duration::from_secs(1))?;
-            writer.execute_batch(
-                "DROP INDEX main.lc_user_race;
+            let writer = Connection::open(&database_in_hook).db()?;
+            writer
+                .busy_timeout(std::time::Duration::from_secs(1))
+                .db()?;
+            writer
+                .execute_batch(
+                    "DROP INDEX main.lc_user_race;
                  CREATE INDEX main.lc_user_race ON files(path);",
-            )?;
+                )
+                .db()?;
         }
         Ok(())
     });
@@ -560,12 +568,16 @@ fn list_uses_one_generation_and_later_operations_revalidate() {
     let database_in_hook = database.clone();
     let hook = set_hook(move |point| {
         if point == TestPoint::SchemaRead && !changed_in_hook.swap(true, Ordering::SeqCst) {
-            let writer = Connection::open(&database_in_hook)?;
-            writer.busy_timeout(std::time::Duration::from_secs(1))?;
-            writer.execute_batch(
-                "DROP INDEX main.lc_user_list_race;
+            let writer = Connection::open(&database_in_hook).db()?;
+            writer
+                .busy_timeout(std::time::Duration::from_secs(1))
+                .db()?;
+            writer
+                .execute_batch(
+                    "DROP INDEX main.lc_user_list_race;
                  CREATE INDEX main.lc_user_list_race ON files(path);",
-            )?;
+                )
+                .db()?;
         }
         Ok(())
     });
@@ -593,12 +605,16 @@ fn dry_run_stays_in_the_authorization_snapshot() {
     let database_in_hook = database.clone();
     let hook = set_hook(move |point| {
         if point == TestPoint::Authorization && !changed_in_hook.swap(true, Ordering::SeqCst) {
-            let writer = Connection::open(&database_in_hook)?;
-            writer.busy_timeout(std::time::Duration::from_secs(1))?;
-            writer.execute_batch(
-                "DROP INDEX main.lc_user_dry_race;
+            let writer = Connection::open(&database_in_hook).db()?;
+            writer
+                .busy_timeout(std::time::Duration::from_secs(1))
+                .db()?;
+            writer
+                .execute_batch(
+                    "DROP INDEX main.lc_user_dry_race;
                  CREATE INDEX main.lc_user_dry_race ON files(path);",
-            )?;
+                )
+                .db()?;
         }
         Ok(())
     });

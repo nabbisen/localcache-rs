@@ -20,7 +20,7 @@ use crate::db::{repository, schema};
 use crate::detection::hash::{compute_full_hash, compute_partial_hash};
 use crate::detection::metadata::collect_metadata;
 use crate::detection::strategy::detect_change;
-use crate::error::LocalFileCacheError;
+use crate::error::{LocalFileCacheError, SqliteResultExt};
 use crate::path::{normalize_path, path_to_str, resolve_path_key};
 use crate::serialization::{decode_payload, encode_payload};
 
@@ -173,7 +173,8 @@ where
                         | OpenFlags::SQLITE_OPEN_READ_WRITE
                         | OpenFlags::SQLITE_OPEN_CREATE
                         | OpenFlags::SQLITE_OPEN_SHARED_CACHE,
-                )?
+                )
+                .db()?
             } else {
                 let path_str = options.database_path.to_str().ok_or_else(|| {
                     LocalFileCacheError::InvalidPath {
@@ -187,17 +188,19 @@ where
                         | OpenFlags::SQLITE_OPEN_READ_ONLY
                         | OpenFlags::SQLITE_OPEN_SHARED_CACHE
                         | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-                )?
+                )
+                .db()?
             }
         } else if is_memory {
-            Connection::open_in_memory()?
+            Connection::open_in_memory().db()?
         } else if read_only {
             Connection::open_with_flags(
                 &options.database_path,
                 OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-            )?
+            )
+            .db()?
         } else {
-            Connection::open(&options.database_path)?
+            Connection::open(&options.database_path).db()?
         };
 
         if read_only {
@@ -434,7 +437,8 @@ where
         let tx = rusqlite::Transaction::new_unchecked(
             &self.conn,
             rusqlite::TransactionBehavior::Immediate,
-        )?;
+        )
+        .db()?;
         let file_id = repository::upsert_in_tx(
             &tx,
             &self.namespace,
@@ -446,7 +450,7 @@ where
         )?;
         // RFC 022 R6: a write is never its own eviction candidate.
         let evicted = self.enforce_max_entries(&tx, &[file_id])?;
-        tx.commit()?;
+        tx.commit().db()?;
         if let Some(cb) = &self.evict_callback {
             for p in &evicted {
                 cb(p);
@@ -546,7 +550,8 @@ where
         let tx = rusqlite::Transaction::new_unchecked(
             &self.conn,
             rusqlite::TransactionBehavior::Immediate,
-        )?;
+        )
+        .db()?;
         let mut written_ids: Vec<i64> = Vec::with_capacity(prepared.len());
         for (path_str, metadata, bytes, encoding) in &prepared {
             let id = repository::upsert_in_tx(
@@ -563,7 +568,7 @@ where
         }
         // RFC 022 R6: a batch write never evicts any row it just wrote.
         let evicted = self.enforce_max_entries(&tx, &written_ids)?;
-        tx.commit()?;
+        tx.commit().db()?;
         if let Some(cb) = &self.evict_callback {
             for p in &evicted {
                 cb(p);
@@ -801,7 +806,8 @@ where
         let tx = rusqlite::Transaction::new_unchecked(
             &self.conn,
             rusqlite::TransactionBehavior::Immediate,
-        )?;
+        )
+        .db()?;
 
         // Load all encrypted payload rows for this namespace, through the
         // transaction so the read is covered by the same write lock as the
@@ -827,7 +833,7 @@ where
         for (file_id, new_content) in &updates {
             repository::update_payload_content(&tx, *file_id, new_content)?;
         }
-        tx.commit()?;
+        tx.commit().db()?;
 
         // `Ok` from this point on always means this engine now uses
         // `new_key`, including when `updates` is empty — there is no

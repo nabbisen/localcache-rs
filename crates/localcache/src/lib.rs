@@ -43,7 +43,7 @@ pub use cache::options::{
     CacheOptions, ChangeDetectionMode, Codec, JournalMode, ScanOptions, SynchronousMode,
 };
 pub use cache::query::{QueryBuilder, QueryReport, SkippedEntry, SortKey, SortOrder};
-pub use error::LocalFileCacheError;
+pub use error::{DatabaseError, LocalFileCacheError};
 pub use pool::{CacheOptionsExt, SyncCacheEngine};
 #[allow(deprecated)]
 pub use pool::{ConnectionPool, SharedEngine, shared_engine};

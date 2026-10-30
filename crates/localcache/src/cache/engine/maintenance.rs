@@ -11,7 +11,7 @@ use std::path::Path;
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::db::{indexes, repository};
-use crate::error::LocalFileCacheError;
+use crate::error::{LocalFileCacheError, SqliteResultExt};
 
 use super::{CacheEngine, is_expired};
 
@@ -171,7 +171,7 @@ where
 
     pub fn shrink_database(&self) -> Result<(), LocalFileCacheError> {
         self.guard_write()?;
-        self.conn.execute_batch("VACUUM;")?;
+        self.conn.execute_batch("VACUUM;").db()?;
         Ok(())
     }
 

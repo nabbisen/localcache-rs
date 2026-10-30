@@ -4,6 +4,7 @@ use rusqlite::{Connection, ErrorCode, limits::Limit};
 use tempfile::TempDir;
 
 use crate::LocalFileCacheError;
+use crate::error::SqliteResultExt;
 
 use super::super::{
     CURRENT_VERSION,
@@ -130,8 +131,25 @@ fn competing_immediate_writer_returns_busy_without_retry_or_mutation() {
     blocker.execute_batch("BEGIN IMMEDIATE;").unwrap();
     let error = initialize(&mut opener, false).unwrap_err();
     match error {
-        LocalFileCacheError::Database(rusqlite::Error::SqliteFailure(code, _)) => {
-            assert_eq!(code.code, ErrorCode::DatabaseBusy);
+        LocalFileCacheError::Database(database_error) => {
+            // The public view: the primary result code is `code & 0xff`.
+            assert_eq!(
+                database_error
+                    .sqlite_extended_code()
+                    .map(|code| code & 0xff),
+                Some(5),
+                "expected SQLITE_BUSY"
+            );
+            // The crate-internal view, beside it: the underlying error.
+            let underlying = std::error::Error::source(&database_error)
+                .and_then(|source| source.downcast_ref::<rusqlite::Error>())
+                .expect("the database error wraps a rusqlite error");
+            match underlying {
+                rusqlite::Error::SqliteFailure(code, _) => {
+                    assert_eq!(code.code, ErrorCode::DatabaseBusy);
+                }
+                other => panic!("expected SQLITE_BUSY, got {other}"),
+            }
         }
         other => panic!("expected SQLITE_BUSY, got {other}"),
     }
@@ -150,7 +168,7 @@ fn authoritative_read_supersedes_stale_preliminary_version() {
 
     let outcome = initialize_with_hook(&mut first, false, &mut |point| {
         if point == MigrationPoint::AfterPreliminaryVersionRead && !second_migrated {
-            let mut second = Connection::open(&path)?;
+            let mut second = Connection::open(&path).db()?;
             let second_outcome = initialize(&mut second, false)?;
             assert!(second_outcome.schema_migration_committed);
             second_migrated = true;

@@ -1,19 +1,20 @@
 //! SQLite durability and post-initialization runtime configuration.
 
+use crate::error::SqliteResultExt;
 use rusqlite::Connection;
 
 use crate::{JournalMode, LocalFileCacheError, SynchronousMode};
 
 pub(super) fn prepare_file_migration(conn: &Connection) -> Result<(), LocalFileCacheError> {
-    let journal = observed_journal_mode(conn)?;
+    let journal = observed_journal_mode(conn).db()?;
     if !matches!(journal.as_str(), "delete" | "truncate" | "persist" | "wal") {
         return Err(LocalFileCacheError::UnsupportedFeature(format!(
             "database migration requires an existing rollback-capable or WAL journal; observed_journal_mode={journal}; database was not modified"
         )));
     }
 
-    conn.execute_batch("PRAGMA synchronous = FULL;")?;
-    let synchronous = observed_synchronous(conn)?;
+    conn.execute_batch("PRAGMA synchronous = FULL;").db()?;
+    let synchronous = observed_synchronous(conn).db()?;
     if synchronous != "full" {
         return Err(LocalFileCacheError::UnsupportedFeature(format!(
             "database migration requires synchronous=FULL; observed_synchronous={synchronous}; database was not modified"

@@ -42,8 +42,12 @@ use std::path::PathBuf;
 #[non_exhaustive]
 pub enum LocalFileCacheError {
     /// An error from the underlying SQLite database.
+    ///
+    /// The payload is opaque: [`DatabaseError::sqlite_extended_code`] gives the
+    /// SQLite result code when there is one, and
+    /// [`std::error::Error::source`] the underlying error.
     #[error("database error: {0}")]
-    Database(#[from] rusqlite::Error),
+    Database(#[source] DatabaseError),
 
     /// An I/O error (file reading, canonicalization, etc.).
     #[error("io error: {0}")]
@@ -109,3 +113,74 @@ pub enum LocalFileCacheError {
     #[error("async blocking task panicked")]
     AsyncTaskPanicked,
 }
+
+/// An error from the underlying SQLite database, as carried by
+/// [`LocalFileCacheError::Database`].
+///
+/// The error is opaque: no database-library type appears in this crate's
+/// public API. Its [`Display`](std::fmt::Display) is the database's own message,
+/// [`std::error::Error::source`] returns the underlying error, and
+/// [`sqlite_extended_code`](Self::sqlite_extended_code) gives the SQLite result
+/// code when the database reported one.
+///
+/// A value of this type is created by the library only.
+#[derive(Debug)]
+pub struct DatabaseError {
+    source: Box<dyn std::error::Error + Send + Sync + 'static>,
+    extended_code: Option<i32>,
+}
+
+impl DatabaseError {
+    /// The SQLite *extended* result code of this error, or `None` when the
+    /// failure did not come from SQLite reporting a code (for example a
+    /// query that returned no rows, or a value that could not be converted).
+    ///
+    /// The *primary* result code is `code & 0xff`. For example a busy database
+    /// is `SQLITE_BUSY`, primary code 5, so
+    /// `error.sqlite_extended_code().map(|code| code & 0xff) == Some(5)` tells a
+    /// caller the database was busy without naming any database library. The
+    /// extended codes are listed in the SQLite documentation, "Result and Error
+    /// Codes".
+    pub fn sqlite_extended_code(&self) -> Option<i32> {
+        self.extended_code
+    }
+
+    pub(crate) fn from_sqlite(error: rusqlite::Error) -> Self {
+        let extended_code = match &error {
+            rusqlite::Error::SqliteFailure(failure, _) => Some(failure.extended_code),
+            _ => None,
+        };
+        Self {
+            source: Box::new(error),
+            extended_code,
+        }
+    }
+}
+
+impl std::fmt::Display for DatabaseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.source, f)
+    }
+}
+
+impl std::error::Error for DatabaseError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&*self.source)
+    }
+}
+
+/// Crate-private conversion of a database result into the library's error
+/// type. It replaces the `From<rusqlite::Error>` impl, which would have been a
+/// public trait impl.
+pub(crate) trait SqliteResultExt<T> {
+    fn db(self) -> Result<T, LocalFileCacheError>;
+}
+
+impl<T> SqliteResultExt<T> for Result<T, rusqlite::Error> {
+    fn db(self) -> Result<T, LocalFileCacheError> {
+        self.map_err(|error| LocalFileCacheError::Database(DatabaseError::from_sqlite(error)))
+    }
+}
+
+#[cfg(test)]
+mod tests;

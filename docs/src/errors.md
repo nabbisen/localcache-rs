@@ -10,7 +10,7 @@ Existing exhaustive matches must add a `_` arm to upgrade to v0.21.0.
 
 | Variant | Cause | Recovery |
 |---|---|---|
-| `Database(rusqlite::Error)` | SQLite error | Check path permissions; file not corrupt |
+| `Database(DatabaseError)` | SQLite error; see [Database errors](#database-errors) | Check path permissions; file not corrupt; retry if busy |
 | `Io(std::io::Error)` | File read/write failure | Check file existence and permissions |
 | `Serialization(String)` | bincode or JSON encode/decode failed | Payload type mismatch; check `payload_version` |
 | `FileNotFound { path }` | Source file does not exist | Normal — check with `check_status` first |
@@ -44,6 +44,53 @@ codec failures:
 - **No schema, payload wire format, SQL, or other method signature changed.**
   Recompiling — after adding the `_` arm and updating any `UnsupportedFeature`
   matches above — is the only work; existing databases open unchanged.
+
+### v0.22.0 migration note
+
+`LocalFileCacheError::Database` now wraps `DatabaseError`, an opaque type of this
+crate. `rusqlite::Error` is no longer part of the public API, so code that
+handles errors no longer depends on which `rusqlite` version this crate uses.
+
+- A `Database(_)` arm needs no change, and the message text is unchanged.
+- A match on the old payload, such as
+  `Database(rusqlite::Error::SqliteFailure(code, _))`, becomes
+  `Database(error)` with a test on `error.sqlite_extended_code()` (below).
+- Another `rusqlite::Error` variant, for example `QueryReturnedNoRows`, has no
+  counterpart: `sqlite_extended_code()` is `None` for it, and the message is its
+  only description.
+
+## Database errors
+
+`LocalFileCacheError::Database` carries a `DatabaseError`. It is opaque: you
+cannot construct one, and no database library type appears in its API.
+
+- **`Display`** prints SQLite's own message, so `database error: …` reads as it
+  always did.
+- **`std::error::Error::source()`** returns the underlying error, type-erased.
+- **`sqlite_extended_code() -> Option<i32>`** returns the SQLite *extended*
+  result code when SQLite reported one, and `None` otherwise (for example a
+  query that returned no rows). The *primary* result code is `code & 0xff`.
+
+To recognise a busy database without naming any database library, compare the
+primary code with `SQLITE_BUSY`, which is 5:
+
+```rust
+use localcache::LocalFileCacheError;
+
+const SQLITE_BUSY: i32 = 5;
+
+match engine.set("file.txt", &payload) {
+    Err(LocalFileCacheError::Database(error))
+        if error.sqlite_extended_code().map(|code| code & 0xff) == Some(SQLITE_BUSY) =>
+    {
+        // Another connection holds the write lock and the busy timeout
+        // (about five seconds) ran out: retry later.
+    }
+    other => { other?; }
+}
+```
+
+The codes are listed in SQLite's documentation, "Result and Error Codes".
 
 ## Common patterns
 

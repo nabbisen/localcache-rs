@@ -11,7 +11,7 @@ use rusqlite::params;
 use super::FullCandidateRow;
 use super::{CandidateRow, ID_LIST_CHUNK, path_filter_clauses};
 use crate::db::indexes;
-use crate::error::LocalFileCacheError;
+use crate::error::{LocalFileCacheError, SqliteResultExt};
 
 // ---------------------------------------------------------------------------
 // RFC 021: one-pass, late-materialization candidate queries
@@ -30,7 +30,7 @@ pub(crate) fn query_candidates(
     path_glob: Option<&[String]>,
 ) -> Result<Vec<CandidateRow>, LocalFileCacheError> {
     let transaction =
-        rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Deferred)?;
+        rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Deferred).db()?;
     let authorized = indexes::authorize_query_index_in_snapshot(&transaction, index_hint)?;
     let table = match authorized.as_ref() {
         Some(idx) => format!("main.files INDEXED BY {}", idx.as_sql()),
@@ -42,7 +42,7 @@ pub(crate) fn query_candidates(
          WHERE {} ORDER BY path",
         clauses.join(" AND ")
     );
-    let mut stmt = transaction.prepare(&sql)?;
+    let mut stmt = transaction.prepare(&sql).db()?;
     let rows: Result<Vec<_>, _> = stmt
         .query_map(
             rusqlite::params_from_iter(params.iter().map(String::as_str)),
@@ -56,11 +56,12 @@ pub(crate) fn query_candidates(
                     last_accessed_at: r.get::<_, i64>(5)?,
                 })
             },
-        )?
+        )
+        .db()?
         .collect();
-    let rows = rows?;
+    let rows = rows.db()?;
     drop(stmt);
-    transaction.commit()?;
+    transaction.commit().db()?;
     Ok(rows)
 }
 
@@ -114,7 +115,7 @@ pub(crate) fn query_candidates_json_pushdown(
     use rusqlite::types::Value;
 
     let transaction =
-        rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Deferred)?;
+        rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Deferred).db()?;
     let authorized = indexes::authorize_query_index_in_snapshot(&transaction, index_hint)?;
     let table = match authorized.as_ref() {
         Some(idx) => format!("main.files AS f INDEXED BY {}", idx.as_sql()),
@@ -183,7 +184,7 @@ pub(crate) fn query_candidates_json_pushdown(
     };
 
     let n_fields = select_fields.len();
-    let mut stmt = transaction.prepare(&sql)?;
+    let mut stmt = transaction.prepare(&sql).db()?;
     let rows: Result<Vec<_>, _> = stmt
         .query_map(rusqlite::params_from_iter(params.iter()), |r| {
             let candidate = CandidateRow {
@@ -202,11 +203,12 @@ pub(crate) fn query_candidates_json_pushdown(
                 extracted.push(r.get::<_, Option<f64>>(6 + i)?);
             }
             Ok((candidate, extracted))
-        })?
+        })
+        .db()?
         .collect();
-    let rows = rows?;
+    let rows = rows.db()?;
     drop(stmt);
-    transaction.commit()?;
+    transaction.commit().db()?;
     Ok(rows)
 }
 
@@ -225,7 +227,7 @@ pub(crate) fn payloads_for_ids(
         let sql = format!(
             "SELECT file_id, content, encoding FROM main.payloads WHERE file_id IN ({placeholders})"
         );
-        let mut stmt = conn.prepare(&sql)?;
+        let mut stmt = conn.prepare(&sql).db()?;
         let rows: Result<Vec<_>, _> = stmt
             .query_map(rusqlite::params_from_iter(chunk.iter()), |r| {
                 Ok((
@@ -233,9 +235,10 @@ pub(crate) fn payloads_for_ids(
                     r.get::<_, Vec<u8>>(1)?,
                     r.get::<_, String>(2)?,
                 ))
-            })?
+            })
+            .db()?
             .collect();
-        out.extend(rows?);
+        out.extend(rows.db()?);
     }
     Ok(out)
 }
@@ -255,7 +258,7 @@ pub(crate) fn query_candidates_with_payloads(
     path_glob: Option<&[String]>,
 ) -> Result<Vec<FullCandidateRow>, LocalFileCacheError> {
     let transaction =
-        rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Deferred)?;
+        rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Deferred).db()?;
     let authorized = indexes::authorize_query_index_in_snapshot(&transaction, index_hint)?;
     let table = match authorized.as_ref() {
         Some(idx) => format!("main.files AS f INDEXED BY {}", idx.as_sql()),
@@ -267,7 +270,7 @@ pub(crate) fn query_candidates_with_payloads(
          FROM {table} LEFT JOIN main.payloads p ON p.file_id = f.id WHERE {} ORDER BY f.path",
         clauses.join(" AND ")
     );
-    let mut stmt = transaction.prepare(&sql)?;
+    let mut stmt = transaction.prepare(&sql).db()?;
     let rows: Result<Vec<_>, _> = stmt
         .query_map(
             rusqlite::params_from_iter(params.iter().map(String::as_str)),
@@ -282,11 +285,12 @@ pub(crate) fn query_candidates_with_payloads(
                     encoding: r.get(6)?,
                 })
             },
-        )?
+        )
+        .db()?
         .collect();
-    let rows = rows?;
+    let rows = rows.db()?;
     drop(stmt);
-    transaction.commit()?;
+    transaction.commit().db()?;
     Ok(rows)
 }
 
@@ -301,11 +305,13 @@ pub(crate) fn namespace_all_json(
     conn: &Connection,
     namespace: &str,
 ) -> Result<bool, LocalFileCacheError> {
-    let n: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM main.payloads p JOIN main.files f ON f.id = p.file_id \
+    let n: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM main.payloads p JOIN main.files f ON f.id = p.file_id \
          WHERE f.namespace = ?1 AND p.encoding <> 'json'",
-        params![namespace],
-        |r| r.get(0),
-    )?;
+            params![namespace],
+            |r| r.get(0),
+        )
+        .db()?;
     Ok(n == 0)
 }

@@ -2,7 +2,7 @@
 
 use rusqlite::{Connection, TransactionBehavior};
 
-use crate::error::LocalFileCacheError;
+use crate::error::{LocalFileCacheError, SqliteResultExt};
 
 pub(crate) const PUBLIC_INDEX_PREFIX: &str = "lc_user_";
 const IDENTIFIER_ERROR: &str =
@@ -77,11 +77,12 @@ pub(crate) fn create_path_index(
     suffix: &str,
 ) -> Result<String, LocalFileCacheError> {
     let full = format!("{PUBLIC_INDEX_PREFIX}{suffix}");
-    let transaction = rusqlite::Transaction::new_unchecked(conn, TransactionBehavior::Immediate)?;
+    let transaction =
+        rusqlite::Transaction::new_unchecked(conn, TransactionBehavior::Immediate).db()?;
 
     if let Some(object) = resolve_schema_object(&transaction, &full)? {
         let actual = validate_owned_path_index(&transaction, &object)?;
-        transaction.commit()?;
+        transaction.commit().db()?;
         return Ok(actual);
     }
 
@@ -91,13 +92,13 @@ pub(crate) fn create_path_index(
         "CREATE INDEX main.{} ON files(namespace, path)",
         quoted.as_sql()
     );
-    transaction.execute(&sql, [])?;
+    transaction.execute(&sql, []).db()?;
     #[cfg(test)]
     test_hook(TestPoint::CreateDdl)?;
 
     let object = resolve_schema_object(&transaction, &full)?.ok_or_else(identifier_error)?;
     let actual = validate_owned_path_index(&transaction, &object)?;
-    transaction.commit()?;
+    transaction.commit().db()?;
     Ok(actual)
 }
 
@@ -106,10 +107,11 @@ pub(crate) fn drop_path_index(
     suffix: &str,
 ) -> Result<bool, LocalFileCacheError> {
     let full = format!("{PUBLIC_INDEX_PREFIX}{suffix}");
-    let transaction = rusqlite::Transaction::new_unchecked(conn, TransactionBehavior::Immediate)?;
+    let transaction =
+        rusqlite::Transaction::new_unchecked(conn, TransactionBehavior::Immediate).db()?;
 
     let Some(object) = resolve_schema_object(&transaction, &full)? else {
-        transaction.commit()?;
+        transaction.commit().db()?;
         return Ok(false);
     };
     validate_owned_path_index(&transaction, &object)?;
@@ -122,25 +124,26 @@ pub(crate) fn drop_path_index(
     // away.
     let quoted = quote_identifier(&object.name);
     let sql = format!("DROP INDEX main.{}", quoted.as_sql());
-    transaction.execute(&sql, [])?;
+    transaction.execute(&sql, []).db()?;
     #[cfg(test)]
     test_hook(TestPoint::DropDdl)?;
     if resolve_schema_object(&transaction, &full)?.is_some() {
         return Err(identifier_error());
     }
-    transaction.commit()?;
+    transaction.commit().db()?;
     Ok(true)
 }
 
 pub(crate) fn list_path_indexes(conn: &Connection) -> Result<Vec<String>, LocalFileCacheError> {
-    let transaction = rusqlite::Transaction::new_unchecked(conn, TransactionBehavior::Deferred)?;
+    let transaction =
+        rusqlite::Transaction::new_unchecked(conn, TransactionBehavior::Deferred).db()?;
     let objects = public_schema_objects(&transaction)?;
     let mut names = Vec::with_capacity(objects.len());
     for object in &objects {
         names.push(validate_owned_path_index(&transaction, object)?);
     }
     names.sort();
-    transaction.commit()?;
+    transaction.commit().db()?;
     Ok(names)
 }
 
@@ -149,9 +152,10 @@ pub(crate) fn authorize_query_index(
     conn: &Connection,
     name: Option<&str>,
 ) -> Result<Option<QuotedIdentifier>, LocalFileCacheError> {
-    let transaction = rusqlite::Transaction::new_unchecked(conn, TransactionBehavior::Deferred)?;
+    let transaction =
+        rusqlite::Transaction::new_unchecked(conn, TransactionBehavior::Deferred).db()?;
     let result = authorize_query_index_in_snapshot(&transaction, name)?;
-    transaction.commit()?;
+    transaction.commit().db()?;
     Ok(result)
 }
 
@@ -191,41 +195,49 @@ pub(crate) fn authorize_query_index_in_snapshot(
 pub(crate) fn main_file_indexes(
     conn: &Connection,
 ) -> Result<Vec<IndexListRow>, LocalFileCacheError> {
-    let mut statement = conn.prepare(
-        "SELECT name, \"unique\", origin, partial
+    let mut statement = conn
+        .prepare(
+            "SELECT name, \"unique\", origin, partial
          FROM pragma_index_list('files', 'main')
          ORDER BY name",
-    )?;
-    let rows = statement.query_map([], |row| {
-        Ok(IndexListRow {
-            name: row.get(0)?,
-            unique: row.get::<_, i64>(1)? != 0,
-            origin: row.get(2)?,
-            partial: row.get::<_, i64>(3)? != 0,
+        )
+        .db()?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok(IndexListRow {
+                name: row.get(0)?,
+                unique: row.get::<_, i64>(1)? != 0,
+                origin: row.get(2)?,
+                partial: row.get::<_, i64>(3)? != 0,
+            })
         })
-    })?;
-    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        .db()?;
+    rows.collect::<Result<Vec<_>, _>>().db()
 }
 
 pub(crate) fn main_index_xinfo(
     conn: &Connection,
     index_name: &str,
 ) -> Result<Vec<IndexXinfoRow>, LocalFileCacheError> {
-    let mut statement = conn.prepare(
-        "SELECT cid, name, \"desc\", coll, key
+    let mut statement = conn
+        .prepare(
+            "SELECT cid, name, \"desc\", coll, key
          FROM pragma_index_xinfo(?1, 'main')
          ORDER BY seqno",
-    )?;
-    let rows = statement.query_map([index_name], |row| {
-        Ok(IndexXinfoRow {
-            cid: row.get(0)?,
-            name: row.get(1)?,
-            descending: row.get::<_, i64>(2)? != 0,
-            collation: row.get(3)?,
-            key: row.get::<_, i64>(4)? != 0,
+        )
+        .db()?;
+    let rows = statement
+        .query_map([index_name], |row| {
+            Ok(IndexXinfoRow {
+                cid: row.get(0)?,
+                name: row.get(1)?,
+                descending: row.get::<_, i64>(2)? != 0,
+                collation: row.get(3)?,
+                key: row.get::<_, i64>(4)? != 0,
+            })
         })
-    })?;
-    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        .db()?;
+    rows.collect::<Result<Vec<_>, _>>().db()
 }
 
 pub(crate) fn validate_index_terms(
@@ -302,21 +314,25 @@ fn identifier_error() -> LocalFileCacheError {
 }
 
 fn main_schema_objects(conn: &Connection) -> Result<Vec<SchemaObject>, LocalFileCacheError> {
-    let mut statement = conn.prepare(
-        "SELECT type, name, tbl_name, sql
+    let mut statement = conn
+        .prepare(
+            "SELECT type, name, tbl_name, sql
          FROM main.sqlite_schema
          WHERE name NOT LIKE 'sqlite\\_%' ESCAPE '\\'
          ORDER BY type, name",
-    )?;
-    let rows = statement.query_map([], |row| {
-        Ok(SchemaObject {
-            object_type: row.get(0)?,
-            name: row.get(1)?,
-            table_name: row.get(2)?,
-            sql: row.get(3)?,
+        )
+        .db()?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok(SchemaObject {
+                object_type: row.get(0)?,
+                name: row.get(1)?,
+                table_name: row.get(2)?,
+                sql: row.get(3)?,
+            })
         })
-    })?;
-    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        .db()?;
+    rows.collect::<Result<Vec<_>, _>>().db()
 }
 
 fn public_schema_objects(conn: &Connection) -> Result<Vec<SchemaObject>, LocalFileCacheError> {

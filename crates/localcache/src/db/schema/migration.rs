@@ -2,7 +2,7 @@
 
 use rusqlite::{Transaction, params};
 
-use crate::error::LocalFileCacheError;
+use crate::error::{LocalFileCacheError, SqliteResultExt};
 
 use super::CURRENT_VERSION;
 use super::classifier::{self, SchemaState};
@@ -54,8 +54,9 @@ impl StartingSnapshot {
             SchemaState::Version { version, .. } => version,
         };
 
-        transaction.execute_batch(
-            "CREATE TEMP TABLE __localcache_rfc010_start_rows (
+        transaction
+            .execute_batch(
+                "CREATE TEMP TABLE __localcache_rfc010_start_rows (
                 id               INTEGER PRIMARY KEY,
                 namespace        TEXT NOT NULL,
                 path             TEXT NOT NULL,
@@ -69,48 +70,52 @@ impl StartingSnapshot {
                 content          BLOB,
                 encoding         TEXT
             );",
-        )?;
+            )
+            .db()?;
 
-        transaction.execute_batch(match version {
-            1 => {
-                "INSERT INTO temp.__localcache_rfc010_start_rows
+        transaction
+            .execute_batch(match version {
+                1 => {
+                    "INSERT INTO temp.__localcache_rfc010_start_rows
                  SELECT f.id, 'default', f.path, f.mtime, f.file_size, f.hash,
                         f.updated_at, 0, 0, p.file_id IS NOT NULL, p.content,
                         CASE WHEN p.file_id IS NOT NULL THEN 'raw' END
                  FROM main.files AS f
                  LEFT JOIN main.payloads AS p ON p.file_id = f.id;"
-            }
-            2 => {
-                "INSERT INTO temp.__localcache_rfc010_start_rows
+                }
+                2 => {
+                    "INSERT INTO temp.__localcache_rfc010_start_rows
                  SELECT f.id, f.namespace, f.path, f.mtime, f.file_size, f.hash,
                         f.updated_at, 0, 0, p.file_id IS NOT NULL, p.content,
                         CASE WHEN p.file_id IS NOT NULL THEN 'raw' END
                  FROM main.files AS f
                  LEFT JOIN main.payloads AS p ON p.file_id = f.id;"
-            }
-            3 => {
-                "INSERT INTO temp.__localcache_rfc010_start_rows
+                }
+                3 => {
+                    "INSERT INTO temp.__localcache_rfc010_start_rows
                  SELECT f.id, f.namespace, f.path, f.mtime, f.file_size, f.hash,
                         f.updated_at, f.payload_version, 0,
                         p.file_id IS NOT NULL, p.content, p.encoding
                  FROM main.files AS f
                  LEFT JOIN main.payloads AS p ON p.file_id = f.id;"
-            }
-            4 => {
-                "INSERT INTO temp.__localcache_rfc010_start_rows
+                }
+                4 => {
+                    "INSERT INTO temp.__localcache_rfc010_start_rows
                  SELECT f.id, f.namespace, f.path, f.mtime, f.file_size, f.hash,
                         f.updated_at, f.payload_version, f.last_accessed_at,
                         p.file_id IS NOT NULL, p.content, p.encoding
                  FROM main.files AS f
                  LEFT JOIN main.payloads AS p ON p.file_id = f.id;"
-            }
-            _ => unreachable!("only versions 1 through 4 are migrated"),
-        })?;
+                }
+                _ => unreachable!("only versions 1 through 4 are migrated"),
+            })
+            .db()?;
 
         let captured_user_indexes = version == 4;
         if captured_user_indexes {
-            transaction.execute_batch(
-                "CREATE TEMP TABLE __localcache_rfc010_start_indexes (
+            transaction
+                .execute_batch(
+                    "CREATE TEMP TABLE __localcache_rfc010_start_indexes (
                     name TEXT PRIMARY KEY,
                     sql  TEXT NOT NULL
                  );
@@ -119,7 +124,8 @@ impl StartingSnapshot {
                  FROM main.sqlite_schema
                  WHERE type = 'index'
                    AND substr(name, 1, 8) = 'lc_user_';",
-            )?;
+                )
+                .db()?;
         }
 
         Ok(Self {
@@ -136,15 +142,19 @@ impl StartingSnapshot {
             return Ok(());
         }
 
-        let start_count: i64 = transaction.query_row(
-            "SELECT count(*) FROM temp.__localcache_rfc010_start_rows",
-            [],
-            |row| row.get(0),
-        )?;
-        let final_count: i64 =
-            transaction.query_row("SELECT count(*) FROM main.files", [], |row| row.get(0))?;
-        let mismatch: i64 = transaction.query_row(
-            "SELECT
+        let start_count: i64 = transaction
+            .query_row(
+                "SELECT count(*) FROM temp.__localcache_rfc010_start_rows",
+                [],
+                |row| row.get(0),
+            )
+            .db()?;
+        let final_count: i64 = transaction
+            .query_row("SELECT count(*) FROM main.files", [], |row| row.get(0))
+            .db()?;
+        let mismatch: i64 = transaction
+            .query_row(
+                "SELECT
                EXISTS(
                  SELECT id, namespace, path, old_mtime * 1000000000,
                         file_size, hash, updated_at, payload_version,
@@ -171,9 +181,10 @@ impl StartingSnapshot {
                         last_accessed_at, has_payload, content, encoding
                  FROM temp.__localcache_rfc010_start_rows
                )",
-            [],
-            |row| row.get(0),
-        )?;
+                [],
+                |row| row.get(0),
+            )
+            .db()?;
         if start_count != final_count || mismatch != 0 {
             return Err(migration_invariant(
                 "starting row/payload equivalence failed",
@@ -181,8 +192,9 @@ impl StartingSnapshot {
         }
 
         if self.captured_user_indexes {
-            let index_mismatch: i64 = transaction.query_row(
-                "SELECT
+            let index_mismatch: i64 = transaction
+                .query_row(
+                    "SELECT
                    EXISTS(
                      SELECT name, sql FROM temp.__localcache_rfc010_start_indexes
                      EXCEPT
@@ -195,25 +207,31 @@ impl StartingSnapshot {
                      EXCEPT
                      SELECT name, sql FROM temp.__localcache_rfc010_start_indexes
                    )",
-                [],
-                |row| row.get(0),
-            )?;
+                    [],
+                    |row| row.get(0),
+                )
+                .db()?;
             if index_mismatch != 0 {
                 return Err(migration_invariant(
                     "released public index definition changed during migration",
                 ));
             }
-            transaction.execute_batch("DROP TABLE temp.__localcache_rfc010_start_indexes;")?;
+            transaction
+                .execute_batch("DROP TABLE temp.__localcache_rfc010_start_indexes;")
+                .db()?;
         }
-        transaction.execute_batch("DROP TABLE temp.__localcache_rfc010_start_rows;")?;
+        transaction
+            .execute_batch("DROP TABLE temp.__localcache_rfc010_start_rows;")
+            .db()?;
         self.active = false;
         Ok(())
     }
 }
 
 pub(super) fn create_fresh(transaction: &Transaction<'_>) -> Result<(), LocalFileCacheError> {
-    transaction.execute_batch(
-        "CREATE TABLE files (
+    transaction
+        .execute_batch(
+            "CREATE TABLE files (
             id                INTEGER PRIMARY KEY AUTOINCREMENT,
             namespace         TEXT    NOT NULL DEFAULT 'default',
             path              TEXT    NOT NULL,
@@ -234,7 +252,8 @@ pub(super) fn create_fresh(transaction: &Transaction<'_>) -> Result<(), LocalFil
         CREATE INDEX idx_files_namespace_path ON files(namespace, path);
         CREATE INDEX idx_files_lru
             ON files(namespace, last_accessed_at, updated_at);",
-    )?;
+        )
+        .db()?;
     Ok(())
 }
 
@@ -243,8 +262,9 @@ pub(super) fn migrate_v1_to_v2(
     files_high_water: i64,
     hook: &mut dyn FnMut(MigrationPoint) -> Result<(), LocalFileCacheError>,
 ) -> Result<(), LocalFileCacheError> {
-    transaction.execute_batch(
-        "CREATE TABLE __localcache_rfc010_files_v2 (
+    transaction
+        .execute_batch(
+            "CREATE TABLE __localcache_rfc010_files_v2 (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             namespace   TEXT    NOT NULL DEFAULT 'default',
             path        TEXT    NOT NULL,
@@ -254,61 +274,78 @@ pub(super) fn migrate_v1_to_v2(
             updated_at  INTEGER NOT NULL,
             UNIQUE(namespace, path)
         );",
-    )?;
+        )
+        .db()?;
     hook(MigrationPoint::AfterShadowFilesCreation)?;
 
-    transaction.execute_batch(
-        "CREATE TABLE __localcache_rfc010_payloads_v2 (
+    transaction
+        .execute_batch(
+            "CREATE TABLE __localcache_rfc010_payloads_v2 (
             file_id INTEGER PRIMARY KEY,
             content BLOB NOT NULL,
             FOREIGN KEY(file_id)
                 REFERENCES __localcache_rfc010_files_v2(id) ON DELETE CASCADE
         );",
-    )?;
+        )
+        .db()?;
     hook(MigrationPoint::AfterShadowPayloadsCreation)?;
 
-    transaction.execute_batch(
-        "INSERT INTO __localcache_rfc010_files_v2
+    transaction
+        .execute_batch(
+            "INSERT INTO __localcache_rfc010_files_v2
             (id, namespace, path, mtime, file_size, hash, updated_at)
          SELECT id, 'default', path, mtime, file_size, hash, updated_at
          FROM files;",
-    )?;
+        )
+        .db()?;
     hook(MigrationPoint::AfterParentCopy)?;
 
-    transaction.execute_batch(
-        "INSERT INTO __localcache_rfc010_payloads_v2(file_id, content)
+    transaction
+        .execute_batch(
+            "INSERT INTO __localcache_rfc010_payloads_v2(file_id, content)
          SELECT file_id, content FROM payloads;",
-    )?;
+        )
+        .db()?;
     hook(MigrationPoint::AfterPayloadCopy)?;
 
     validate_v1_shadow_equivalence(transaction)?;
     hook(MigrationPoint::AfterBidirectionalEquivalence)?;
 
-    transaction.execute_batch("DROP TABLE payloads;")?;
+    transaction.execute_batch("DROP TABLE payloads;").db()?;
     hook(MigrationPoint::AfterOldPayloadsDrop)?;
-    transaction.execute_batch("DROP TABLE files;")?;
+    transaction.execute_batch("DROP TABLE files;").db()?;
     hook(MigrationPoint::AfterOldFilesDrop)?;
-    transaction.execute_batch("ALTER TABLE __localcache_rfc010_files_v2 RENAME TO files;")?;
+    transaction
+        .execute_batch("ALTER TABLE __localcache_rfc010_files_v2 RENAME TO files;")
+        .db()?;
     hook(MigrationPoint::AfterNewFilesRename)?;
-    transaction.execute_batch("ALTER TABLE __localcache_rfc010_payloads_v2 RENAME TO payloads;")?;
+    transaction
+        .execute_batch("ALTER TABLE __localcache_rfc010_payloads_v2 RENAME TO payloads;")
+        .db()?;
     hook(MigrationPoint::AfterNewPayloadsRename)?;
 
-    transaction.execute_batch(
-        "DELETE FROM sqlite_sequence
+    transaction
+        .execute_batch(
+            "DELETE FROM sqlite_sequence
          WHERE name IN ('files', '__localcache_rfc010_files_v2');",
-    )?;
-    let file_count: i64 =
-        transaction.query_row("SELECT count(*) FROM files", [], |row| row.get(0))?;
+        )
+        .db()?;
+    let file_count: i64 = transaction
+        .query_row("SELECT count(*) FROM files", [], |row| row.get(0))
+        .db()?;
     if file_count != 0 || files_high_water != 0 {
-        transaction.execute(
-            "INSERT INTO sqlite_sequence(name, seq) VALUES ('files', ?1)",
-            [files_high_water],
-        )?;
+        transaction
+            .execute(
+                "INSERT INTO sqlite_sequence(name, seq) VALUES ('files', ?1)",
+                [files_high_water],
+            )
+            .db()?;
     }
     hook(MigrationPoint::AfterSequenceRestoration)?;
 
     transaction
-        .execute_batch("CREATE INDEX idx_files_namespace_path ON files(namespace, path);")?;
+        .execute_batch("CREATE INDEX idx_files_namespace_path ON files(namespace, path);")
+        .db()?;
     classifier::validate_effective_version(transaction, 2)?;
     hook(MigrationPoint::AfterV2ShapeValidation)?;
     Ok(())
@@ -318,12 +355,14 @@ pub(super) fn migrate_v2_to_v3(
     transaction: &Transaction<'_>,
     hook: &mut dyn FnMut(MigrationPoint) -> Result<(), LocalFileCacheError>,
 ) -> Result<(), LocalFileCacheError> {
-    transaction.execute_batch(
-        "ALTER TABLE files
+    transaction
+        .execute_batch(
+            "ALTER TABLE files
             ADD COLUMN payload_version INTEGER NOT NULL DEFAULT 0;
          ALTER TABLE payloads
             ADD COLUMN encoding TEXT NOT NULL DEFAULT 'raw';",
-    )?;
+        )
+        .db()?;
     classifier::validate_effective_version(transaction, 3)?;
     hook(MigrationPoint::AfterV2ToV3)?;
     Ok(())
@@ -333,12 +372,14 @@ pub(super) fn migrate_v3_to_v4(
     transaction: &Transaction<'_>,
     hook: &mut dyn FnMut(MigrationPoint) -> Result<(), LocalFileCacheError>,
 ) -> Result<(), LocalFileCacheError> {
-    transaction.execute_batch(
-        "ALTER TABLE files
+    transaction
+        .execute_batch(
+            "ALTER TABLE files
             ADD COLUMN last_accessed_at INTEGER NOT NULL DEFAULT 0;
          CREATE INDEX idx_files_lru
             ON files(namespace, last_accessed_at, updated_at);",
-    )?;
+        )
+        .db()?;
     classifier::validate_effective_version(transaction, 4)?;
     hook(MigrationPoint::AfterV3ToV4)?;
     Ok(())
@@ -348,41 +389,51 @@ pub(super) fn migrate_v4_to_v5(
     transaction: &Transaction<'_>,
     hook: &mut dyn FnMut(MigrationPoint) -> Result<(), LocalFileCacheError>,
 ) -> Result<(), LocalFileCacheError> {
-    let invalid_storage: i64 = transaction.query_row(
-        "SELECT count(*) FROM files WHERE typeof(mtime) <> 'integer'",
-        [],
-        |row| row.get(0),
-    )?;
+    let invalid_storage: i64 = transaction
+        .query_row(
+            "SELECT count(*) FROM files WHERE typeof(mtime) <> 'integer'",
+            [],
+            |row| row.get(0),
+        )
+        .db()?;
     if invalid_storage != 0 {
         return Err(migration_invariant(
             "v4 mtime must use SQLite INTEGER storage",
         ));
     }
-    let outside_range: i64 = transaction.query_row(
-        "SELECT count(*) FROM files WHERE mtime < ?1 OR mtime > ?2",
-        params![MTIME_SECONDS_MIN, MTIME_SECONDS_MAX],
-        |row| row.get(0),
-    )?;
+    let outside_range: i64 = transaction
+        .query_row(
+            "SELECT count(*) FROM files WHERE mtime < ?1 OR mtime > ?2",
+            params![MTIME_SECONDS_MIN, MTIME_SECONDS_MAX],
+            |row| row.get(0),
+        )
+        .db()?;
     if outside_range != 0 {
         return Err(migration_invariant(
             "v4 mtime is outside the safe seconds range",
         ));
     }
 
-    transaction.execute_batch(
-        "CREATE TEMP TABLE __localcache_rfc010_mtime_v4 (
+    transaction
+        .execute_batch(
+            "CREATE TEMP TABLE __localcache_rfc010_mtime_v4 (
             id        INTEGER PRIMARY KEY,
             old_mtime INTEGER NOT NULL
          );
          INSERT INTO temp.__localcache_rfc010_mtime_v4(id, old_mtime)
          SELECT id, mtime FROM main.files;",
-    )?;
+        )
+        .db()?;
     hook(MigrationPoint::AfterV4NumericSnapshot)?;
 
-    transaction.execute_batch("UPDATE files SET mtime = mtime * 1000000000;")?;
+    transaction
+        .execute_batch("UPDATE files SET mtime = mtime * 1000000000;")
+        .db()?;
     validate_v4_conversion(transaction)?;
     hook(MigrationPoint::AfterV4ConversionEquivalence)?;
-    transaction.execute_batch("DROP TABLE temp.__localcache_rfc010_mtime_v4;")?;
+    transaction
+        .execute_batch("DROP TABLE temp.__localcache_rfc010_mtime_v4;")
+        .db()?;
     Ok(())
 }
 
@@ -404,8 +455,9 @@ pub(super) fn validate_final_postconditions(
 fn validate_v1_shadow_equivalence(
     transaction: &Transaction<'_>,
 ) -> Result<(), LocalFileCacheError> {
-    let files_mismatch: i64 = transaction.query_row(
-        "SELECT
+    let files_mismatch: i64 = transaction
+        .query_row(
+            "SELECT
            (SELECT count(*) FROM files) <> (SELECT count(*) FROM __localcache_rfc010_files_v2)
            OR EXISTS(
              SELECT id, 'default', path, mtime, file_size, hash, updated_at FROM files
@@ -419,11 +471,13 @@ fn validate_v1_shadow_equivalence(
              EXCEPT
              SELECT id, 'default', path, mtime, file_size, hash, updated_at FROM files
            )",
-        [],
-        |row| row.get(0),
-    )?;
-    let payload_mismatch: i64 = transaction.query_row(
-        "SELECT
+            [],
+            |row| row.get(0),
+        )
+        .db()?;
+    let payload_mismatch: i64 = transaction
+        .query_row(
+            "SELECT
            (SELECT count(*) FROM payloads) <>
              (SELECT count(*) FROM __localcache_rfc010_payloads_v2)
            OR EXISTS(
@@ -436,13 +490,15 @@ fn validate_v1_shadow_equivalence(
              EXCEPT
              SELECT file_id, content FROM payloads
            )",
-        [],
-        |row| row.get(0),
-    )?;
-    let foreign_key_violations: i64 =
-        transaction.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |row| {
+            [],
+            |row| row.get(0),
+        )
+        .db()?;
+    let foreign_key_violations: i64 = transaction
+        .query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |row| {
             row.get(0)
-        })?;
+        })
+        .db()?;
     if files_mismatch != 0 || payload_mismatch != 0 || foreign_key_violations != 0 {
         return Err(migration_invariant(
             "v1 shadow relations are not bidirectionally equivalent",
@@ -452,8 +508,9 @@ fn validate_v1_shadow_equivalence(
 }
 
 fn validate_v4_conversion(transaction: &Transaction<'_>) -> Result<(), LocalFileCacheError> {
-    let mismatch: i64 = transaction.query_row(
-        "SELECT
+    let mismatch: i64 = transaction
+        .query_row(
+            "SELECT
            (SELECT count(*) FROM temp.__localcache_rfc010_mtime_v4) <>
              (SELECT count(*) FROM main.files)
            OR EXISTS(
@@ -469,9 +526,10 @@ fn validate_v4_conversion(transaction: &Transaction<'_>) -> Result<(), LocalFile
              FROM temp.__localcache_rfc010_mtime_v4
            )
            OR EXISTS(SELECT 1 FROM main.files WHERE typeof(mtime) <> 'integer')",
-        [],
-        |row| row.get(0),
-    )?;
+            [],
+            |row| row.get(0),
+        )
+        .db()?;
     if mismatch != 0 {
         return Err(migration_invariant(
             "v4 mtime conversion equivalence failed",

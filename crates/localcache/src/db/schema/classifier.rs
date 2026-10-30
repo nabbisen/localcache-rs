@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use rusqlite::{Connection, OptionalExtension, types::Value};
 
 use crate::db::indexes::{main_file_indexes, main_index_xinfo, validate_index_terms};
-use crate::error::LocalFileCacheError;
+use crate::error::{LocalFileCacheError, SqliteResultExt};
 
 use super::CURRENT_VERSION;
 
@@ -41,7 +41,8 @@ enum DdlToken {
 }
 
 pub(super) fn read_user_version(conn: &Connection) -> Result<i64, LocalFileCacheError> {
-    Ok(conn.query_row("PRAGMA user_version", [], |row| row.get(0))?)
+    conn.query_row("PRAGMA user_version", [], |row| row.get(0))
+        .db()
 }
 
 pub(super) fn classify(
@@ -100,21 +101,25 @@ fn validate_version(
 }
 
 fn application_objects(conn: &Connection) -> Result<Vec<SchemaObject>, LocalFileCacheError> {
-    let mut statement = conn.prepare(
-        "SELECT type, name, tbl_name, sql
+    let mut statement = conn
+        .prepare(
+            "SELECT type, name, tbl_name, sql
          FROM main.sqlite_schema
          WHERE name NOT LIKE 'sqlite\\_%' ESCAPE '\\'
          ORDER BY type, name",
-    )?;
-    let rows = statement.query_map([], |row| {
-        Ok(SchemaObject {
-            object_type: row.get(0)?,
-            name: row.get(1)?,
-            table_name: row.get(2)?,
-            sql: row.get(3)?,
+        )
+        .db()?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok(SchemaObject {
+                object_type: row.get(0)?,
+                name: row.get(1)?,
+                table_name: row.get(2)?,
+                sql: row.get(3)?,
+            })
         })
-    })?;
-    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        .db()?;
+    rows.collect::<Result<Vec<_>, _>>().db()
 }
 
 fn validate_object_policy(
@@ -194,7 +199,8 @@ fn validate_table(
             [table_name],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
-        .optional()?;
+        .optional()
+        .db()?;
     if table_kind != Some(("table".to_owned(), 0, 0)) {
         return Err(unrecognized(
             physical_version,
@@ -218,22 +224,26 @@ fn validate_table(
 }
 
 fn table_columns(conn: &Connection, table_name: &str) -> Result<Vec<Column>, LocalFileCacheError> {
-    let mut statement = conn.prepare(
-        "SELECT name, type, \"notnull\", dflt_value, pk, hidden
+    let mut statement = conn
+        .prepare(
+            "SELECT name, type, \"notnull\", dflt_value, pk, hidden
          FROM pragma_table_xinfo(?1)
          ORDER BY cid",
-    )?;
-    let rows = statement.query_map([table_name], |row| {
-        Ok(Column {
-            name: row.get(0)?,
-            declared_type: row.get::<_, String>(1)?.to_ascii_uppercase(),
-            not_null: row.get::<_, i64>(2)? != 0,
-            default: row.get(3)?,
-            primary_key_position: row.get(4)?,
-            hidden: row.get(5)?,
+        )
+        .db()?;
+    let rows = statement
+        .query_map([table_name], |row| {
+            Ok(Column {
+                name: row.get(0)?,
+                declared_type: row.get::<_, String>(1)?.to_ascii_uppercase(),
+                not_null: row.get::<_, i64>(2)? != 0,
+                default: row.get(3)?,
+                primary_key_position: row.get(4)?,
+                hidden: row.get(5)?,
+            })
         })
-    })?;
-    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        .db()?;
+    rows.collect::<Result<Vec<_>, _>>().db()
 }
 
 fn expected_columns(table_name: &str, version: u8) -> Vec<Column> {
@@ -449,11 +459,13 @@ fn validate_foreign_key(
     conn: &Connection,
     physical_version: i64,
 ) -> Result<(), LocalFileCacheError> {
-    let mut statement = conn.prepare(
-        "SELECT id, seq, \"table\", \"from\", \"to\", on_update, on_delete, match
+    let mut statement = conn
+        .prepare(
+            "SELECT id, seq, \"table\", \"from\", \"to\", on_update, on_delete, match
          FROM pragma_foreign_key_list('payloads')
          ORDER BY id, seq",
-    )?;
+        )
+        .db()?;
     let rows = statement
         .query_map([], |row| {
             Ok((
@@ -466,8 +478,10 @@ fn validate_foreign_key(
                 row.get::<_, String>(6)?,
                 row.get::<_, String>(7)?,
             ))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
+        })
+        .db()?
+        .collect::<Result<Vec<_>, _>>()
+        .db()?;
     let expected = vec![(
         0,
         0,
@@ -555,11 +569,13 @@ fn validate_indexes(
         ));
     }
 
-    let payload_index_count: i64 = conn.query_row(
-        "SELECT count(*) FROM pragma_index_list('payloads', 'main')",
-        [],
-        |row| row.get(0),
-    )?;
+    let payload_index_count: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM pragma_index_list('payloads', 'main')",
+            [],
+            |row| row.get(0),
+        )
+        .db()?;
     if payload_index_count != 0 {
         return Err(unrecognized(physical_version, "unexpected payload index"));
     }
@@ -567,7 +583,9 @@ fn validate_indexes(
 }
 
 fn validate_sequence(conn: &Connection, physical_version: i64) -> Result<i64, LocalFileCacheError> {
-    let mut statement = conn.prepare("SELECT name, seq, typeof(seq) FROM sqlite_sequence")?;
+    let mut statement = conn
+        .prepare("SELECT name, seq, typeof(seq) FROM sqlite_sequence")
+        .db()?;
     let rows = statement
         .query_map([], |row| {
             Ok((
@@ -575,8 +593,10 @@ fn validate_sequence(conn: &Connection, physical_version: i64) -> Result<i64, Lo
                 row.get::<_, Value>(1)?,
                 row.get::<_, String>(2)?,
             ))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
+        })
+        .db()?
+        .collect::<Result<Vec<_>, _>>()
+        .db()?;
     if rows.len() > 1 || rows.iter().any(|(name, _, _)| name != "files") {
         return Err(unrecognized(
             physical_version,
@@ -584,11 +604,13 @@ fn validate_sequence(conn: &Connection, physical_version: i64) -> Result<i64, Lo
         ));
     }
 
-    let (live_count, max_positive): (i64, Option<i64>) = conn.query_row(
-        "SELECT count(*), max(CASE WHEN id > 0 THEN id END) FROM files",
-        [],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    )?;
+    let (live_count, max_positive): (i64, Option<i64>) = conn
+        .query_row(
+            "SELECT count(*), max(CASE WHEN id > 0 THEN id END) FROM files",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .db()?;
     match rows.as_slice() {
         [] if live_count == 0 => Ok(0),
         [(name, Value::Integer(sequence), kind)]
@@ -607,10 +629,11 @@ fn validate_foreign_key_integrity(
     conn: &Connection,
     physical_version: i64,
 ) -> Result<(), LocalFileCacheError> {
-    let violation_count: i64 =
-        conn.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |row| {
+    let violation_count: i64 = conn
+        .query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |row| {
             row.get(0)
-        })?;
+        })
+        .db()?;
     if violation_count != 0 {
         return Err(unrecognized(physical_version, "foreign-key violation"));
     }

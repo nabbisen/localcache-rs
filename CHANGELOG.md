@@ -7,6 +7,27 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- **Breaking:** `LocalFileCacheError::Database` now wraps the opaque `DatabaseError`
+  (RFC 025 R7). `rusqlite::Error` is no longer part of the public API: not as the variant's
+  payload, and not through a `From<rusqlite::Error>` impl. `DatabaseError` prints the same
+  message as before, so `database error: …` text is unchanged, and its
+  `std::error::Error::source()` returns the underlying error. New:
+  `DatabaseError::sqlite_extended_code()` returns the SQLite extended result code when the
+  database reported one; the primary code is `code & 0xff`, so a busy database is
+  `error.sqlite_extended_code().map(|code| code & 0xff) == Some(5)`.
+  - **To migrate** a `match` on the old payload: replace
+    `LocalFileCacheError::Database(rusqlite::Error::SqliteFailure(code, _))` with
+    `LocalFileCacheError::Database(error)` and compare `error.sqlite_extended_code()`.
+    A `Database(_)` arm needs no change. A match on another `rusqlite::Error` variant (for
+    example `QueryReturnedNoRows`) has no counterpart; `sqlite_extended_code()` is `None` for
+    those, and the message is the only description.
+
+---
+
 ## [0.21.6] — 2026-10-29
 
 Release candidate `4129618`, accepted by the v0.21.6 release decision on 2026-10-29 with a **Go**

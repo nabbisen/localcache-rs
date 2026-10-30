@@ -8,7 +8,7 @@ use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use crate::cache::entry::EntryInfo;
 use crate::db::indexes::{self, QuotedIdentifier};
 use crate::detection::metadata::FileMetadata;
-use crate::error::LocalFileCacheError;
+use crate::error::{LocalFileCacheError, SqliteResultExt};
 
 mod candidates;
 #[cfg(test)]
@@ -82,11 +82,13 @@ pub(crate) fn find_file(
     namespace: &str,
     path: &str,
 ) -> Result<Option<FileRow>, LocalFileCacheError> {
-    let mut stmt = conn.prepare_cached(
-        "SELECT id, path, mtime, file_size, hash, updated_at, payload_version, last_accessed_at
+    let mut stmt = conn
+        .prepare_cached(
+            "SELECT id, path, mtime, file_size, hash, updated_at, payload_version, last_accessed_at
          FROM main.files
          WHERE namespace = ?1 AND path = ?2",
-    )?;
+        )
+        .db()?;
     let row = stmt
         .query_row(params![namespace, path], |r| {
             Ok(FileRow {
@@ -102,7 +104,8 @@ pub(crate) fn find_file(
                 last_accessed_at: r.get::<_, i64>(7)?,
             })
         })
-        .optional()?;
+        .optional()
+        .db()?;
     Ok(row)
 }
 
@@ -110,8 +113,9 @@ pub(crate) fn load_payload(
     conn: &Connection,
     file_id: i64,
 ) -> Result<Option<PayloadRow>, LocalFileCacheError> {
-    let mut stmt =
-        conn.prepare_cached("SELECT content, encoding FROM main.payloads WHERE file_id = ?1")?;
+    let mut stmt = conn
+        .prepare_cached("SELECT content, encoding FROM main.payloads WHERE file_id = ?1")
+        .db()?;
     let row = stmt
         .query_row(params![file_id], |r| {
             Ok(PayloadRow {
@@ -119,7 +123,8 @@ pub(crate) fn load_payload(
                 encoding: r.get(1)?,
             })
         })
-        .optional()?;
+        .optional()
+        .db()?;
     Ok(row)
 }
 
@@ -135,7 +140,8 @@ pub(crate) fn touch_last_accessed(
     conn.execute(
         "UPDATE files SET last_accessed_at = ?1 WHERE id = ?2",
         params![now, file_id],
-    )?;
+    )
+    .db()?;
     Ok(())
 }
 
@@ -181,13 +187,16 @@ pub(crate) fn upsert_in_tx(
             // time rather than resetting it (RFC 022 R6).
             0i64,
         ],
-    )?;
+    )
+    .db()?;
 
-    let file_id: i64 = tx.query_row(
-        "SELECT id FROM files WHERE namespace = ?1 AND path = ?2",
-        params![namespace, path],
-        |r| r.get(0),
-    )?;
+    let file_id: i64 = tx
+        .query_row(
+            "SELECT id FROM files WHERE namespace = ?1 AND path = ?2",
+            params![namespace, path],
+            |r| r.get(0),
+        )
+        .db()?;
 
     tx.execute(
         "INSERT INTO payloads (file_id, content, encoding)
@@ -196,7 +205,8 @@ pub(crate) fn upsert_in_tx(
              content  = excluded.content,
              encoding = excluded.encoding",
         params![file_id, payload_bytes, encoding],
-    )?;
+    )
+    .db()?;
 
     Ok(file_id)
 }
@@ -210,10 +220,12 @@ pub(crate) fn delete_by_path(
     namespace: &str,
     path: &str,
 ) -> Result<bool, LocalFileCacheError> {
-    let n = conn.execute(
-        "DELETE FROM files WHERE namespace = ?1 AND path = ?2",
-        params![namespace, path],
-    )?;
+    let n = conn
+        .execute(
+            "DELETE FROM files WHERE namespace = ?1 AND path = ?2",
+            params![namespace, path],
+        )
+        .db()?;
     Ok(n > 0)
 }
 
@@ -226,10 +238,12 @@ pub(crate) fn delete_paths_in_tx(
     namespace: &str,
     paths: &[String],
 ) -> Result<usize, LocalFileCacheError> {
-    let mut stmt = tx.prepare_cached("DELETE FROM files WHERE namespace = ?1 AND path = ?2")?;
+    let mut stmt = tx
+        .prepare_cached("DELETE FROM files WHERE namespace = ?1 AND path = ?2")
+        .db()?;
     let mut removed = 0usize;
     for path in paths {
-        removed += stmt.execute(params![namespace, path])?;
+        removed += stmt.execute(params![namespace, path]).db()?;
     }
     Ok(removed)
 }
@@ -242,9 +256,9 @@ pub(crate) fn delete_paths(
     namespace: &str,
     paths: &[String],
 ) -> Result<usize, LocalFileCacheError> {
-    let tx = conn.unchecked_transaction()?;
+    let tx = conn.unchecked_transaction().db()?;
     let removed = delete_paths_in_tx(&tx, namespace, paths)?;
-    tx.commit()?;
+    tx.commit().db()?;
     Ok(removed)
 }
 
@@ -253,10 +267,12 @@ pub(crate) fn delete_by_other_version(
     namespace: &str,
     current_version: u32,
 ) -> Result<usize, LocalFileCacheError> {
-    let n = conn.execute(
-        "DELETE FROM files WHERE namespace = ?1 AND payload_version != ?2",
-        params![namespace, current_version as i64],
-    )?;
+    let n = conn
+        .execute(
+            "DELETE FROM files WHERE namespace = ?1 AND payload_version != ?2",
+            params![namespace, current_version as i64],
+        )
+        .db()?;
     Ok(n)
 }
 
@@ -295,18 +311,21 @@ pub(crate) fn evict_lru(
 
     let fetch = n.saturating_add(protected.len());
     let candidates: Vec<(i64, String)> = {
-        let mut stmt = tx.prepare_cached(
-            "SELECT id, path FROM files
+        let mut stmt = tx
+            .prepare_cached(
+                "SELECT id, path FROM files
              WHERE namespace = ?1
              ORDER BY last_accessed_at ASC, updated_at ASC, id ASC
              LIMIT ?2",
-        )?;
+            )
+            .db()?;
         let rows: Result<Vec<_>, _> = stmt
             .query_map(params![namespace, fetch as i64], |r| {
                 Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
-            })?
+            })
+            .db()?
             .collect();
-        rows?
+        rows.db()?
     };
 
     let selected: Vec<(i64, String)> = candidates
@@ -319,7 +338,8 @@ pub(crate) fn evict_lru(
     for chunk in ids.chunks(ID_LIST_CHUNK) {
         let placeholders = vec!["?"; chunk.len()].join(",");
         let sql = format!("DELETE FROM files WHERE id IN ({placeholders})");
-        tx.execute(&sql, rusqlite::params_from_iter(chunk.iter()))?;
+        tx.execute(&sql, rusqlite::params_from_iter(chunk.iter()))
+            .db()?;
     }
 
     Ok(selected
@@ -342,16 +362,19 @@ pub(crate) fn paths_page_in_namespace(
     after: &str,
     limit: usize,
 ) -> Result<Vec<String>, LocalFileCacheError> {
-    let mut stmt = conn.prepare_cached(
-        "SELECT path FROM files
+    let mut stmt = conn
+        .prepare_cached(
+            "SELECT path FROM files
          WHERE namespace = ?1 AND path > ?2
          ORDER BY path
          LIMIT ?3",
-    )?;
+        )
+        .db()?;
     let paths: Result<Vec<String>, _> = stmt
-        .query_map(params![namespace, after, limit as i64], |r| r.get(0))?
+        .query_map(params![namespace, after, limit as i64], |r| r.get(0))
+        .db()?
         .collect();
-    Ok(paths?)
+    paths.db()
 }
 
 /// RFC 020: same page shape as [`paths_page_in_namespace`], carrying
@@ -362,29 +385,34 @@ pub(crate) fn path_rows_page_in_namespace(
     after: &str,
     limit: usize,
 ) -> Result<Vec<(String, i64)>, LocalFileCacheError> {
-    let mut stmt = conn.prepare_cached(
-        "SELECT path, updated_at FROM files
+    let mut stmt = conn
+        .prepare_cached(
+            "SELECT path, updated_at FROM files
          WHERE namespace = ?1 AND path > ?2
          ORDER BY path
          LIMIT ?3",
-    )?;
+        )
+        .db()?;
     let rows: Result<Vec<_>, _> = stmt
         .query_map(params![namespace, after, limit as i64], |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
-        })?
+        })
+        .db()?
         .collect();
-    Ok(rows?)
+    rows.db()
 }
 
 pub(crate) fn count_in_namespace(
     conn: &Connection,
     namespace: &str,
 ) -> Result<usize, LocalFileCacheError> {
-    let n: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM files WHERE namespace = ?1",
-        params![namespace],
-        |r| r.get(0),
-    )?;
+    let n: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM files WHERE namespace = ?1",
+            params![namespace],
+            |r| r.get(0),
+        )
+        .db()?;
     Ok(n as usize)
 }
 
@@ -392,19 +420,22 @@ pub(crate) fn count_by_version(
     conn: &Connection,
     namespace: &str,
 ) -> Result<Vec<(u32, usize)>, LocalFileCacheError> {
-    let mut stmt = conn.prepare_cached(
-        "SELECT payload_version, COUNT(*)
+    let mut stmt = conn
+        .prepare_cached(
+            "SELECT payload_version, COUNT(*)
          FROM files
          WHERE namespace = ?1
          GROUP BY payload_version
          ORDER BY payload_version ASC",
-    )?;
+        )
+        .db()?;
     let rows: Result<Vec<_>, _> = stmt
         .query_map(params![namespace], |r| {
             Ok((r.get::<_, i64>(0)? as u32, r.get::<_, i64>(1)? as usize))
-        })?
+        })
+        .db()?
         .collect();
-    Ok(rows?)
+    rows.db()
 }
 
 /// Return lightweight metadata for all entries in `namespace`, joined with
@@ -413,15 +444,17 @@ pub(crate) fn list_entries(
     conn: &Connection,
     namespace: &str,
 ) -> Result<Vec<EntryInfo>, LocalFileCacheError> {
-    let mut stmt = conn.prepare_cached(
-        "SELECT f.path, f.mtime, f.file_size, f.hash,
+    let mut stmt = conn
+        .prepare_cached(
+            "SELECT f.path, f.mtime, f.file_size, f.hash,
                 f.updated_at, f.payload_version, f.last_accessed_at,
                 p.encoding
          FROM files f
          JOIN payloads p ON p.file_id = f.id
          WHERE f.namespace = ?1
          ORDER BY f.updated_at DESC",
-    )?;
+        )
+        .db()?;
     let rows: Result<Vec<EntryInfo>, _> = stmt
         .query_map(params![namespace], |r| {
             Ok(EntryInfo {
@@ -436,9 +469,10 @@ pub(crate) fn list_entries(
                 last_accessed_at: r.get::<_, i64>(6)?,
                 encoding: r.get(7)?,
             })
-        })?
+        })
+        .db()?
         .collect();
-    Ok(rows?)
+    rows.db()
 }
 
 // ---------------------------------------------------------------------------
@@ -468,24 +502,26 @@ pub(crate) fn aggregate_stats(
     conn: &Connection,
     namespace: &str,
 ) -> Result<RawStats, LocalFileCacheError> {
-    let row = conn.query_row(
-        "SELECT COUNT(*),
+    let row = conn
+        .query_row(
+            "SELECT COUNT(*),
                 COALESCE(SUM(LENGTH(p.content)), 0),
                 MIN(f.updated_at),
                 MAX(f.updated_at)
          FROM files f
          JOIN payloads p ON p.file_id = f.id
          WHERE f.namespace = ?1",
-        params![namespace],
-        |r| {
-            Ok(RawStats {
-                total_entries: r.get::<_, i64>(0)? as usize,
-                total_payload_bytes: r.get::<_, i64>(1)? as u64,
-                oldest_updated_at: r.get::<_, Option<i64>>(2)?,
-                newest_updated_at: r.get::<_, Option<i64>>(3)?,
-            })
-        },
-    )?;
+            params![namespace],
+            |r| {
+                Ok(RawStats {
+                    total_entries: r.get::<_, i64>(0)? as usize,
+                    total_payload_bytes: r.get::<_, i64>(1)? as u64,
+                    oldest_updated_at: r.get::<_, Option<i64>>(2)?,
+                    newest_updated_at: r.get::<_, Option<i64>>(3)?,
+                })
+            },
+        )
+        .db()?;
     Ok(row)
 }
 
@@ -493,20 +529,23 @@ pub(crate) fn encoding_breakdown(
     conn: &Connection,
     namespace: &str,
 ) -> Result<Vec<(String, usize)>, LocalFileCacheError> {
-    let mut stmt = conn.prepare_cached(
-        "SELECT p.encoding, COUNT(*)
+    let mut stmt = conn
+        .prepare_cached(
+            "SELECT p.encoding, COUNT(*)
          FROM files f
          JOIN payloads p ON p.file_id = f.id
          WHERE f.namespace = ?1
          GROUP BY p.encoding
          ORDER BY p.encoding ASC",
-    )?;
+        )
+        .db()?;
     let rows: Result<Vec<_>, _> = stmt
         .query_map(params![namespace], |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as usize))
-        })?
+        })
+        .db()?
         .collect();
-    Ok(rows?)
+    rows.db()
 }
 
 // ---------------------------------------------------------------------------
@@ -528,13 +567,15 @@ pub(crate) fn load_encrypted_payloads(
     conn: &Connection,
     namespace: &str,
 ) -> Result<Vec<EncryptedPayloadRow>, LocalFileCacheError> {
-    let mut stmt = conn.prepare_cached(
-        "SELECT p.file_id, p.content, p.encoding
+    let mut stmt = conn
+        .prepare_cached(
+            "SELECT p.file_id, p.content, p.encoding
          FROM payloads p
          JOIN files f ON f.id = p.file_id
          WHERE f.namespace = ?1
            AND p.encoding LIKE '%-aes256gcm'",
-    )?;
+        )
+        .db()?;
     let rows: Result<Vec<_>, _> = stmt
         .query_map(params![namespace], |r| {
             Ok(EncryptedPayloadRow {
@@ -542,9 +583,10 @@ pub(crate) fn load_encrypted_payloads(
                 content: r.get(1)?,
                 encoding: r.get(2)?,
             })
-        })?
+        })
+        .db()?
         .collect();
-    Ok(rows?)
+    rows.db()
 }
 
 /// Update a payload row with new content (used by key rotation).
@@ -557,7 +599,8 @@ pub(crate) fn update_payload_content(
     tx.execute(
         "UPDATE payloads SET content = ?1 WHERE file_id = ?2",
         params![new_content, file_id],
-    )?;
+    )
+    .db()?;
     Ok(())
 }
 
@@ -583,15 +626,17 @@ pub(crate) fn load_all_full(
     conn: &Connection,
     namespace: &str,
 ) -> Result<Vec<FullRow>, LocalFileCacheError> {
-    let mut stmt = conn.prepare_cached(
-        "SELECT f.path, p.content, p.encoding,
+    let mut stmt = conn
+        .prepare_cached(
+            "SELECT f.path, p.content, p.encoding,
                 f.mtime, f.file_size, f.hash,
                 f.payload_version, f.updated_at, f.last_accessed_at
          FROM files f
          JOIN payloads p ON p.file_id = f.id
          WHERE f.namespace = ?1
          ORDER BY f.updated_at DESC",
-    )?;
+        )
+        .db()?;
     let rows: Result<Vec<_>, _> = stmt
         .query_map(params![namespace], |r| {
             Ok(FullRow {
@@ -605,9 +650,10 @@ pub(crate) fn load_all_full(
                 updated_at: r.get(7)?,
                 last_accessed_at: r.get(8)?,
             })
-        })?
+        })
+        .db()?
         .collect();
-    Ok(rows?)
+    rows.db()
 }
 
 /// Import a batch of rows into `namespace` inside a single transaction.
@@ -621,7 +667,7 @@ pub(crate) fn import_rows(
     if rows.is_empty() {
         return Ok(0);
     }
-    let tx = conn.unchecked_transaction()?;
+    let tx = conn.unchecked_transaction().db()?;
     for row in rows {
         tx.execute(
             "INSERT INTO files
@@ -645,13 +691,16 @@ pub(crate) fn import_rows(
                 row.payload_version as i64,
                 row.last_accessed_at,
             ],
-        )?;
+        )
+        .db()?;
 
-        let file_id: i64 = tx.query_row(
-            "SELECT id FROM files WHERE namespace = ?1 AND path = ?2",
-            params![namespace, row.path],
-            |r| r.get(0),
-        )?;
+        let file_id: i64 = tx
+            .query_row(
+                "SELECT id FROM files WHERE namespace = ?1 AND path = ?2",
+                params![namespace, row.path],
+                |r| r.get(0),
+            )
+            .db()?;
 
         tx.execute(
             "INSERT INTO payloads (file_id, content, encoding)
@@ -660,10 +709,11 @@ pub(crate) fn import_rows(
                  content  = excluded.content,
                  encoding = excluded.encoding",
             params![file_id, row.content, row.encoding],
-        )?;
+        )
+        .db()?;
     }
     let n = rows.len();
-    tx.commit()?;
+    tx.commit().db()?;
     Ok(n)
 }
 
@@ -677,11 +727,13 @@ pub(crate) fn exists(
     namespace: &str,
     path: &str,
 ) -> Result<bool, LocalFileCacheError> {
-    let n: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM files WHERE namespace = ?1 AND path = ?2",
-        params![namespace, path],
-        |r| r.get(0),
-    )?;
+    let n: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM files WHERE namespace = ?1 AND path = ?2",
+            params![namespace, path],
+            |r| r.get(0),
+        )
+        .db()?;
     Ok(n > 0)
 }
 
@@ -699,7 +751,7 @@ pub(crate) fn keys(
     path_glob: Option<&[String]>,
 ) -> Result<Vec<std::path::PathBuf>, LocalFileCacheError> {
     let transaction =
-        rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Deferred)?;
+        rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Deferred).db()?;
     let authorized = indexes::authorize_query_index_in_snapshot(&transaction, index_hint)?;
     let (sql, params_vec) = build_path_sql(
         namespace,
@@ -708,16 +760,17 @@ pub(crate) fn keys(
         path_in_dir,
         path_glob,
     );
-    let mut stmt = transaction.prepare(&sql)?;
+    let mut stmt = transaction.prepare(&sql).db()?;
     let paths: Result<Vec<_>, _> = stmt
         .query_map(
             rusqlite::params_from_iter(params_vec.iter().map(String::as_str)),
             |r| Ok(std::path::PathBuf::from(r.get::<_, String>(0)?)),
-        )?
+        )
+        .db()?
         .collect();
-    let paths = paths?;
+    let paths = paths.db()?;
     drop(stmt);
-    transaction.commit()?;
+    transaction.commit().db()?;
     Ok(paths)
 }
 
@@ -732,7 +785,7 @@ pub(crate) fn explain_query(
     path_glob: Option<&[String]>,
 ) -> Result<String, LocalFileCacheError> {
     let transaction =
-        rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Deferred)?;
+        rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Deferred).db()?;
     let authorized = indexes::authorize_query_index_in_snapshot(&transaction, index_hint)?;
     let (sql, params_vec) = build_path_sql(
         namespace,
@@ -742,16 +795,17 @@ pub(crate) fn explain_query(
         path_glob,
     );
     let explain_sql = format!("EXPLAIN QUERY PLAN {sql}");
-    let mut stmt = transaction.prepare(&explain_sql)?;
+    let mut stmt = transaction.prepare(&explain_sql).db()?;
     let rows: Result<Vec<String>, _> = stmt
         .query_map(
             rusqlite::params_from_iter(params_vec.iter().map(String::as_str)),
             |row| row.get::<_, String>(3),
-        )?
+        )
+        .db()?
         .collect();
-    let plan = rows?.join("\n");
+    let plan = rows.db()?.join("\n");
     drop(stmt);
-    transaction.commit()?;
+    transaction.commit().db()?;
     Ok(plan)
 }
 
@@ -867,8 +921,9 @@ fn range_upper_bound(prefix: &str) -> String {
 
 /// Return all distinct namespace names in the database, sorted.
 pub(crate) fn list_namespaces(conn: &Connection) -> Result<Vec<String>, LocalFileCacheError> {
-    let mut stmt =
-        conn.prepare_cached("SELECT DISTINCT namespace FROM files ORDER BY namespace")?;
-    let ns: Result<Vec<String>, _> = stmt.query_map([], |r| r.get(0))?.collect();
-    Ok(ns?)
+    let mut stmt = conn
+        .prepare_cached("SELECT DISTINCT namespace FROM files ORDER BY namespace")
+        .db()?;
+    let ns: Result<Vec<String>, _> = stmt.query_map([], |r| r.get(0)).db()?.collect();
+    ns.db()
 }
