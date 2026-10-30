@@ -1,8 +1,8 @@
 # Q10 Handoff — Bounded Payload Decoding (RFC 025 Amendment 2)
 
-RFC: `rfcs/accepted/025-error-taxonomy-and-input-validation.md`, **Amendment 2**. **Start only when the architect's
-reply says the owner has accepted Amendment 2**; until then this file is a draft and the amendment is not in
-force. If the owner changes the default or the name, the architect edits this file first.
+RFC: `rfcs/accepted/025-error-taxonomy-and-input-validation.md`, **Amendment 2**. **Accepted by the owner on 2026-10-31
+as written (the 64 MiB default and the name `PayloadTooLarge` included); this file is in force.** Start when Q3e
+is committed locally.
 Order: … Q3e → **Q10** → release preparation. **Local commit; do not push.**
 Format of the review request: `rfcs/handoffs/025-error-taxonomy-and-input-validation/implementation-handoff.md` § 6.
 Authorship: high-capability model. Authorized: the owner (after acceptance).

@@ -437,7 +437,7 @@ the database exactly as it found them.
 
 ## Amendment 2 (architect, 2026-10-31) — Bounded payload decoding; an eighth variant
 
-**Status: proposed to the owner; not in force until accepted.** It adds one variant, so R3's rule
+**Status: Accepted by the owner, 2026-10-31, as written (D1 to D7, the 64 MiB default and the name `PayloadTooLarge`).** It adds one variant, so R3's rule
 ("a new variant needs a review") applies; this amendment is that review.
 
 ### The defect (reproduced; announced as a Known issue in v0.21.6)
@@ -527,7 +527,7 @@ forged small declared size is refused after the streaming bound; a payload exact
 one byte over is refused on both `set` and `get`; the limit option is honoured per engine, rejected at 0; the
 compat fixtures decode unmodified under `default-features = false`; the bincode probe (D7).
 
-### Decision requested of the owner
+### Decision
 
-Accept D1 to D7 as written, including the **default of 64 MiB** and the variant name `PayloadTooLarge`.
-Recommended: accept. If you prefer a different default, name it; nothing else changes.
+The owner accepted D1 to D7 as written, including the **default of 64 MiB** and the variant name `PayloadTooLarge`
+(2026-10-31). Handoff: `../handoffs/025-error-taxonomy-and-input-validation/q10-bounded-payload-decoding.md`.
