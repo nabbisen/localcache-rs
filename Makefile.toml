@@ -267,3 +267,42 @@ script = [
     cargo package --workspace --locked
     '''
 ]
+
+[tasks.gate-archive]
+description = "Build the source archive from HEAD, check it is complete, and build from the extracted copy (RFC 009 R2, R6; RFC 027 R3)"
+# `localcache-v<version>.tar.gz` is `git archive` of HEAD with the files at the
+# archive root (RFC 009 R4; the "v" is in the file name only). Nothing untrusted
+# produces this file, so there is no tar parser and no determinism check.
+# Everything is built outside the repository and removed afterwards. Needs a
+# committed tree: the archive is of HEAD.
+script = [
+    '''
+    set -eu
+    VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
+    NAME="localcache-v${VERSION}.tar.gz"
+    OUT=$(mktemp -d)
+    trap 'rm -rf "$OUT"' EXIT
+
+    git archive --format=tar.gz -o "$OUT/$NAME" HEAD
+
+    # Complete: the members are exactly the tracked files, and nothing that is
+    # build output or repository metadata.
+    tar tzf "$OUT/$NAME" | grep -v '/$' | LC_ALL=C sort > "$OUT/members.txt"
+    git -c core.quotepath=off ls-files | LC_ALL=C sort > "$OUT/tracked.txt"
+    diff "$OUT/tracked.txt" "$OUT/members.txt"
+    if grep -E '(^|/)(\.git|\.git-exclude|target)(/|$)|^docs/book(/|$)' "$OUT/members.txt"; then
+        echo "ERROR: the archive contains build output or repository metadata" >&2
+        exit 1
+    fi
+
+    # Builds: from a new empty directory, with build output outside the source.
+    mkdir "$OUT/src"
+    tar xzf "$OUT/$NAME" -C "$OUT/src"
+    export CARGO_TARGET_DIR="$OUT/target"
+    cargo metadata --locked --format-version 1 --manifest-path "$OUT/src/Cargo.toml" > /dev/null
+    cargo check --workspace --all-targets --locked --manifest-path "$OUT/src/Cargo.toml"
+    mdbook build "$OUT/src/docs" --dest-dir "$OUT/book"
+
+    echo "$(sha256sum < "$OUT/$NAME" | cut -d' ' -f1)  $NAME ($(wc -c < "$OUT/$NAME") bytes)"
+    '''
+]
