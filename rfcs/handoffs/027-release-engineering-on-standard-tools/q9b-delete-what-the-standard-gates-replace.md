@@ -180,6 +180,9 @@ unchanged and report which case and why. Do not shrink it.
   `advisory-policy`, `aggregate-ci`, `rc_eligible`) and fix every hit outside `CHANGELOG.md` and `ROADMAP.md`
   (history) and `rfcs/` (the RFCs are records; leave them). Paste the final grep.
 - `CHANGELOG.md`: nothing user-visible, so no entry. If you think otherwise, say why.
+- `Makefile.toml` header (review 042, ruling 3): with the repository's `check` and `test` tasks gone, `cargo make
+  check` and `cargo make test` fall through to cargo-make's built-in tasks. Add one line saying that tasks not
+  listed in the header are cargo-make built-ins and that the supported commands are the `gate-*` tasks.
 
 ### 2.7 Part 2 gates
 
