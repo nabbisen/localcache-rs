@@ -1,10 +1,8 @@
 # Q10 Handoff — Bounded Decompression (RFC 025 Amendment 2, revised)
 
 RFC: `rfcs/accepted/025-error-taxonomy-and-input-validation.md`, **Amendment 2 (revised 2026-10-31)**.
-**HELD: do not start.** The architect found flaws in the first text while re-reviewing it against the owner's
-philosophy and rewrote it; the revision awaits the owner's acceptance. This file is the revised specification.
-It becomes in force when the architect's reply says the owner accepted the revision. Until then the dev team
-continues with Q3e's commit and the `preload` measurement.
+**Revision accepted by the owner on 2026-10-31; this file is in force.** (The first text was superseded the same
+day after the architect's second review.) Start when Q3e is committed locally.
 Order: … Q3e → **Q10** → release preparation. **Local commit; do not push.**
 Format of the review request: `rfcs/handoffs/025-error-taxonomy-and-input-validation/implementation-handoff.md` § 6.
 Authorship: high-capability model. Authorized: the owner (after acceptance).

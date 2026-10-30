@@ -439,7 +439,7 @@ the database exactly as it found them.
 
 **Status: revised by the architect after the owner asked for a second review against the project's philosophy
 ("finally clean, safe and secure, robust and sophisticated"; less is more; no API that confuses). The first
-text, accepted earlier on 2026-10-31, is superseded by this one; the revision awaits the owner's acceptance.**
+text, accepted earlier on 2026-10-31, is superseded by this one; the revision was accepted by the owner on 2026-10-31.**
 It adds one variant, so R3's rule ("a new variant needs a review") applies; this amendment is that review.
 
 ### What the second review found wrong in the first text
@@ -555,9 +555,9 @@ limit still reads and writes; the option is honoured per engine, rejected at 0; 
 unmodified under `default-features = false`; the build without `compression` has neither the option nor the
 variant; the bincode probe (D7).
 
-### Decision requested of the owner
+### Decision
 
-Accept this revision (D1 to D7) in place of the first text. The substantive changes: the limit applies to
+The owner accepted this revision (D1 to D7) on 2026-10-31, in place of the first text: the limit applies to
 decompressed size only; the variant and the option exist only with `compression`; the option is named
-`max_decompressed_bytes`; the default stays 64 MiB; the variant keeps the name `PayloadTooLarge`. Recommended:
-accept. Q10 starts when you do (it is held, not cancelled; the other slices do not depend on it).
+`max_decompressed_bytes`; the default is 64 MiB; the variant is `PayloadTooLarge`. Handoff:
+`../handoffs/025-error-taxonomy-and-input-validation/q10-bounded-payload-decoding.md`.
