@@ -1,20 +1,25 @@
 name: Release
 
-# RFC 027 R5: publishing both crates through crates.io Trusted Publishing, after
-# an explicit, recorded approval by the project owner in the `release`
-# Environment. No long-lived registry token is used here.
+# RFC 027 R5: publishing both crates through crates.io Trusted Publishing. No
+# long-lived registry token is used here.
 #
-# Run it by hand (`workflow_dispatch`) on a tag the owner has pushed: signed,
-# annotated, no `v` prefix (`0.22.0`). The tag is the version. `dry_run` is true
-# unless the owner switches it off; a dry run may also run from `main`, which is
-# how the trust chain is rehearsed before a release (docs/src/source_archives.md).
+# A real run starts only when the project owner starts it by hand
+# (`workflow_dispatch`) with `dry_run` switched off, on a tag the owner has
+# pushed: annotated (signed on the owner's machine), no `v` prefix, and equal to
+# the workspace version, which is a SemVer version, pre-releases included
+# (`0.22.0`, `1.1.1-rc.1`). There is no approval pause: the `release` Environment
+# has deployment rules (branch `main`, version tags) and no required reviewer.
+# `dry_run` is true unless the owner switches it off; a dry run may also run from
+# `main`, which is how the trust chain is rehearsed before a release
+# (docs/src/source_archives.md).
 #
 # Jobs: `gate` checks the tag and the commit; `advisories` and `msrv-fresh` are
 # the two scheduled checks, run again at the moment of release; `archive` builds
-# and attests the source archive; `publish` is the only job in the `release`
-# Environment, so the only job that can obtain a registry token (the crates.io
-# trusted-publisher records name that Environment); `github-release` creates the
-# hosted release and runs only when `dry_run` is false.
+# and attests the source archive; `publish` is the only job that asks crates.io
+# for a token, and it runs in the `release` Environment (the crates.io
+# trusted-publisher records name this repository and this workflow, not an
+# environment); `github-release` creates the hosted release, as a pre-release
+# when the version has a pre-release part, and runs only when `dry_run` is false.
 #
 # Same posture as ci.yaml (RFC 009 R16): read-only by default, every action
 # pinned to a full commit SHA with its version, no secrets, and nothing external
@@ -74,10 +79,12 @@ jobs:
         run: |
           WORKSPACE=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
           if [ "$REF_TYPE" = "tag" ]; then
-              if ! printf '%s\n' "$REF_NAME" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-                  echo "Tag '$REF_NAME' is not X.Y.Z. Tags carry no v prefix." >&2
-                  exit 1
-              fi
+              case "$REF_NAME" in
+                  v*)
+                      echo "Tag '$REF_NAME' starts with v. Tags carry no v prefix." >&2
+                      exit 1
+                      ;;
+              esac
               if [ "$(git cat-file -t "refs/tags/$REF_NAME")" != "tag" ]; then
                   echo "Tag '$REF_NAME' is lightweight. Create an annotated, signed tag: git tag -s $REF_NAME" >&2
                   exit 1
@@ -222,6 +229,11 @@ jobs:
           VERSION: ${{ needs.gate.outputs.version }}
         run: |
           DIR="$RUNNER_TEMP/release"
+          # A pre-release has a "-" before any build metadata ("+...", which may
+          # itself contain "-").
+          flags=()
+          core="${VERSION%%+*}"
+          case "$core" in *-*) flags+=(--prerelease) ;; esac
           {
               # The CHANGELOG section of this version, then the digests.
               awk -v v="$VERSION" '
@@ -236,5 +248,5 @@ jobs:
               cat "$DIR/crate-digests.txt"
               echo '```'
           } > "$RUNNER_TEMP/notes.md"
-          gh release create "$TAG" --verify-tag --title "$TAG" \
+          gh release create "$TAG" --verify-tag --title "$TAG" "${flags[@]}" \
               --notes-file "$RUNNER_TEMP/notes.md" "$DIR/localcache-v${VERSION}.tar.gz"
