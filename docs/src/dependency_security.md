@@ -131,6 +131,13 @@ the floor moved **within a patch series**, up (`rusqlite 0.40.0`/`0.40.1` and
 build could break, or be repaired, with no change to anything they declared. That is why RFC 023 adds a check of a
 *fresh* resolution, rather than trusting the locked graph alone.
 
+That check, and the guarantee that `rust-version = "1.85"` builds, assume **MSRV-aware resolution** on the consumer's side.
+Cargo does it by default for edition 2024 (resolver 3). On edition 2021 it must be requested, with
+`CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback` or `resolver.incompatible-rust-versions = "fallback"` in
+`.cargo/config.toml`; otherwise a fresh resolution takes the newest versions whatever they declare. For example, at
+the v0.22.0 release, with the `watching` feature on Rust 1.85, resolver 2 chooses `notify-types 2.2.0` (needs Rust 1.88)
+and the build fails, while MSRV-aware resolution chooses `2.1.0` and the build passes (checked with `localcache 0.22.0`).
+
 It is still so for `rusqlite 0.40.2`. Its release notes say "Lower MSRV to
 1.88.0", but its manifest declares no `rust-version`, and the declared-MSRV rows
 (`cargo make gate-msrv`) and the fresh-resolution check both pass on Rust 1.85.0

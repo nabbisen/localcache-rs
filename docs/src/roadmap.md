@@ -54,10 +54,15 @@ throughout this book for what each fix actually changes.
 removals), two TTL correctness fixes, and a dependency security refresh (`zstd` 0.14, `tokio` 1.53.3).
 **v0.21.6 was released the same day**, as a patch: `path_in_dir` matches case-sensitively and uses
 the path index, a rejected configuration leaves nothing behind, and documentation corrections.
-It is the last 0.21 release. Two further releases are planned: v0.22.0 (the first breaking release since
-v0.21.0: completing the error taxonomy, validating configuration that is silently accepted today,
-removing what v0.21.5 deprecates, and bounding the decompression of stored payloads), and v0.23.0
-(a true least-recently-used eviction policy on a schema change). See the live
+It is the last 0.21 release.
+
+**v0.22.0 was released on 2026-10-31**, the first breaking release since v0.21.0: the error taxonomy
+completed (seven purpose-named variants, an opaque `DatabaseError`), configuration that was silently
+accepted now rejected before anything is written, the APIs v0.21.5 deprecated removed, and the
+decompression of stored payloads bounded. See the migration notes in [Error Handling](./errors.md) and the
+[CHANGELOG](https://github.com/nabbisen/localcache-rs/blob/main/CHANGELOG.md) for what changes for you.
+Planned next: v0.22.1, a fix release for the one known issue of v0.22.0, and v0.23.0 (a true
+least-recently-used eviction policy on a schema change). See the live
 [ROADMAP.md](https://github.com/nabbisen/localcache-rs/blob/main/ROADMAP.md) for the milestone
 table and RFC mapping.
 
