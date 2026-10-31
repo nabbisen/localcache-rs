@@ -121,7 +121,7 @@ What it does **not** do:
 - **Releases** are published by one GitHub Actions workflow, not from a workstation, through
   crates.io Trusted Publishing: the workflow exchanges a short-lived GitHub identity for a
   registry token that lasts 30 minutes, and only after the project owner approves the run in
-  a protected environment. No long-lived registry token is stored in the repository or in CI.
+  a protected environment (the approval is enforced by GitHub for that job; crates.io is configured to trust the repository's `release.yaml` workflow without naming the environment, a deliberate choice for a single-maintainer project). No long-lived registry token is stored in the repository or in CI.
   The source archive of each release is built from the signed tag and carries a GitHub build
   attestation (`gh attestation verify`). The tag's signature is made on the owner's machine and
   is not verified by CI (see [Project Source Archives](./source_archives.md)).

@@ -21,7 +21,11 @@ on `main` to be dispatched). It is the only thing that may be pushed before v0.2
    `gh release create`. Nothing else about the step changes.
 3. **Comments and the file header:** wherever `release.yaml` says the tag is `X.Y.Z`, say "a SemVer version
    (pre-releases included)".
-4. Nothing else. The Environment's tag rule is `*.*.*` (the owner's setup); `check_versions.py` already accepts any
+4. **A comment that is no longer true.** The file header says `publish` is "the only job that can obtain a registry
+   token (the crates.io trusted-publisher records name that Environment)". The owner decided the records do not name the
+   environment (RFC 027 Amendment 1). Reword: `publish` is the only job that **requests** a registry token and the only
+   one that runs in the `release` Environment, where the owner approves. No other comment says otherwise (`grep`).
+5. Nothing else. The Environment's tag rule is `*.*.*` (the owner's setup); `check_versions.py` already accepts any
    version string; do not touch other workflows or scripts.
 
 ## 2. Demonstrations (the real step bodies, in scratch clones, as in the Q9c request)

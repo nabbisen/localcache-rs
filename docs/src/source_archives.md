@@ -70,7 +70,7 @@ for a crates.io token (Trusted Publishing).
 | `Gate` | Fails unless: the run is from a tag (a branch is accepted only for a dry run from `main`); the tag is annotated and equals the workspace version exactly (any SemVer version, pre-releases such as `1.1.1-rc.1` included; a `v` prefix can never equal it); the commit is reachable from `main`; the newest `ci.yaml` run on the commit is `completed` with `success`; and `scripts/check_versions.py --expect <version>` passes |
 | `Advisories`, `MSRV fresh resolution` | The weekly checks, run again at the moment of release, because an advisory or a new upstream release appears without any push |
 | `Source archive` | `git archive` of the commit as `localcache-vX.Y.Z.tar.gz`, its SHA-256, and a build-provenance attestation |
-| `Publish` | The only job in the `release` Environment, so the only one that can obtain a registry token. It runs `cargo publish --workspace --locked` (with `--dry-run` for a dry run) and records the `.crate` digests |
+| `Publish` | The only job that asks crates.io for a registry token, and the only one in the `release` Environment, where the owner approves. It runs `cargo publish --workspace --locked` (with `--dry-run` for a dry run) and records the `.crate` digests |
 | `GitHub release` | Only when `dry_run` is off: a release named by the tag, with the version's `CHANGELOG.md` section, the archive, and the archive and `.crate` SHA-256 digests |
 
 The tag's signature is made on the owner's machine and is **not** verified by
@@ -104,9 +104,9 @@ version.
   tags matching `*.*.*`. GitHub's name patterns are plain wildcards (no character classes), so
   this is only a coarse filter (it also admits SemVer pre-releases such as `1.1.1-rc.1`); the `Gate` job requires the tag to equal the workspace version exactly, which a `v` prefix never does.
 - On crates.io, for each of `localcache` and `localcache-cli`, a trusted
-  publisher: repository `nabbisen/localcache-rs`, workflow `release.yaml`,
-  environment `release`. **Set the environment**, although crates.io marks it optional:
-  without it, any job of any run of `release.yaml` (including one from a branch someone
-  with write access pushed) that can request an identity token can obtain a registry
-  token with no approval. With it, only a job that GitHub has let into the protected
-  `release` environment can.
+  publisher: repository `nabbisen/localcache-rs` and workflow `release.yaml`. The records
+  do not name an environment (the owner's decision, 2026-10-31). The owner's approval is
+  therefore enforced by GitHub, in the `release` environment that the `Publish` job runs
+  in, and not by crates.io: crates.io trusts whichever job of `release.yaml` asks for a
+  token. In a repository with one maintainer that is a small difference; it would matter
+  if others gained write access, and naming the environment in both records closes it.

@@ -42,7 +42,7 @@ amended accordingly (architect).
      rehearsal in § 3 also add branch `main`; remove it afterwards.
    - No secrets, no variables.
 2. **crates.io, for each of `localcache` and `localcache-cli`, Settings → Trusted Publishing → Add (GitHub):**
-   repository owner `nabbisen`, repository `localcache-rs`, workflow `release.yaml`, environment `release`.
+   repository owner `nabbisen`, repository `localcache-rs`, workflow `release.yaml`. (The environment field is left empty: owner's decision, 2026-10-31; see RFC 027 Amendment 1.)
 3. **Keep the existing API token** in `~/.cargo/credentials.toml` until the first real workflow publish
    succeeds (v0.22.0). Then revoke it on crates.io (Account settings → API tokens) and delete it from the
    file. If crates.io offers a setting to refuse token-based publishing for a crate, enable it at that moment.

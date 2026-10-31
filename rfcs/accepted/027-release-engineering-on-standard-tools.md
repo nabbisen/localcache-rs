@@ -222,6 +222,13 @@ rule is `*.*.*`, a coarse filter. (2) R5 said the gate matches `X.Y.Z`; **SemVer
 `1.1.1-beta-1`, `1.1.1-rc.1`), which the project will use. The rule becomes: the tag is annotated and **equals the workspace
 version exactly**. Cargo already guarantees the workspace version is valid SemVer, and equality rejects a `v` prefix, so no
 separate pattern is needed. A pre-release is published to crates.io and the GitHub Release is marked a pre-release.
-(3) The crates.io trusted-publisher records **must name the environment `release`**, although crates.io marks the field
-optional: without it, any run of `release.yaml` (including one from a branch someone with write access pushed) can obtain a
-registry token with no approval.
+(3) **Decision of the owner, 2026-10-31: the crates.io trusted-publisher records name the repository and the workflow
+`release.yaml` only; they do not name an environment** (crates.io marks the field optional). The architect had designed R5
+so that the records require the `release` Environment, making crates.io itself refuse a token to any job outside it. Without
+it, crates.io trusts any job of any run of `release.yaml` that can request an identity token, including a run of a modified
+copy from a branch someone with write access pushed; the owner's approval is then enforced by GitHub's Environment on the
+`publish` job (by construction of the workflow), not by crates.io. The owner judges this to change the risk very little for
+a repository with one maintainer; the architect agrees it is small there, records it as a **deliberate narrowing of R5**, and
+notes the closure (naming the environment in both records) for the day anyone else has write access. R5's sentence "the
+control is that the crates.io records require the `release` Environment" no longer holds; the workflow's own structure (only
+`publish` requests a registry token, and runs in the Environment) is the control.
