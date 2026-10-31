@@ -1,5 +1,11 @@
 # Q9c Handoff — `release.yaml`: Owner-Approved Trusted Publishing (RFC 027 R5, R3, R4)
 
+> **Superseded where it differs (2026-10-31).** The workflow was built and its dry run passed. Where this handoff speaks of a required
+> reviewer, an approval pause, an approver prompt, or crates.io records that name the environment, the facts are in RFC 027's
+> "As built (Q9c)" and its 2026-10-31 revision: the `release` Environment has deployment rules and no required reviewer; the
+> records name the repository and `release.yaml` only; starting a run with `dry_run` off is the authorization.
+
+
 RFC: `rfcs/accepted/027-release-engineering-on-standard-tools.md` (accepted by the owner, 2026-10-29).
 Slice: Phase 24 **Q9c**, the last of three. Order: Q9a, Q9b, Q9b-3 (all done, CI green on `983c62d`) → **Q9c** → Q3d.
 Review-request format: `rfcs/handoffs/025-error-taxonomy-and-input-validation/implementation-handoff.md` § 6.

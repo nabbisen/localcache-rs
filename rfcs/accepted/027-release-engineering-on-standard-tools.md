@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted (owner, 2026-10-29), with both requested decisions as recommended: Trusted Publishing behind an owner-approved `release` Environment (R5); a per-release `localcache-vX.Y.Z.tar.gz` kept as a plain `git archive` (R3) |
+| Status | Accepted (owner, 2026-10-29), with both requested decisions as recommended: Trusted Publishing run only when the owner starts the release workflow (R5); a per-release `localcache-vX.Y.Z.tar.gz` kept as a plain `git archive` (R3) |
 | Feature | *(release engineering; no Cargo feature)* |
 | Touches | `scripts/`, `.github/workflows/`, `Makefile.toml`, `security/`, `deny.toml` (new), `docs/src/source_archives.md`, `docs/src/dependency_security.md`, `README.md` |
 | Amends | [RFC 009](../done/009-reproducible-source-archives-and-release-gates.md) (R3, R5, R6, R7, R12, R13, R14, R15: the mechanisms; their goals stand) and [RFC 017](../done/017-content-reproducible-archives-without-a-container-producer.md) |
@@ -16,7 +16,7 @@
 
 Keep RFC 009's goals and replace the machinery that serves them. A release gate should be a short list of
 standard tools run by CI, not a 4,000-line Python framework with 3,400 lines of tests. Publishing should
-use crates.io **Trusted Publishing** behind a GitHub Environment that the owner approves, instead of a
+use crates.io **Trusted Publishing**, run only when the owner starts the release workflow, instead of a
 long-lived token on a workstation.
 
 ## Motivation
@@ -117,37 +117,35 @@ archive. The release notes list the archive SHA-256 and the two `.crate` digests
 check it performs is not already covered by `cargo metadata --locked` failing on a missing target; the
 implementation shows which.
 
-### R5 — Publishing through Trusted Publishing, approved by the owner
+### R5 — Publishing through Trusted Publishing, started by the owner
 
 A new `.github/workflows/release.yaml`:
 
-- **Trigger:** `workflow_dispatch` with the version as input, run from a signed tag the owner has pushed.
+- **Trigger:** `workflow_dispatch` with one input, `dry_run` (default `true`), run from a signed tag the owner has pushed;
+  there is no version input: the tag is the version.
   **Tags carry no `v` prefix** (`0.22.0`, never `v0.22.0`), as `.git-exclude/rules/project-instructions-rust.md`
   requires. The gate job compares the tag with the workspace version for exact equality, so a `v`-prefixed tag
   fails before anything is built. The GitHub Release is named by the tag, also without `v`.
 - **Gate job:** read-only. It checks that the tag is on `main`, that the tag equals the workspace version,
   and that CI is green on that commit, then builds the archive and attests it.
-- **Publish job:** the only job with `id-token: write`. It runs in a GitHub **Environment** named
-  `release` whose **required reviewer is the owner**, so the owner's authorization is an explicit,
-  recorded approval (RFC 009 R15's intent). It exchanges the OIDC identity for a short-lived crates.io
-  token with the SHA-pinned `rust-lang/crates-io-auth-action`, then runs
-  `cargo publish --workspace --locked`.
-- **crates.io side:** a trusted-publisher record for each crate, `localcache` and `localcache-cli`, naming
-  this repository, the workflow file `release.yaml`, and the environment `release`. crates.io stores
-  exactly those fields.
+- **Publish job:** the only job that asks crates.io for a token. It runs in the GitHub Environment `release`,
+  exchanges the OIDC identity for a short-lived crates.io token with the SHA-pinned
+  `rust-lang/crates-io-auth-action`, then runs `cargo publish --workspace --locked`. Whether the Environment requires
+  a reviewer is a repository setting. As configured by the owner on 2026-10-31 it does not: the owner's act of starting
+  the run with `dry_run` off is the authorization, and GitHub records who started it and when.
+- **crates.io side:** a trusted-publisher record for each crate, `localcache` and `localcache-cli`, naming this
+  repository and the workflow file `release.yaml`. The optional environment field is not set.
 - **No long-lived publish token** remains in the repository, in CI, or (after the first success) on a
   workstation. The tag stays a local, GPG-signed action by the owner.
 
-**Q9c design (architect, 2026-10-30; handoff `../handoffs/027-release-engineering-on-standard-tools/q9c-release-workflow.md`).**
-Verified against the crates.io source: a token lives 30 minutes and covers every crate whose record matches the
-repository, workflow file and environment, so one exchange publishes both crates. The attestation job also needs
-`id-token: write`; the control is that the crates.io records require the `release` Environment, so only the job
-in that Environment can obtain a registry token. The workflow has no version input (the tag is the version) and
-a `dry_run` mode, default `true`, that exercises the OIDC exchange and `cargo publish --dry-run` without
-publishing. `advisories.yaml` and `msrv-fresh.yaml` are called as reusable workflows from `release.yaml`.
+**As built (Q9c).** A crates.io token lives 30 minutes and covers every crate whose record matches the repository and the
+workflow file, so one exchange publishes both crates. The `Release` workflow's jobs are `Gate`, `Advisories` and `MSRV fresh
+resolution` (the two scheduled workflows, reused), `Source archive` (built and attested), `Publish` and `GitHub release`
+(only when `dry_run` is off). A dry run, the default, exercises everything except the upload and the hosted release. The gate
+requires, for a real run, a signed annotated tag equal to the workspace version (a `v` prefix can never equal it), on a commit on `main` with green CI. A dry run may also start from `main`.
 
-RFC 009 R15 is amended from "CI never publishes" to "nothing publishes without an explicit, recorded
-owner approval, and no long-lived credential exists in CI".
+RFC 009 R15 is amended from "CI never publishes" to "nothing publishes unless the owner starts the release workflow with
+`dry_run` off, and no long-lived credential exists in CI".
 
 ### R6 — Migration
 
@@ -166,13 +164,13 @@ owner approval, and no long-lived credential exists in CI".
 - Parity: the new feature rows equal the old matrix rows (names and feature sets).
 - A deliberately failing row, a missing target, and a stale install example each fail the new CI.
 - `release.yaml`: a dispatch from a tag not on `main`, or with a mismatched version, fails before the
-  publish job. An unapproved Environment never reaches `id-token`.
+  publish job.
 - The workflow passes the RFC 009 R16 checks (read-only default, pinned SHAs, no `pull_request_target`).
 
 ## Security considerations
 
 Net effect: less code to audit; no long-lived registry token; publish authority limited to one workflow,
-one environment and one approver; CI trust boundary unchanged. Removed controls were reviewed one by one
+started only by the owner; CI trust boundary unchanged. Removed controls were reviewed one by one
 in the architect review: the tar validator and the script hash pins defended against actors the pipeline
 does not contain. `cargo deny` replaces fetching sparse-index records because Cargo verifies lockfile
 checksums when it downloads a crate. **Not preserved:** a condition-based follow-up as structured data
@@ -202,8 +200,8 @@ exists.
 
 ## Decisions requested of the owner
 
-1. **Adopt Trusted Publishing** with an owner-approved `release` Environment (R5), or keep local
-   publishing. **Decided 2026-10-29: adopt.**
+1. **Adopt Trusted Publishing** (R5), or keep local publishing. **Decided 2026-10-29: adopt.** The owner configured the
+   `release` Environment on 2026-10-31 with deployment rules and no required reviewer.
 2. **Is a per-release `localcache-vX.Y.Z.tar.gz` still a deliverable?** **Decided 2026-10-29: keep it**, as a
    plain `git archive` attached to a GitHub Release by `release.yaml`, with an attestation.
 
@@ -215,38 +213,9 @@ exists.
 2. The crates.io trusted-publisher setup page and the current form of the auth action are confirmed
    against the crates.io documentation before Q9c, not assumed.
 
-## Amendment 1 (architect, 2026-10-31) — tags are SemVer versions, pre-releases included
+## Revision (2026-10-31) — what replaced the draft's approval gate
 
-Found when the owner set up the `release` Environment. (1) GitHub's deployment tag patterns are plain wildcards; the
-rule is `*.*.*`, a coarse filter. (2) R5 said the gate matches `X.Y.Z`; **SemVer 2.0.0 also has pre-releases** (`1.1.1-pre`,
-`1.1.1-beta-1`, `1.1.1-rc.1`), which the project will use. The rule becomes: the tag is annotated and **equals the workspace
-version exactly**. Cargo already guarantees the workspace version is valid SemVer, and equality rejects a `v` prefix, so no
-separate pattern is needed. A pre-release is published to crates.io and the GitHub Release is marked a pre-release.
-(3) The crates.io trusted-publisher records name the repository and the workflow `release.yaml` only, not an environment
-(the owner's decision, 2026-10-31; see Amendment 2 for why this is correct and not a weakened control).
-
-## Amendment 2 (architect, 2026-10-31) — controls must match the real roles
-
-The owner's principle, stated when declining to name the environment in the crates.io records: if the strict rule is set,
-*who controls the roles around GitHub repository maintainers, workflow files and crates.io maintainers?* Strict local rules
-that presume a separation of privileges the project does not have do not add safety; they add confusion.
-
-The facts (checked 2026-10-31 through the GitHub and crates.io APIs): one person, `nabbisen`, is the only collaborator with
-admin and push on the repository, the sole owner of `localcache` and `localcache-cli` on crates.io, and the holder of the
-tag-signing key; there is no branch protection, no ruleset and no `CODEOWNERS`; default workflow permissions are read-only;
-no registry token is stored anywhere. Naming the environment in the records, a reviewer other than the dispatcher, and review
-rules on workflow files are all separation-of-duties controls. With one identity holding every role they separate nothing:
-whoever can edit the records can also edit the Environment's reviewers and the workflow.
-
-**Rule adopted.** R5's controls are classified in two:
-1. **Controls that hold with one maintainer** and remain mandatory: read-only default permissions, no long-lived registry
-   token, a 30-minute token, SHA-pinned actions, release only from the workflow, the gate's checks, a dry run first, and the
-   approval pause (which prevents a mistaken dispatch and leaves a record; it is described as that, never as a
-   separation of duties).
-2. **Controls that need a second person** are not set while the project has one maintainer: the environment in the
-   crates.io records, an approver other than the dispatcher, review rules on `.github/workflows/**` and tags.
-   **Trigger:** the first time a second person is granted write access, repository admin or crates.io ownership, these become
-   mandatory *before* the access is granted, and the book's "Roles and privileges" table (`docs/src/security.md`) is
-   updated in the same change. Granting that access is an owner decision; the architect's duty is to raise this trigger when
-   such a request appears.
-The phrase in R5 and in the Q9c design note that "the crates.io records require the `release` Environment" is superseded.
+Setting up the release showed three differences from the text above as first accepted, now corrected in place: the tag is
+the workspace version, whatever SemVer form it takes; the `release` Environment has deployment rules
+(branch `main` for dry runs, version tags) and no required reviewer; the crates.io records do not name an environment.
+Starting the workflow with `dry_run` off is the owner's authorization. Nothing else of R5 changed.

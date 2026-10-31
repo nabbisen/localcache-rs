@@ -48,29 +48,30 @@ working tree that has uncommitted or untracked files, so run it before pushing.
 ## Publishing
 
 A release is published by the `Release` workflow (`.github/workflows/release.yaml`),
-which the project owner starts by hand and approves. No registry token is stored
-in the repository or in CI: the workflow exchanges a short-lived GitHub identity
-for a crates.io token (Trusted Publishing).
+which the project owner starts by hand. No registry token is stored in the
+repository or in CI: the workflow exchanges a short-lived GitHub identity for a
+crates.io token (Trusted Publishing). GitHub records who started each run.
 
 ### Steps for the owner
 
-1. Push a signed, annotated tag named exactly like the version, without a `v`:
-   `git tag -s 0.22.0` and `git push origin 0.22.0`.
-2. In *Actions*, run **Release** from that tag, first with `dry_run` on (the
-   default), then with it off.
-3. Read the `Gate` and `Source archive` results, then approve the `release`
-   Environment. Check that the commit shown in the approval prompt is the one you
-   tagged: anyone who can push a tag of this form can start the workflow from it,
-   and your approval is the control. Nothing reaches crates.io before it.
+1. Push a signed, annotated tag named exactly like the version in `Cargo.toml`,
+   without a `v`: `git tag -s 0.22.0` and `git push origin 0.22.0`.
+2. In *Actions*, run **Release** from that tag with `dry_run` on (the default).
+   Read the `Gate` and `Source archive` results.
+3. Run **Release** again from the same tag with `dry_run` off. This publishes both
+   crates and creates the GitHub release. Nothing asks for confirmation after
+   this: starting the run with `dry_run` off is the authorization. (If a required
+   reviewer is added to the `release` Environment in the repository settings, the
+   run waits for that reviewer before the `Publish` job.)
 
 ### What each job does
 
 | Job | What it does |
 |---|---|
-| `Gate` | Fails unless: the run is from a tag (a branch is accepted only for a dry run from `main`); the tag is annotated and equals the workspace version exactly (any SemVer version, pre-releases such as `1.1.1-rc.1` included; a `v` prefix can never equal it); the commit is reachable from `main`; the newest `ci.yaml` run on the commit is `completed` with `success`; and `scripts/check_versions.py --expect <version>` passes |
+| `Gate` | Fails unless: the run is from a tag (a branch is accepted only for a dry run from `main`); the tag is annotated and equals the workspace version exactly (a `v` prefix can never equal it); the commit is reachable from `main`; the newest `ci.yaml` run on the commit is `completed` with `success`; and `scripts/check_versions.py --expect <version>` passes |
 | `Advisories`, `MSRV fresh resolution` | The weekly checks, run again at the moment of release, because an advisory or a new upstream release appears without any push |
 | `Source archive` | `git archive` of the commit as `localcache-vX.Y.Z.tar.gz`, its SHA-256, and a build-provenance attestation |
-| `Publish` | The only job that asks crates.io for a registry token, and the only one in the `release` Environment, where the owner approves. It runs `cargo publish --workspace --locked` (with `--dry-run` for a dry run) and records the `.crate` digests |
+| `Publish` | The only job that asks crates.io for a registry token; it runs in the `release` Environment. It runs `cargo publish --workspace --locked` (with `--dry-run` for a dry run) and records the `.crate` digests |
 | `GitHub release` | Only when `dry_run` is off: a release named by the tag, with the version's `CHANGELOG.md` section, the archive, and the archive and `.crate` SHA-256 digests |
 
 The tag's signature is made on the owner's machine and is **not** verified by
@@ -80,31 +81,26 @@ CI. To check an archive from a release:
 gh attestation verify localcache-vX.Y.Z.tar.gz --repo nabbisen/localcache-rs
 ```
 
-### Rehearsal
+### Dry run from `main`
 
 A dry run may also be started from `main`. It runs the whole chain (the gate on
 its branch path, both reusable workflows, the archive and its attestation, the
 identity exchange with crates.io for both crates, and `cargo publish --dry-run`)
-and publishes nothing, so a mistake in the trust setup shows up before a release.
-The rehearsal needs branch `main` to be allowed on the `release` Environment;
-remove it when the rehearsal is done, so that afterwards only tags can deploy.
+and publishes nothing, so a mistake in the setup shows up before a release.
 
 ### If a publish stops half way
 
 `cargo publish --workspace` uploads the crates in dependency order. If
 `localcache` was uploaded and `localcache-cli` failed, **do not run the workflow
 again**: the first crate's version already exists. Check crates.io, then publish
-the missing crate by hand with the owner's own token, or release a new patch
+the missing crate by hand with the owner's crates.io credentials, or release a new patch
 version.
 
 ### One-time setup (owner)
 
-- GitHub Environment `release`: the owner as required reviewer, with "prevent
-  self-review" off (the owner both starts and approves), deployments limited to
-  tags matching `*.*.*`. GitHub's name patterns are plain wildcards (no character classes), so
-  this is only a coarse filter (it also admits SemVer pre-releases such as `1.1.1-rc.1`); the `Gate` job requires the tag to equal the workspace version exactly, which a `v` prefix never does.
-- On crates.io, for each of `localcache` and `localcache-cli`, a trusted
-  publisher: repository `nabbisen/localcache-rs` and workflow `release.yaml`. The records do
-  not name an environment: with one maintainer who holds every role, naming it would separate
-  nothing (see "Roles and privileges" in the [Security Model](./security.md), which also says
-  when this must change).
+- GitHub Environment `release` (the name must match the workflow). Its deployment
+  rules allow the branch `main` (dry runs) and version tags (`[0-9]*.[0-9]*.[0-9]*`).
+  It needs no secrets or variables, and a required reviewer is optional.
+- On crates.io, for each of `localcache` and `localcache-cli`, a trusted publisher
+  with repository `nabbisen/localcache-rs` and workflow `release.yaml`. The
+  environment field is not set.
