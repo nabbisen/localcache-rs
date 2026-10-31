@@ -165,7 +165,7 @@ jobs:
 
   publish:
     name: Publish
-    needs: archive
+    needs: [gate, archive]
     runs-on: ubuntu-24.04
     environment: release
     permissions:
@@ -193,11 +193,56 @@ jobs:
           cat "$RUNNER_TEMP/publish.log"
           exit $status
       - name: Record the .crate digests
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          VERSION: ${{ needs.gate.outputs.version }}
         run: |
-          for f in target/package/*.crate; do
-              printf '%s  %s\n' "$(sha256sum < "$f" | cut -d' ' -f1)" "$(basename "$f")"
-          done > "$RUNNER_TEMP/crate-digests.txt"
-          cat "$RUNNER_TEMP/crate-digests.txt"
+          # Fails closed: it succeeds only after recording exactly two digests,
+          # each 64 hexadecimal characters, for `localcache` and `localcache-cli`
+          # at this version; anything else is an error.
+          #
+          # The two sources differ on purpose. A dry run keeps the packaged
+          # `.crate` files in target/package, so it hashes those. A real
+          # `cargo publish` does not, and what users download is what crates.io
+          # serves, so a real run hashes those bytes (the file can lag the
+          # publish by seconds: at most 10 tries, 6 s apart).
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/crate-digests.txt"
+          : > "$OUT"
+          for name in localcache localcache-cli; do
+              file="${name}-${VERSION}.crate"
+              if [ "$DRY_RUN" = "true" ]; then
+                  path="target/package/$file"
+              else
+                  path="$RUNNER_TEMP/$file"
+                  url="https://static.crates.io/crates/${name}/${file}"
+                  tries=1
+                  until curl --fail --silent --show-error --location --output "$path" "$url"; do
+                      if [ "$tries" -ge 10 ]; then
+                          echo "Could not download $url in 10 tries." >&2
+                          exit 1
+                      fi
+                      tries=$((tries + 1))
+                      sleep 6
+                  done
+              fi
+              if [ ! -s "$path" ]; then
+                  echo "$path is missing or empty." >&2
+                  exit 1
+              fi
+              sum=$(sha256sum "$path")
+              digest="${sum%% *}"
+              if ! printf '%s' "$digest" | grep -Eq '^[0-9a-f]{64}$'; then
+                  echo "Not a SHA-256 digest for $file: '$digest'" >&2
+                  exit 1
+              fi
+              printf '%s  %s\n' "$digest" "$file" >> "$OUT"
+          done
+          if [ "$(wc -l < "$OUT")" -ne 2 ]; then
+              echo "Expected exactly two digests." >&2
+              exit 1
+          fi
+          cat "$OUT"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: crate-digests
@@ -229,6 +274,24 @@ jobs:
           VERSION: ${{ needs.gate.outputs.version }}
         run: |
           DIR="$RUNNER_TEMP/release"
+          # Refuse to publish notes without both .crate digests: exactly two
+          # lines, one per crate, each a 64-hex digest and the file name. (The
+          # name is compared as a string, not matched, because a version may
+          # contain characters that are special in a pattern.)
+          if [ "$(wc -l < "$DIR/crate-digests.txt")" -ne 2 ]; then
+              echo "crate-digests.txt must have exactly two lines." >&2
+              exit 1
+          fi
+          for name in localcache localcache-cli; do
+              found=$(awk -v want="${name}-${VERSION}.crate" '
+                  NF == 2 && length($1) == 64 && $1 ~ /^[0-9a-f]+$/ && $2 == want { n++ }
+                  END { print n + 0 }
+              ' "$DIR/crate-digests.txt")
+              if [ "$found" -ne 1 ]; then
+                  echo "crate-digests.txt has no valid digest line for ${name}-${VERSION}.crate." >&2
+                  exit 1
+              fi
+          done
           # A pre-release has a "-" before any build metadata ("+...", which may
           # itself contain "-").
           flags=()
