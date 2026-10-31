@@ -96,6 +96,12 @@ again**: the first crate's version already exists. Check crates.io, then publish
 the missing crate by hand with the owner's crates.io credentials, or release a new patch
 version.
 
+The same rule applies if the `Publish` job fails *after* both crates were uploaded,
+for example while recording their digests: the crates are live, the GitHub release
+was not created, and running the workflow again would fail at the upload. Create
+the GitHub release by hand, with the archive from the `Source archive` job and the
+two `.crate` digests as crates.io serves them.
+
 ### One-time setup (owner)
 
 - GitHub Environment `release` (the name must match the workflow). Its deployment

@@ -1,5 +1,12 @@
 # Q9c Fix Handoff — The Release Notes Must List the Two `.crate` Digests
 
+> **Correction (2026-11-01).** § 0 and § 1.2 say a dry run keeps the packaged `.crate` files in `target/package`. **That is false**:
+> neither a dry run nor a real `cargo publish` leaves `<name>-<version>.crate` there (a dry run leaves them only in cargo's own
+> temporary directories). The old step had been writing `  *.crate` in every dry run, unnoticed because a dry run creates no release.
+> The architect had not verified the premise before writing the handoff. As built (request 049, review 065): a dry run makes the
+> files with `cargo package --workspace --locked --no-verify` and hashes those; a real run hashes what crates.io serves.
+
+
 RFC: `rfcs/accepted/027-release-engineering-on-standard-tools.md` (R4: the release notes list the archive digest and the
 two `.crate` digests). Found at the first real run of `Release` (v0.22.0, run 41214060136).
 Format of the review request: `rfcs/handoffs/025-error-taxonomy-and-input-validation/implementation-handoff.md` § 6.
