@@ -67,7 +67,7 @@ for a crates.io token (Trusted Publishing).
 
 | Job | What it does |
 |---|---|
-| `Gate` | Fails unless: the run is from a tag (a branch is accepted only for a dry run from `main`); the tag looks like `X.Y.Z`, is annotated, and equals the workspace version; the commit is reachable from `main`; the newest `ci.yaml` run on the commit is `completed` with `success`; and `scripts/check_versions.py --expect <version>` passes |
+| `Gate` | Fails unless: the run is from a tag (a branch is accepted only for a dry run from `main`); the tag is annotated and equals the workspace version exactly (any SemVer version, pre-releases such as `1.1.1-rc.1` included; a `v` prefix can never equal it); the commit is reachable from `main`; the newest `ci.yaml` run on the commit is `completed` with `success`; and `scripts/check_versions.py --expect <version>` passes |
 | `Advisories`, `MSRV fresh resolution` | The weekly checks, run again at the moment of release, because an advisory or a new upstream release appears without any push |
 | `Source archive` | `git archive` of the commit as `localcache-vX.Y.Z.tar.gz`, its SHA-256, and a build-provenance attestation |
 | `Publish` | The only job in the `release` Environment, so the only one that can obtain a registry token. It runs `cargo publish --workspace --locked` (with `--dry-run` for a dry run) and records the `.crate` digests |
@@ -102,7 +102,7 @@ version.
 - GitHub Environment `release`: the owner as required reviewer, with "prevent
   self-review" off (the owner both starts and approves), deployments limited to
   tags matching `*.*.*`. GitHub's name patterns are plain wildcards (no character classes), so
-  this is only a coarse filter; the `Gate` job enforces the exact `X.Y.Z` form with no `v`.
+  this is only a coarse filter (it also admits SemVer pre-releases such as `1.1.1-rc.1`); the `Gate` job requires the tag to equal the workspace version exactly, which a `v` prefix never does.
 - On crates.io, for each of `localcache` and `localcache-cli`, a trusted
   publisher: repository `nabbisen/localcache-rs`, workflow `release.yaml`,
   environment `release`. **Set the environment**, although crates.io marks it optional:

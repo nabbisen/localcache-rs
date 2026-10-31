@@ -214,3 +214,14 @@ exists.
    command equals the CI command.
 2. The crates.io trusted-publisher setup page and the current form of the auth action are confirmed
    against the crates.io documentation before Q9c, not assumed.
+
+## Amendment 1 (architect, 2026-10-31) — tags are SemVer versions, pre-releases included
+
+Found when the owner set up the `release` Environment. (1) GitHub's deployment tag patterns are plain wildcards; the
+rule is `*.*.*`, a coarse filter. (2) R5 said the gate matches `X.Y.Z`; **SemVer 2.0.0 also has pre-releases** (`1.1.1-pre`,
+`1.1.1-beta-1`, `1.1.1-rc.1`), which the project will use. The rule becomes: the tag is annotated and **equals the workspace
+version exactly**. Cargo already guarantees the workspace version is valid SemVer, and equality rejects a `v` prefix, so no
+separate pattern is needed. A pre-release is published to crates.io and the GitHub Release is marked a pre-release.
+(3) The crates.io trusted-publisher records **must name the environment `release`**, although crates.io marks the field
+optional: without it, any run of `release.yaml` (including one from a branch someone with write access pushed) can obtain a
+registry token with no approval.
