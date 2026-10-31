@@ -101,7 +101,12 @@ version.
 
 - GitHub Environment `release`: the owner as required reviewer, with "prevent
   self-review" off (the owner both starts and approves), deployments limited to
-  tags matching `[0-9]*.[0-9]*.[0-9]*`.
+  tags matching `*.*.*`. GitHub's name patterns are plain wildcards (no character classes), so
+  this is only a coarse filter; the `Gate` job enforces the exact `X.Y.Z` form with no `v`.
 - On crates.io, for each of `localcache` and `localcache-cli`, a trusted
   publisher: repository `nabbisen/localcache-rs`, workflow `release.yaml`,
-  environment `release`.
+  environment `release`. **Set the environment**, although crates.io marks it optional:
+  without it, any job of any run of `release.yaml` (including one from a branch someone
+  with write access pushed) that can request an identity token can obtain a registry
+  token with no approval. With it, only a job that GitHub has let into the protected
+  `release` environment can.

@@ -38,7 +38,7 @@ amended accordingly (architect).
 1. **GitHub, Settings → Environments → New environment `release`:**
    - Required reviewers: the owner (`nabbisen`). "Prevent self-review": **off** (the owner both triggers and
      approves; with it on, nothing could ever be approved).
-   - Deployment branches and tags: *Selected*, add tag rule `[0-9]*.[0-9]*.[0-9]*` (no `v`). For the
+   - Deployment branches and tags: *Selected*, add tag rule `*.*.*` (GitHub patterns are plain wildcards; the gate job enforces `X.Y.Z` with no `v`). For the
      rehearsal in § 3 also add branch `main`; remove it afterwards.
    - No secrets, no variables.
 2. **crates.io, for each of `localcache` and `localcache-cli`, Settings → Trusted Publishing → Add (GitHub):**
