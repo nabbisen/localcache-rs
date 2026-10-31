@@ -230,8 +230,8 @@ Everything below was deprecated in v0.21.5 with a `#[deprecated]` note naming it
 > abort the process with an allocation failure when the payload type contains a `String` or another type that
 > bincode decodes through its own string and byte-buffer path. It needs write access to the database file, or
 > an imported export. Entries encrypted with a key are not affected (the forgery fails authentication first);
-> `Codec::Json` payloads are not affected. It will be fixed in v0.23.0 by decoding the legacy format with a
-> bounds-checked decoder of our own.
+> `Codec::Json` payloads are not affected. It will be fixed in v0.22.1 by decoding the legacy format with a
+> bounds-checked decoder of our own (RFC 028).
 
 ---
 

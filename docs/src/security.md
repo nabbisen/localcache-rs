@@ -51,7 +51,7 @@ anything in it. The rest of this page is mostly about what that can and cannot d
 **Can (and what you can do about it):**
 
 - **Abort a reader through a forged length prefix** (known issue in v0.22.0, fixed in
-  v0.23.0). A stored uncompressed (`raw`, bincode) payload with a forged length prefix can
+  v0.22.1). A stored uncompressed (`raw`, bincode) payload with a forged length prefix can
   make `get` abort the process with an allocation failure when the payload type contains a
   `String` or another type that bincode decodes through its own string and byte-buffer path.
   The entry is not lost and nothing is corrupted. It needs write access to the file or an
@@ -132,7 +132,7 @@ What it does **not** do:
 
 1. Keep the database file where only the user of the cache can write it. That one measure
    removes most of this page's "can".
-2. For payloads that contain strings, use an encryption key or the JSON codec until v0.23.0.
+2. For payloads that contain strings, use an encryption key or the JSON codec until v0.22.1.
 3. Raise `max_decompressed_bytes` only for payloads you know are large and trusted.
 4. Import only exports you produced or trust.
 5. Treat an `IncompatibleSchema` or `PayloadTooLarge` error as "this entry or file is not

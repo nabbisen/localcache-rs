@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| Status | Proposed (architect, 2026-10-31; awaiting independent review and the owner's decision) |
+| Status | Accepted (owner, 2026-10-31), D1 to D4 adopted as recommended |
 | Feature | *(core)* |
 | Touches | `crates/localcache/src/serialization.rs`, a new private module `payload_codec`, `Cargo.toml` (removes `bincode`), `deny.toml`, `docs/src/` (security model, dependency security) |
 | Release | **v0.22.1** (a fix release: no API, schema, wire-format or MSRV change) |
@@ -168,16 +168,18 @@ shrinks slightly. Not breaking: **v0.22.1**.
 
 A revert restores `bincode`; the bytes on disk are the same either way.
 
-## Decisions requested of the owner
+## Decisions
 
-1. **D1 — R5.** Accept rejecting a count greater than the remaining bytes, including for element types that occupy
-   zero bytes. Recommended: accept.
-2. **D2 — R2.5.** Keep accepting trailing bytes after a complete value. Recommended: accept (compatibility; a
-   stricter rule belongs in a minor release).
-3. **D3 — scope.** Own both the encoder and the decoder and remove `bincode` entirely. Recommended: accept (one
-   implementation of one format; the dependency and its exception leave). The alternative is decoder-only, which
-   keeps the dependency and the exception for no safety gain.
-4. **D4 — release.** Ship as **v0.22.1** after v0.22.0. Recommended: accept (a patch holds fixes only; this is one).
+Accepted by the owner on 2026-10-31 as written, **with the four recommended answers**:
+1. **D1 — R5:** a count greater than the remaining bytes is rejected, including for zero-byte element types.
+2. **D2 — R2.5:** trailing bytes after a complete value are still accepted.
+3. **D3 — scope:** the encoder and the decoder are owned, and `bincode` is removed entirely.
+4. **D4 — release:** v0.22.1, after v0.22.0.
+
+The owner accepted before the independent review the architect had asked of the dev team (plan 058, gate B).
+That check is therefore not skipped: it becomes **step 0 of the implementation** (handoff
+`../handoffs/028-owned-payload-codec/q11-owned-payload-codec.md`), with a rule that a finding stops the work and goes
+back to the owner before any code is written.
 
 ## Open questions
 
