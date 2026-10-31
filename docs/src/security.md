@@ -120,13 +120,50 @@ What it does **not** do:
   payload format (see [MSRV & Dependency Security](./dependency_security.md)).
 - **Releases** are published by one GitHub Actions workflow, not from a workstation, through
   crates.io Trusted Publishing: the workflow exchanges a short-lived GitHub identity for a
-  registry token that lasts 30 minutes, and only after the project owner approves the run in
-  a protected environment (the approval is enforced by GitHub for that job; crates.io is configured to trust the repository's `release.yaml` workflow without naming the environment, a deliberate choice for a single-maintainer project). No long-lived registry token is stored in the repository or in CI.
+  registry token that lasts 30 minutes. The run pauses for the owner's approval in a protected
+  environment before that exchange. That approval is a deliberate, recorded confirmation made
+  after reading the gate results; it is **not** a separation of duties (see "Roles and
+  privileges"). No long-lived registry token is stored in the repository or in CI.
   The source archive of each release is built from the signed tag and carries a GitHub build
   attestation (`gh attestation verify`). The tag's signature is made on the owner's machine and
   is not verified by CI (see [Project Source Archives](./source_archives.md)).
 - **The build** is read-only by default in CI: no job holds a secret, no workflow uses
   `pull_request_target`, and every third-party action is pinned to a commit.
+
+## Roles and privileges
+
+The project has one maintainer, and every privilege that matters to its integrity is held by one
+identity. This section says so, because a control that presumes separate people is worthless, and
+misleading, where there is one.
+
+| Privilege | Held by (as of 2026-10-31) |
+|---|---|
+| GitHub repository admin: settings, Environments and their reviewers, rulesets | `nabbisen`, the only collaborator |
+| Push to `main`, branches and tags; edit the workflow files | the same |
+| Approve a run of the `release` environment (self-review is allowed) | the same |
+| Owner of `localcache` and `localcache-cli` on crates.io: publish, yank, edit trusted publishers | the same |
+| The key that signs release tags | the same, on a local machine |
+| A registry token stored in the repository or in CI | none |
+| Branch protection, rulesets, `CODEOWNERS` | none: they would constrain nobody else |
+
+What follows from that:
+
+- **Controls that do not depend on the number of people hold.** Default workflow permissions are
+  read-only; no long-lived registry token exists; the token the release uses lives 30 minutes; actions
+  are pinned to commits; a release can only come from the workflow, which refuses a tag that is not
+  the workspace version or a commit that is not on `main` with green CI, and runs a dry run first.
+  The approval pause stops a mistaken dispatch before any token is minted and leaves a record.
+- **Controls that need a second person are deliberately not set**, because with one identity
+  they would show strictness that cannot be enforced: the `release` environment is not named in the
+  crates.io trusted-publisher records; the person who starts a release also approves it; the workflow
+  files and tags are not behind review rules. Whoever holds repository admin or the crates.io
+  ownership can change any of these, so setting them would not separate anything.
+- **When this must change.** The first time a second person receives write access to the repository,
+  repository admin, or crates.io ownership, the controls above stop being optional: name the `release`
+  environment in both trusted-publisher records; make the approver a person who did not start the run;
+  protect tags and `.github/workflows/**` with a ruleset or `CODEOWNERS` that requires review; keep admin
+  and crates.io ownership with as few people as possible. That change is recorded in RFC 027 and in this
+  table before the access is granted, not after.
 
 ## Recommendations
 
