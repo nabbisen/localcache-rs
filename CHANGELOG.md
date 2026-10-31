@@ -7,9 +7,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [0.22.0] — Unreleased
+## [0.22.0] — 2026-10-31
 
-*Date set at owner authorization.*
+Authorized by the project owner on 2026-10-31. The source is that of release candidate `19b2838`; later commits
+change documentation and the release workflow only.
 
 **A breaking release,** the first since v0.21.0. Every change in it was announced in v0.21.4,
 v0.21.5 or v0.21.6. The stored payload format and the database schema do

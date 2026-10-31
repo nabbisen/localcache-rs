@@ -1324,8 +1324,8 @@ v0.22.0 is now certain: Q3 and RFC 024 Part B change observable behaviour. v0.23
 - **Major** (`x`): incompatible changes.
 - **While the major version is 0,** SemVer item 4 applies: anything may change, and a breaking change cannot raise a major that is
   frozen at 0. Such a change therefore takes a minor bump (`0.22.0`), and is announced one release ahead, as Phase 24 already does.
-  **Whether a breaking release should instead be `1.0.0` is the owner's decision,** and is raised at each breaking release.
-  v0.22.0 is scheduled as `0.22.0` unless the owner decides otherwise.
+  **`1.0.0` is not planned.** It happens only on the owner's explicit confirmation, and the architect does not schedule or time it.
+  v0.22.0 is released as `0.22.0`.
 - **Real SemVer needs 1.0,** because only then does a minor bump mean "compatible additions" to a resolver. Until then, a release that
   only adds functionality is also a `y` bump, and the cost is that `^0.21` consumers do not receive it automatically.
 - **v0.21.5 breached this policy.** It added public API (`SortKey`, `SyncCacheEngine`, `run_report`, `copy --from-db`) and
@@ -1663,7 +1663,7 @@ Proposal: `.git-exclude/reviewed/039-architect-v0.22.0-scope-and-schedule-2026-1
 
 **Order for the dev team (set by the architect 2026-10-29, after RFC 027 was accepted):** Q9a → Q9b → Q9c → Q3d → Q1c → Q3b → Q3c → Q2f → Q3e → Q10 → release preparation → RC → Go → the owner. One slice per review request. Q9 goes first because workflow changes can only be verified by a push, and from Q3d on the v0.22.0 slices stay in **local commits**, pushed once with the release preparation (the book deploys from `main` on every push and must not describe v0.22.0 early). Handoffs: `rfcs/handoffs/027-release-engineering-on-standard-tools/` (Q9a and Q9b done; Q9b-3 handed off; Q9c follows Q9b-3's review), `rfcs/handoffs/025-error-taxonomy-and-input-validation/q3d-opaque-database-error.md`; Q1c is `rfcs/handoffs/023-msrv-policy/implementation-handoff.md` § 4 as amended there.
 
-**Out of scope:** Q5 / RFC 026 (schema v6, the duplicate index, AAD, require-encryption) → v0.23.0; `#[non_exhaustive]` on `CacheOptions` and `ScanOptions` → decided with the 1.0 question (it would forbid the documented `..Default::default()` idiom); `rusqlite` 0.41 (Rust 1.89, no necessity); an MSRV raise; following symlinks; the `preload` cost difference (a quiet-host measurement before the RC, no code); the security-model page (documentation, the architect, before the RC).
+**Out of scope:** Q5 / RFC 026 (schema v6, the duplicate index, AAD, require-encryption) → v0.23.0; `#[non_exhaustive]` on `CacheOptions` and `ScanOptions` → not decided; it would forbid the documented `..Default::default()` idiom, so it needs its own owner decision; `rusqlite` 0.41 (Rust 1.89, no necessity); an MSRV raise; following symlinks; the `preload` cost difference (a quiet-host measurement before the RC, no code); the security-model page (documentation, the architect, before the RC).
 
 ### v0.22.0 schedule — set by the architect, 2026-10-31
 
@@ -1678,19 +1678,18 @@ authorization. **Done:** Q9a–Q9c, Q3d, Q1c, Q3b, Q3c, Q2f (local commits), Q3e
 | 4 ✅ | One-time release setup (GitHub Environment `release`; trusted-publisher record for each crate) and the `Release` dry run from `main` | owner did the setup; dry run run 41208010709 passed | none |
 | 5 ✅ | Release preparation: version `0.22.0`, install examples, one consolidated breaking-change migration list in `CHANGELOG.md`; **one push** of all local commits | dev | 1, 2, 3; — done (`19b2838`, pushed) |
 | 6 ✅ | Release candidate = CI green on the pushed commit (including `archive`, `doc-package`) + dispatched `msrv-fresh` and `advisories`; architect's Go or No-Go | architect | 5; — **Go** (review 057): CI 41185806151 9/9, Docs, `msrv-fresh`, `advisories` green on `19b2838` |
-| 7 | Owner decides `0.22.0` or `1.0.0` and authorizes the date; signed tag; `Release` on the tag with `dry_run` first, then for real | owner | 4, 6 |
+| 7 | Owner authorized `0.22.0` dated 2026-10-31; date commit; signed tag; `Release` on the tag with `dry_run` first, then for real | owner, architect | 4, 6 |
 | 8 | After release: fresh-consumer checks (1.85 and the new `rusqlite` line), ROADMAP and register reconciliation, v0.23.0 planning | architect | 7 |
 
 ### After v0.22.0 — plan authorized by the owner, 2026-10-31
 
 **v0.22.1** = Q11 (RFC 028), a fix release. **v0.23.0** = RFC 026 (recency contract, schema v6, the duplicate index)
 and RFC 029 (encryption: payload bound to its row, require-encryption, key zeroization, `aes-gcm 0.11`, paged
-rotation), both to be drafted by the architect, reviewed by the dev team and decided by the owner. Then the `1.0.0`
-question, with `#[non_exhaustive]` on `CacheOptions` and `ScanOptions`. Order: v0.22.0 published (waiting for the
+rotation), both to be drafted by the architect and decided by the owner. Order: v0.22.0 published (waiting for the
 owner's release setup and the `Release` rehearsal) → Q11 implemented in local commits meanwhile → v0.22.1 → RFC 026/029
 drafts → v0.23.0. Handoff: `rfcs/handoffs/028-owned-payload-codec/q11-owned-payload-codec.md`.
 
-**1.0:** the architect recommends `0.22.0`, and deciding `1.0.0` after v0.23.0, because v0.23.0 changes the stored schema again. The owner decides at the v0.22.0 RC.
+**1.0:** not planned. It requires the owner's explicit confirmation.
 
 ### Module-size register — after Q2b (2026-09-24)
 
