@@ -7,6 +7,79 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.22.1] — Unreleased
+
+*Date set at owner authorization.*
+
+**A fix release. Not breaking.** No public signature, schema, stored-format or MSRV change. Every
+payload written by any earlier release reads unchanged, and every payload this release writes is
+byte-identical to what v0.22.0 wrote, so an older release can still read it. Two inputs that were
+accepted are now refused (see **Changed**); no known payload uses either.
+
+What changes for you:
+- **A stored payload can no longer abort or crash a reader.** The Known issue of v0.22.0 (a forged
+  length prefix aborting `get`) is fixed, and so is a second one found while fixing it (a deeply
+  nested payload overflowing the stack) (**Fixed**).
+- **`bincode` leaves the dependency tree**, and with it the standing advisory exception
+  `RUSTSEC-2025-0141` (**Security**). The legacy payload format is now read and written by this
+  crate's own codec (RFC 028).
+- **Two narrowings and new error text** (**Changed**).
+
+### Fixed
+
+- **A forged length prefix no longer aborts a read** (RFC 028). The Known issue of v0.22.0 is closed:
+  a stored uncompressed (`raw`) payload whose length prefix claims more than the payload holds made
+  `get` abort the process (`memory allocation of 2305843009213693951 bytes failed`, exit status 134)
+  when the payload type contained a `String`, a `Box<str>`, a `PathBuf`, a byte buffer or an
+  `Option` of one. The decoder now checks every string and byte-buffer length, and every sequence
+  and map count, against the bytes that remain **before** it allocates or loops, so each such read
+  returns `Serialization` and the entry stays in the file. Measured: a payload claiming
+  2<sup>61</sup> bytes and holding four is refused with a resident-set growth of at most 128 KiB
+  under a 512 MiB address-space limit. Entries encrypted with a key and `Codec::Json` payloads were
+  never affected.
+- **A deeply nested payload no longer overflows the stack.** A recursive payload type
+  (`enum List { Cons(Box<List>), Nil }`) was decoded one level per four bytes, with no limit: a
+  10 MB payload crashed the reading process on every thread that was measured (a debug build
+  overflowed at about 12,800 levels on an 8 MiB main thread and about 3,200 on a 2 MiB thread,
+  including the `spawn_blocking` threads of Tokio, async-std and smol). Nesting is now limited to
+  128 levels, the limit `serde_json` applies, and deeper input is a `Serialization` error.
+
+### Changed
+
+- **A sequence or map of zero-byte elements is refused when its count is larger than the bytes
+  left** (RFC 028 R5). `Vec<()>`, `HashMap<(), ()>` and `Vec<UnitStruct>` carry only a count, which
+  cannot be told from a forged one; v0.22.0 accepted `vec![(); 10]` at the end of a payload and, for
+  a forged count of 2<sup>64</sup> − 1, did not return (it loops once per claimed element; it was
+  still running when stopped after 20 seconds). A count the remaining
+  bytes cover, including a count of zero, still decodes. No known payload uses such a type.
+- **A value nested deeper than 128 levels is refused, on write and on read.** A level is a struct,
+  sequence, map, enum, tuple, newtype or `Option` that holds a value, inside another (an enum
+  variant's fields add none): a chain of `struct Node { next: Option<Box<Node>> }` is two levels per
+  node, so 64 nodes are written and read and 65 are not. `set` returns `Serialization` for a deeper
+  value instead of storing what the next `get` would refuse to read. The previous codec had no
+  limit. No known payload nests that deeply.
+- **The counts of all the sequences and maps in one payload may together not exceed its length.**
+  Each count was already limited to the bytes left; the sum limit makes the time to decode
+  proportional to the payload, where a type that nests sequences of zero-byte elements
+  (`Vec<Vec<()>>`) took time quadratic in it (128 KB: 0.094 s; each doubling cost four times as
+  much). A payload of a type that occupies bytes always satisfies it.
+- **The text of a `Serialization` error for a malformed payload changed**; the variant did not.
+  The text was `bincode`'s (`UnexpectedEnd { additional: 4 }`); it now says what was wrong
+  (`a count of 2305843009213693951 elements exceeds the 4 byte(s) left`, `invalid bool value 2`,
+  `nesting is deeper than 128 levels`). Text taken from a payload type's own `Deserialize`
+  implementation is cut to 200 bytes. Do not match on the text.
+
+### Security
+
+- **`bincode` is removed** (RFC 028): `bincode`, `bincode_derive`, `unty` and `virtue` leave
+  `Cargo.lock`, and the `RUSTSEC-2025-0141` (unmaintained) exception leaves `deny.toml`, so the
+  only standing advisory exception left is the optional `async-std` runtime feature. The stored
+  format is unchanged; the codec that reads and writes it is checked against `bincode`'s own output
+  (118 golden vectors; every compatibility fixture; a one-time differential run) and has no
+  `unsafe` code.
+
+---
+
 ## [0.22.0] — 2026-10-31
 
 Authorized by the project owner on 2026-10-31. The source is that of release candidate `19b2838`; later commits
@@ -1627,7 +1700,8 @@ Namespaces, batch ops, TTL, PRAGMAs, schema migration.
 ## [0.1.0] — 2026-05-03
 Initial release.
 
-[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/0.22.0...HEAD
+[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/0.22.1...HEAD
+[0.22.1]: https://github.com/nabbisen/localcache-rs/compare/0.22.0...0.22.1
 [0.22.0]: https://github.com/nabbisen/localcache-rs/compare/0.21.6...0.22.0
 [0.21.6]: https://github.com/nabbisen/localcache-rs/compare/0.21.5...0.21.6
 [0.21.5]: https://github.com/nabbisen/localcache-rs/compare/0.21.4...0.21.5

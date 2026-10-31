@@ -103,7 +103,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 - **Pluggable change detection** — `MetadataOnly` (fast), `MetadataThenPartialHash`
   (head/tail sampling for large files), `MetadataThenFullHash` (balanced), or
   `StrictFullHash` (exact).
-- **Any serialisable payload** — `T: Serialize + DeserializeOwned` via bincode or JSON.
+- **Any serialisable payload** — `T: Serialize + DeserializeOwned`, stored in a compact binary
+  format or as JSON.
 - **Atomic writes** — `set` uses a single SQLite transaction; partial failures
   leave no corrupt state.
 - **LRU eviction** — `max_entries` evicts the least recently **read** entries

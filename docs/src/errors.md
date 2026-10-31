@@ -12,7 +12,7 @@ Existing exhaustive matches must add a `_` arm to upgrade to v0.21.0.
 |---|---|---|
 | `Database(DatabaseError)` | SQLite error; see [Database errors](#database-errors) | Check path permissions; file not corrupt; retry if busy |
 | `Io(std::io::Error)` | File read/write failure | Check file existence and permissions |
-| `Serialization(String)` | bincode or JSON encode/decode failed | Payload type mismatch; check `payload_version` |
+| `Serialization(String)` | The binary or JSON codec could not encode the payload, or the stored bytes are not a valid payload of the type: a different type, a truncated or damaged blob, a length or count larger than the bytes that remain, or nesting deeper than 128 levels | Payload type mismatch; check `payload_version`. A read that fails this way leaves the entry in the file |
 | `FileNotFound { path }` | Source file does not exist | Normal — check with `check_status` first |
 | `InvalidPath { path }` | Path cannot be represented as an exact SQLite `TEXT` key | Use a valid UTF-8 filesystem/database path |
 | `ReadOnly` | Mutation requested on a read-only engine | Use a deliberately writable engine if mutation is intended |

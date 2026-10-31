@@ -257,17 +257,22 @@ condition that would change the decision, because an `ignore` has no expiry date
 { id = "RUSTSEC-2025-0052", reason = "Preserve the advertised async-std runtime feature. Follow-up: Reassess if a maintained fork of async-std gains adoption, or if any vulnerability or unsound advisory is published against async-std at the locked version." },
 ```
 
-Two unmaintained-crate findings are accepted this way today:
+One unmaintained-crate finding is accepted this way today:
 
 - `RUSTSEC-2025-0052` for `async-std`, preserving the advertised optional runtime
-  feature; and
-- `RUSTSEC-2025-0141` for `bincode`, preserving the established legacy payload
-  wire format.
+  feature.
 
-Both stay visible as notes on every run (`cargo deny -L info check advisories
-sources`). A newly published vulnerability or unsound advisory against either
-crate has a different id, so no existing entry covers it and the gate fails the
-day it appears.
+It stays visible as a note on every run (`cargo deny -L info check advisories
+sources`). A newly published vulnerability or unsound advisory against that crate
+has a different id, so no existing entry covers it and the gate fails the day it
+appears.
+
+A second entry, `RUSTSEC-2025-0141` for `bincode`, preserved the legacy payload
+wire format until v0.22.1. `bincode` is unmaintained and its decoder could not be
+made to check a claimed length against the input (RFC 028), so the format's reader
+and writer now live in this crate, checked against `bincode`'s own output (golden
+vectors and a one-time differential run), `bincode` left the dependency tree and
+the entry was deleted: a disposition does not outlive its cause.
 
 **To accept a finding:** add an `ignore` entry with its reason and follow-up
 condition, and get the change reviewed like any other. **To retire one:** delete

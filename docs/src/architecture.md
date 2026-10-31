@@ -135,6 +135,13 @@ User payload (T: Serialize)
 → BLOB stored in payloads.content
 ```
 
+The `bincode` codec (`Codec::Bincode`, the tags `raw` and `zstd`) writes and reads the legacy
+`bincode`-1 wire format of RFC 008: little-endian, fixed-width integers, `u64` length prefixes and
+`u32` variant indices. The codec is this crate's own (`serialization/payload_codec`, RFC 028); the
+name is the format's, and `bincode` is not a dependency. Its decoder is written for hostile input:
+every length and count is checked against the bytes that remain before anything is allocated, and
+nesting is limited to 128 levels. See [Security Model](./security.md).
+
 Reading runs the steps in reverse. The decompress step is **bounded**: a compressed payload
 may not expand past `CacheOptions::max_decompressed_bytes` (default 64 MiB), on read or on
 write, and is refused with `PayloadTooLarge` otherwise; uncompressed payloads are not limited.

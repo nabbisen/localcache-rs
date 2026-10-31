@@ -12,7 +12,7 @@ localcache = { version = "0.22.0", features = ["async", "compression", "json"] }
 
 | Feature | Description | Key types / functions |
 |---|---|---|
-| *(default)* | Core cache — bincode payloads, BLAKE3, SQLite | `CacheEngine<T>`, `SyncCacheEngine<T>` |
+| *(default)* | Core cache — compact binary payloads (`Codec::Bincode`), BLAKE3, SQLite | `CacheEngine<T>`, `SyncCacheEngine<T>` |
 | `async` | Tokio-based async wrapper | `AsyncCacheEngine<T>` |
 | `async-std` | async-std async wrapper | `AsyncCacheEngine<T>` |
 | `smol` | smol async wrapper | `AsyncCacheEngine<T>` |

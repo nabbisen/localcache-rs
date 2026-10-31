@@ -45,20 +45,38 @@ anything in it. The rest of this page is mostly about what that can and cannot d
   malformed frame, never an allocation. Memory for a refused read stays near the limit
   (measured 1.25 times the limit for frames this crate writes, 2.2 times for a hostile header
   that asks for a 128 MiB decoder window, which is zstd's own constant maximum).
+- Make a read abort through a forged length or a count, or overflow the stack through nesting
+  (fixed in v0.22.1; it was a Known issue of v0.22.0). The decoder for uncompressed
+  (`raw`) payloads is this crate's own (RFC 028). It checks every string, byte-buffer, sequence
+  and map length against the bytes that remain **before** it allocates or loops, so a payload
+  that claims a gigabyte but holds four bytes is a `Serialization` error, and it refuses nesting
+  deeper than 128 levels (the limit `serde_json` applies to documents). No allocation is made
+  from a claimed length: a string is allocated at its verified length, and a sequence or map is
+  built element by element, the standard collections reserving room up front for at most the
+  verified count and never more than 1 MiB per open nesting level (address space, not touched
+  memory), so at most 128 MiB however large the claim, and never more than the previous decoder
+  allocated on the same input. A small hostile payload can briefly hold tens of megabytes
+  (measured: 60 MB for a 21 KB payload of a recursive `Vec` type at 63 levels, released when the
+  read fails), and a decoded value can be larger than its blob (a one-byte `None` becomes a
+  whole `Option<T>`). The counts of all the sequences and maps in one read together may not
+  exceed the length of the blob, so the time to decode is proportional to the blob. Writing
+  follows the same limits: a value nested deeper than 128 levels is refused by `set`, so the
+  cache never stores what it would refuse to read. Two things that v0.22.0 accepted are
+  refused: a
+  sequence or map of zero-byte elements (`Vec<()>`) whose count is larger than the bytes left,
+  because its count cannot be told from a forged one, and a value nested deeper than 128
+  levels (a level is a struct, sequence, map, enum, tuple, newtype or `Option` that holds a
+  value, inside another). No known payload uses either.
 - Make a query read a different schema object than the one intended: the `main` schema wins
   over temporary and attached objects with the same name.
 
 **Can (and what you can do about it):**
 
-- **Abort a reader through a forged length prefix** (known issue in v0.22.0, fixed in
-  v0.22.1). A stored uncompressed (`raw`, bincode) payload with a forged length prefix can
-  make `get` abort the process with an allocation failure when the payload type contains a
-  `String` or another type that bincode decodes through its own string and byte-buffer path.
-  The entry is not lost and nothing is corrupted. It needs write access to the file or an
-  imported export. Entries encrypted with a key are not affected (the forgery fails
-  authentication first), nor are `Codec::Json` payloads. Until the fix: restrict who can
-  write the file, import only exports you trust, and prefer an encryption key or the JSON codec
-  where strings are in the payload.
+- **Make a read fail, or use a lot of time.** A payload can be made to be an error (every
+  such read returns `Serialization`; the entry stays in the file), and a payload that really
+  contains a large value decodes to a large value: the size of an uncompressed payload is the
+  size of the blob, and the decoded value can be larger than the blob (a one-byte `None` becomes
+  a whole `Option<T>`). Decoding time is proportional to the blob.
 - **Replace or swap entries.** Without a key, the cache holds whatever the file holds. With a
   key, an attacker cannot read or forge a payload, but the ciphertext is not bound to its row,
   so someone with write access can move an encrypted payload from one path to another. Binding
@@ -107,7 +125,7 @@ What it does **not** do:
 | Payload kind | Bound | Error |
 |---|---|---|
 | zstd-compressed (`compression` feature) | decompressed size ≤ `max_decompressed_bytes` (64 MiB default), checked on read and on write | `PayloadTooLarge { limit }` |
-| uncompressed bincode (`raw`) | none beyond the blob's size; see the known issue above for forged lengths | `Serialization` or an abort for the known issue |
+| uncompressed binary (`raw`, the legacy `bincode` wire format) | every length and count must fit the bytes that remain, and all counts in one read together the blob's length, checked before anything is allocated; nesting ≤ 128 levels, on write too; the blob's own size is not limited | `Serialization` |
 | JSON | the document's size; nesting depth is limited by the JSON parser, a million opening brackets is an error and not a stack overflow | `Serialization` |
 | unknown or foreign encoding tag | not decoded | `UnknownEncoding` |
 
@@ -116,8 +134,9 @@ What it does **not** do:
 - **Dependencies** are checked by `cargo deny` on every push and every week: advisories
   (vulnerabilities, unsound and unmaintained crates, yanked versions) and sources (crates.io
   only, no Git dependencies). A standing exception must carry its reason and the condition
-  that ends it; the two current ones are the `async-std` runtime feature and the `bincode`
-  payload format (see [MSRV & Dependency Security](./dependency_security.md)).
+  that ends it; the one current exception is the `async-std` runtime feature (see
+  [MSRV & Dependency Security](./dependency_security.md)). The `bincode` exception ended in
+  v0.22.1, when the payload format's reader and writer moved into this crate.
 - **Releases** are published by one GitHub Actions workflow, not from a workstation, through
   crates.io Trusted Publishing: the workflow exchanges a short-lived GitHub identity for a
   registry token that lasts 30 minutes. A real run starts only when the owner starts it with
@@ -133,8 +152,7 @@ What it does **not** do:
 
 1. Keep the database file where only the user of the cache can write it. That one measure
    removes most of this page's "can".
-2. For payloads that contain strings, use an encryption key or the JSON codec until v0.22.1.
-3. Raise `max_decompressed_bytes` only for payloads you know are large and trusted.
-4. Import only exports you produced or trust.
-5. Treat an `IncompatibleSchema` or `PayloadTooLarge` error as "this entry or file is not
-   what I expected", not as a transient failure to retry.
+2. Raise `max_decompressed_bytes` only for payloads you know are large and trusted.
+3. Import only exports you produced or trust.
+4. Treat an `IncompatibleSchema`, `PayloadTooLarge` or `Serialization` error on a read as
+   "this entry or file is not what I expected", not as a transient failure to retry.
