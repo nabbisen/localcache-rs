@@ -59,7 +59,6 @@ opentelemetry   = ["tracing", "dep:opentelemetry", "dep:tracing-opentelemetry"]
 [dependencies]
 rusqlite                = { workspace = true }
 serde                   = { workspace = true }
-bincode                 = { workspace = true }
 blake3                  = { workspace = true }
 thiserror               = { workspace = true }
 base64                  = { workspace = true }

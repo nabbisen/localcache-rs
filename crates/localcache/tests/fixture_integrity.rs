@@ -66,15 +66,22 @@ fn historical_v0_1_fixture_has_exact_digest_and_public_api_state() {
         .unwrap()
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    let decoded: Vec<Vec<f32>> = payloads
-        .iter()
-        .map(|bytes| {
-            bincode::serde::decode_from_slice(bytes, bincode::config::legacy())
-                .unwrap()
-                .0
-        })
-        .collect();
-    assert_eq!(decoded, [vec![1.25, -2.5, 3.75], vec![8.5, 13.0]]);
+    // The legacy payload encoding of a `Vec<f32>`, written by hand: a `u64`
+    // little-endian count, then each value's IEEE-754 bits, little-endian.
+    let legacy_f32_vec = |values: &[f32]| -> Vec<u8> {
+        let mut bytes = (values.len() as u64).to_le_bytes().to_vec();
+        for value in values {
+            bytes.extend_from_slice(&value.to_bits().to_le_bytes());
+        }
+        bytes
+    };
+    assert_eq!(
+        payloads,
+        [
+            legacy_f32_vec(&[1.25, -2.5, 3.75]),
+            legacy_f32_vec(&[8.5, 13.0])
+        ]
+    );
     assert_eq!(
         conn.query_row("SELECT count(*) FROM files WHERE hash IS NULL", [], |row| {
             row.get::<_, i64>(0)

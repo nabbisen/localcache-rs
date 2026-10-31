@@ -55,7 +55,8 @@ pub enum LocalFileCacheError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 
-    /// A serialization or deserialization error (bincode encode/decode failure).
+    /// A serialization or deserialization error (the payload could not be
+    /// encoded, or the stored bytes are not a valid payload of the type).
     #[error("serialization error: {0}")]
     Serialization(String),
 

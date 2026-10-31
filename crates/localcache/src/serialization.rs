@@ -5,13 +5,17 @@
 //!
 //! # Wire-format stability
 //!
-//! The `Bincode` codec path **always** uses `bincode::config::legacy()`.
-//! This is a permanent commitment: the exact byte sequence produced today
-//! must be decodable by every past and future `0.x`/`1.x` release without
-//! migration.  **Do not change to `config::standard()`** — doing so would
-//! silently corrupt every existing user database with no compile-time error.
-//! Any future format change requires a schema-version migration (see
-//! `src/db/schema.rs`) and a headline CHANGELOG entry.
+//! The `Bincode` codec path **always** writes and reads the legacy `bincode`-1
+//! wire format of RFC 008 (little-endian, fixed-width integers, `u64` length
+//! prefixes, `u32` variant indices), implemented by the private
+//! `payload_codec` module (RFC 028).  This is a permanent commitment: the exact
+//! byte sequence produced today must be decodable by every past and future
+//! `0.x`/`1.x` release without migration, and bytes written by any past release
+//! must decode.  **Do not change the format** — doing so would silently corrupt
+//! every existing user database with no compile-time error; the golden vectors in
+//! `tests/fixtures/payload_codec` fail if it changes.  Any future format change
+//! requires a schema-version migration (see `src/db/schema.rs`) and a headline
+//! CHANGELOG entry.
 //!
 //! | Tag                     | Codec   | Compress | Encrypt   |
 //! |-------------------------|---------|----------|-----------|
@@ -31,6 +35,8 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use crate::cache::options::Codec;
 use crate::error::LocalFileCacheError;
+
+mod payload_codec;
 
 // ---------------------------------------------------------------------------
 // Encryption suffix
@@ -180,21 +186,6 @@ where
 // Codec helpers
 // ---------------------------------------------------------------------------
 
-/// The bincode configuration that matches the bincode 1.x wire format.
-///
-/// Using `config::legacy()` ensures that payloads written by any 0.x release
-/// of `localcache` (which used bincode 1.3) can still be decoded after
-/// upgrading to bincode 2.x.  New writes also use this format so that
-/// rollbacks remain safe.
-#[inline]
-fn bincode_cfg() -> bincode::config::Configuration<
-    bincode::config::LittleEndian,
-    bincode::config::Fixint,
-    bincode::config::NoLimit,
-> {
-    bincode::config::legacy()
-}
-
 fn serialize_with_codec<T: Serialize>(
     payload: &T,
     codec: Codec,
@@ -207,16 +198,14 @@ fn serialize_with_codec<T: Serialize>(
 }
 
 pub(crate) fn serialize_bincode<T: Serialize>(payload: &T) -> Result<Vec<u8>, LocalFileCacheError> {
-    bincode::serde::encode_to_vec(payload, bincode_cfg())
-        .map_err(|e| LocalFileCacheError::Serialization(e.to_string()))
+    payload_codec::to_vec(payload).map_err(|e| LocalFileCacheError::Serialization(e.to_string()))
 }
 
+/// Decode a legacy-format payload. Bytes after the value are ignored (RFC 028 R2.5).
 pub(crate) fn deserialize_bincode<T: DeserializeOwned>(
     bytes: &[u8],
 ) -> Result<T, LocalFileCacheError> {
-    bincode::serde::decode_from_slice(bytes, bincode_cfg())
-        .map(|(val, _)| val)
-        .map_err(|e| LocalFileCacheError::Serialization(e.to_string()))
+    payload_codec::from_slice(bytes).map_err(|e| LocalFileCacheError::Serialization(e.to_string()))
 }
 
 #[cfg(feature = "json")]

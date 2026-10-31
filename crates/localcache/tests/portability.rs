@@ -130,7 +130,7 @@ fn import_replaces_existing_entry() {
 
     // Modify the payload in the record (simulate updated data).
     let new_payload: Vec<f32> = vec![99.0_f32];
-    let new_bytes = bincode::serde::encode_to_vec(&new_payload, bincode::config::legacy()).unwrap();
+    let new_bytes = common::legacy_f32_vec(&new_payload);
     records[0].payload_b64 = base64::engine::general_purpose::STANDARD.encode(&new_bytes);
 
     let dst: CacheEngine<Vec<f32>> = CacheEngine::builder().database(":memory:").build().unwrap();

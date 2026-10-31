@@ -557,8 +557,7 @@ fn migrates_v2_database_to_v3() {
 
     let dir = TempDir::new().unwrap();
     let db_path = dir.path().join("v2tov3.sqlite3");
-    let payload_bytes =
-        bincode::serde::encode_to_vec(vec![2.0_f32, 3.0, 5.0], bincode::config::legacy()).unwrap();
+    let payload_bytes = common::legacy_f32_vec(&[2.0, 3.0, 5.0]);
 
     // Build a v2-style database by hand.
     {

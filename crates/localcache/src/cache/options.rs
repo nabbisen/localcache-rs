@@ -33,13 +33,14 @@ pub enum ChangeDetectionMode {
 /// Selects the serialization codec used to encode payload values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Codec {
-    /// Binary encoding via `bincode` — compact and fast.  Default.
+    /// Compact binary encoding (the legacy `bincode`-1 wire format of
+    /// RFC 008) — compact and fast.  Default.
     ///
     /// # Wire-format stability guarantee
     ///
-    /// Payloads written with this codec use `bincode::config::legacy()`,
-    /// which is byte-compatible with every `localcache` release from 0.1
-    /// onwards.  This guarantee holds for **all 0.x and future 1.x**
+    /// Payloads written with this codec are in the legacy `bincode`-1 wire
+    /// format, which is byte-compatible with every `localcache` release from
+    /// 0.1 onwards.  This guarantee holds for **all 0.x and future 1.x**
     /// releases: the wire format will only change behind a headline
     /// CHANGELOG migration that transparently rewrites existing payloads.
     ///

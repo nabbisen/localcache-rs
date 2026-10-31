@@ -1270,8 +1270,7 @@ fn migrates_v3_database_to_v4() {
 
     let dir = TempDir::new().unwrap();
     let db_path = dir.path().join("v3tov4.sqlite3");
-    let payload_bytes =
-        bincode::serde::encode_to_vec(vec![3.0_f32, 4.0, 7.0], bincode::config::legacy()).unwrap();
+    let payload_bytes = common::legacy_f32_vec(&[3.0, 4.0, 7.0]);
 
     {
         let conn = Connection::open(&db_path).unwrap();

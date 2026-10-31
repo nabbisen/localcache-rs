@@ -31,7 +31,6 @@ localcache              = { version = "0", path = "crates/localcache" }
 # library
 rusqlite                = { version = "0.40.2", features = ["bundled", "limits"] }
 serde                   = { version = "1",    features = ["derive"] }
-bincode                 = { version = "2", features = ["serde"] }
 blake3                  = "1"
 thiserror               = "2"
 base64                  = "0.22"

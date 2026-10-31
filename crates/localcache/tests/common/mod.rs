@@ -7,6 +7,18 @@ use tempfile::TempDir;
 
 use localcache::{CacheEngine, CacheOptions, ChangeDetectionMode};
 
+/// The legacy payload encoding (RFC 008) of a `Vec<f32>`, written by hand and
+/// so independent of the codec under test: a `u64` little-endian count, then
+/// each value's IEEE-754 bits, little-endian.
+#[allow(dead_code)]
+pub fn legacy_f32_vec(values: &[f32]) -> Vec<u8> {
+    let mut bytes = (values.len() as u64).to_le_bytes().to_vec();
+    for value in values {
+        bytes.extend_from_slice(&value.to_bits().to_le_bytes());
+    }
+    bytes
+}
+
 /// Create a file inside `dir` with `name` and `content`, returning its path.
 pub fn write_file(dir: &TempDir, name: &str, content: &[u8]) -> PathBuf {
     let path = dir.path().join(name);
