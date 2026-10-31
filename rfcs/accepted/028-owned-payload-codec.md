@@ -185,3 +185,31 @@ back to the owner before any code is written.
 
 None. The depth limit of 128 follows `serde_json`; if the type zoo shows a legitimate payload deeper than that, R2.2
 is revisited before implementation.
+
+## Amendment 1 (architect, 2026-10-31) — what the independent verification found
+
+Found by the dev team's step 1 (request 046), reviewed by the architect (review 060). The RFC's decisions D1 to D4 are
+unchanged; these close gaps the verification found in its rules.
+
+1. **R1 omission: `is_human_readable()` is `false`** in both directions (`Ipv4Addr` is four bytes, not text), as in
+   `bincode`. Pinned by golden vectors.
+2. **F1 — the encoder refuses what the decoder would refuse (R3).** A value nested deeper than the depth limit is
+   an encode error with the same error as the decoder's. An engine never stores what it would refuse to read (the
+   principle of Amendment 2 of RFC 025, D4). Without it `set` succeeded and `get` failed.
+3. **F2 — a per-decode count budget (R2.1).** R2.1 bounds each sequence or map count by the bytes left, which does not
+   bound their **sum**: a type nesting sequences of zero-byte elements (`Vec<Vec<()>>`) took quadratic time (128 KB of
+   input: 0.094 s; each doubling costs 4×). The sum of all counts claimed in one decode may not exceed the input length.
+   Honest payloads always satisfy it: every element of a type that occupies bytes takes at least one, and a container's
+   header is itself bytes. The error is the existing count error.
+4. **F3 — R6.2 is restated.** "No more than 4× the input length in allocation" cannot hold: serde reserves room for up to
+   1 MiB per open sequence from the size hint, and a one-byte `None` becomes a 16-byte `Option` in memory. The measured
+   truth, and the requirement: **no allocation is made from a claimed length; the decoder allocates strings and byte buffers
+   at their verified length; a sequence or map reserves at most serde's cautious 1 MiB per open nesting level (the
+   reservation is address space, not touched memory), so at most 128 MiB however large the claim; and never more than
+   `bincode` allocated on the same input.** The differential run checks the last clause (zero violations).
+5. **F4 — what a "level" is (R2.2).** One `Option` that holds a value, newtype struct, sequence, tuple (struct,
+   tuple struct), map, or enum being decoded inside another. An enum variant's fields add no level beyond the enum. So
+   `struct Node { next: Option<Box<Node>> }` costs two levels per node (64 nodes decode, 65 do not). Safe by
+   construction; stated here so it is not a surprise.
+6. **Accepted additions:** the encoder returns `LengthMismatch` when a sequence or map writes a different number of
+   elements than it declared (`bincode` wrote an inconsistent, unreadable payload; this turns that into a write error).
