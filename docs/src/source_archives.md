@@ -104,9 +104,7 @@ version.
   tags matching `*.*.*`. GitHub's name patterns are plain wildcards (no character classes), so
   this is only a coarse filter (it also admits SemVer pre-releases such as `1.1.1-rc.1`); the `Gate` job requires the tag to equal the workspace version exactly, which a `v` prefix never does.
 - On crates.io, for each of `localcache` and `localcache-cli`, a trusted
-  publisher: repository `nabbisen/localcache-rs` and workflow `release.yaml`. The records
-  do not name an environment (the owner's decision, 2026-10-31). The owner's approval is
-  therefore enforced by GitHub, in the `release` environment that the `Publish` job runs
-  in, and not by crates.io: crates.io trusts whichever job of `release.yaml` asks for a
-  token. In a repository with one maintainer that is a small difference; it would matter
-  if others gained write access, and naming the environment in both records closes it.
+  publisher: repository `nabbisen/localcache-rs` and workflow `release.yaml`. The records do
+  not name an environment: with one maintainer who holds every role, naming it would separate
+  nothing (see "Roles and privileges" in the [Security Model](./security.md), which also says
+  when this must change).
