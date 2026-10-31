@@ -201,14 +201,20 @@ jobs:
           # each 64 hexadecimal characters, for `localcache` and `localcache-cli`
           # at this version; anything else is an error.
           #
-          # The two sources differ on purpose. A dry run keeps the packaged
-          # `.crate` files in target/package, so it hashes those. A real
-          # `cargo publish` does not, and what users download is what crates.io
-          # serves, so a real run hashes those bytes (the file can lag the
-          # publish by seconds: at most 10 tries, 6 s apart).
+          # The two sources differ on purpose. A dry run hashes the packages
+          # `cargo package` leaves in target/package (`cargo publish --dry-run`
+          # does not: it keeps its packages in cargo's own temporary
+          # directories, target/package/tmp-*, so they are made here; the
+          # dry run just verified the build, so this skips verifying again). A
+          # real `cargo publish` leaves nothing, and what users download is what
+          # crates.io serves, so a real run hashes those bytes (the file can lag
+          # the publish by seconds: at most 10 tries, 6 s apart).
           set -euo pipefail
           OUT="$RUNNER_TEMP/crate-digests.txt"
           : > "$OUT"
+          if [ "$DRY_RUN" = "true" ]; then
+              cargo package --workspace --locked --no-verify
+          fi
           for name in localcache localcache-cli; do
               file="${name}-${VERSION}.crate"
               if [ "$DRY_RUN" = "true" ]; then
