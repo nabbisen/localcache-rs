@@ -1696,12 +1696,16 @@ authorization. **Done:** Q9a–Q9c, Q3d, Q1c, Q3b, Q3c, Q2f (local commits), Q3e
 | 7 ✅ | Owner authorized `0.22.0` dated 2026-10-31; date commit; signed tag; `Release` on the tag with `dry_run` first, then for real | owner, architect | 4, 6; — done, see the v0.22.0 release record |
 | 8 ✅ | After release: fresh-consumer checks (1.85 and the new `rusqlite` line), ROADMAP and register reconciliation | architect | 7; — done; v0.23.0 planning is a separate task |
 
-### After v0.22.0 — plan authorized by the owner, 2026-10-31
+### After v0.22.0 — plan authorized by the owner, 2026-10-31 (updated 2026-11-01)
 
-**v0.22.1** = Q11 (RFC 028), a fix release: **✅ released 2026-11-01**. **v0.23.0** = RFC 026 (recency contract, schema v6, the
-duplicate index) and RFC 029 (encryption: payload bound to its row, require-encryption, key zeroization, `aes-gcm 0.11`, paged
-rotation), both to be drafted by the architect and decided by the owner. **1.0:** not planned. It requires the owner's explicit
-confirmation.
+**v0.22.1** = Q11 (RFC 028), a fix release: **✅ released 2026-11-01**. **v0.22.2** = a documentation-only patch that announces v0.23.0 one release ahead, as the
+v0.21.5 notes promised (RFC 026 decision 2). **v0.23.0** = **RFC 026, accepted by the owner 2026-11-01**: a true use order for eviction (reads and writes, a strict order that
+does not depend on a clock) and one path index, in one schema v6; Q12 = the migration and the index drop, Q13 = the use order. **Step 0** (the dev team's verification of the design,
+`rfcs/handoffs/026-use-order-and-one-path-index/step0-verification.md`) comes first: if it shows the use order cannot stay simple, Q13 leaves v0.23.0 and Q12 ships alone.
+Review of scope: `.git-exclude/reviewed/071-…`. **RFC 029** (encryption integrity: payload bound to its row, a strict mode, key zeroization, a paged upgrade; no schema change) is proposed as the
+subject of v0.24.0 and is not yet drafted; the owner decides it after RFC 026. **1.0:** not planned. It requires the owner's explicit confirmation.
+
+Order of the dev team's work: v0.22.2 preparation → step 0 → Q12 → Q13 → v0.23.0 release preparation.
 
 ### v0.22.1 — released 2026-11-01
 

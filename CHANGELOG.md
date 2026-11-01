@@ -7,6 +7,27 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.22.2] — Unreleased
+
+*Date set at owner authorization.*
+
+**A documentation release. Not breaking.** No code, schema, wire-format, dependency or MSRV change. It carries the announcement that the v0.21.5
+notes promised "one release ahead" of the change they described.
+
+**Announced: v0.23.0 changes the eviction order and the stored schema (RFC 026).** Nothing changes in this release.
+- **Eviction counts writes.** Today `max_entries` evicts the least recently *read* entries, never-read entries first, so an entry read once, ever, outlives
+  every entry that was only written. From v0.23.0 eviction removes the entry whose last *use* (a read, a write, an overwrite or a `touch`) is oldest, in a
+  strict order that does not depend on a clock's resolution.
+- **`last_accessed_at` means last use.** `EntryInfo::last_accessed_at`, `ExportRecord::last_accessed_at` and `SortKey::LastAccessed` keep their types and their
+  unit (Unix seconds) but report when the entry was last read **or written**; a stored entry no longer reports `0`.
+- **Schema v6, one way.** The first writable open of a v5 database migrates it in one transaction: the use order replaces `last_accessed_at` and the LRU index,
+  and `idx_files_namespace_path`, which duplicates the index SQLite already builds for `UNIQUE(namespace, path)`, is dropped (measured on 300,000 rows: the database
+  file is 22% smaller and inserts are 11% to 15% faster). **A migrated database is refused by v0.22.x and earlier.** To keep a way back, export before
+  upgrading (`localcache export`, or `export_entries`). A read-only open of a v5 database reports `SchemaNotCurrent` until a writable open migrates it.
+- No payload byte changes: payloads, encryption, compression and the wire format are untouched.
+
+---
+
 ## [0.22.1] — 2026-11-01
 
 Authorized by the project owner on 2026-11-01. The source is that of release candidate `5672c54`; the release
@@ -1711,7 +1732,8 @@ Namespaces, batch ops, TTL, PRAGMAs, schema migration.
 ## [0.1.0] — 2026-05-03
 Initial release.
 
-[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/0.22.1...HEAD
+[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/0.22.2...HEAD
+[0.22.2]: https://github.com/nabbisen/localcache-rs/compare/0.22.1...0.22.2
 [0.22.1]: https://github.com/nabbisen/localcache-rs/compare/0.22.0...0.22.1
 [0.22.0]: https://github.com/nabbisen/localcache-rs/compare/0.21.6...0.22.0
 [0.21.6]: https://github.com/nabbisen/localcache-rs/compare/0.21.5...0.21.6

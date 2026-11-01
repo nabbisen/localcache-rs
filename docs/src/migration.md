@@ -200,6 +200,16 @@ process-crash durability claim. Keep normal application backups appropriate
 to the value of your cache data; atomic migration is not a replacement for a
 backup and does not create one automatically.
 
+### Announced: schema v6 (v0.23.0)
+
+The next minor release changes the stored schema (RFC 026), and this page is where to find what to do about it. The first writable open of a v5 database migrates
+it in one transaction: eviction gets a strict order of *use* (reads and writes), `last_accessed_at` becomes "when the entry was last read or written", and the
+redundant index `idx_files_namespace_path` is dropped (about 22% smaller database files and 11% to 15% faster inserts, measured on 300,000 rows).
+
+- **It is one way.** A migrated database is refused by v0.22.x and earlier. To keep a way back, export first (`localcache export`, or `export_entries`).
+- A read-only open of a v5 database reports `SchemaNotCurrent` until a writable open migrates it (`localcache copy --from-db … --upgrade-source` does that for a source).
+- Payload bytes, encryption, compression and the wire format do not change.
+
 ## Wire-format stability guarantee (v0.18.0+)
 
 The `Bincode` codec (the default, and the only non-JSON codec) uses

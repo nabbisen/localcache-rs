@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| Status | Proposed (architect, 2026-11-01; scope authorized by the owner the same day; awaiting the owner's acceptance) |
+| Status | Accepted (owner, 2026-11-01), both decisions as recommended |
 | Feature | *(core)* |
 | Touches | `db/schema*.rs` (migration `v5 → v6`, classifier), `db/repository.rs` (use assignment, eviction), `cache/engine*.rs`, `cache/engine/portable.rs` (export, import), `docs/src/` (builder, architecture, performance, api, migration), the compat fixtures |
 | Release | **v0.23.0** (a minor release: a documented policy changes, and the schema changes) |
@@ -131,12 +131,14 @@ README before v0.23.0 ships (decision 2).
 
 Export, then import into v0.22.x. A revert of the release restores the old code, which refuses v6 databases; the CHANGELOG says so.
 
-## Decisions requested of the owner
+## Decisions
 
-1. **Accept RFC 026** as written, including: `last_accessed_at` now means last use (R2); an import keeps the exported recency and is not a use (R2);
-   the one-way migration (R3); the removal rule if step 0 fails.
-2. **Announce one release ahead with a documentation-only v0.22.2** (see Compatibility), keeping the promise of the v0.21.5 notes. Recommended: yes. If
-   not, the announcement is made in the v0.23.0 notes only and the promise is recorded as not kept.
+Accepted by the owner on 2026-11-01 with the recommended answers:
+1. RFC 026 as written: `last_accessed_at` means last use (R2); an import keeps the exported recency and is not a use (R2); the one-way migration (R3);
+   the removal rule if step 0 fails.
+2. The announcement owed is made by a **documentation-only v0.22.2** before v0.23.0 (see Compatibility).
+
+Handoffs: `../handoffs/026-use-order-and-one-path-index/` (v0.22.2 preparation, step 0, then Q12 and Q13).
 
 ## Open questions
 
