@@ -81,7 +81,9 @@ The "Background" section is optional in both templates.
 
 ### Proposed
 
-*(none)*
+| RFC | Title | Target |
+|-----|-------|--------|
+| [026](./proposed/026-use-order-and-one-path-index.md) | A True Use Order for Eviction, and One Path Index (Schema v6) | v0.23.0 (Q12 = the index and migration, Q13 = the use order) |
 
 ### Archive
 
