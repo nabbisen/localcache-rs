@@ -78,6 +78,16 @@ What changes for you:
   (118 golden vectors; every compatibility fixture; a one-time differential run) and has no
   `unsafe` code.
 
+### Internal
+
+- **The release workflow records the two `.crate` digests fail-closed.** In the v0.22.0 release the
+  checksum block of the GitHub release listed `*.crate` where the two digests belong (corrected by
+  hand afterwards): the step that records them wrote a garbage line and succeeded when nothing
+  matched. It now fails unless it records exactly two 64-character SHA-256 digests, one each for
+  `localcache` and `localcache-cli` at the released version, taken from what crates.io serves on a
+  real run (and from `cargo package` on a dry run), and the step that creates the GitHub release
+  refuses to run with anything else. Nothing in the library or the CLI changes.
+
 ---
 
 ## [0.22.0] — 2026-10-31

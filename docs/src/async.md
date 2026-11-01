@@ -182,10 +182,10 @@ alternative runtime features instead:
 
 ```toml
 # async-std backend
-localcache = { version = "0.22.0", features = ["async-std"] }
+localcache = { version = "0.22.1", features = ["async-std"] }
 
 # smol backend
-localcache = { version = "0.22.0", features = ["smol"] }
+localcache = { version = "0.22.1", features = ["smol"] }
 ```
 
 The public API of `AsyncCacheEngine` is identical regardless of which
