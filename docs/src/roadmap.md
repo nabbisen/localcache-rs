@@ -61,7 +61,8 @@ completed (seven purpose-named variants, an opaque `DatabaseError`), configurati
 accepted now rejected before anything is written, the APIs v0.21.5 deprecated removed, and the
 decompression of stored payloads bounded. See the migration notes in [Error Handling](./errors.md) and the
 [CHANGELOG](https://github.com/nabbisen/localcache-rs/blob/main/CHANGELOG.md) for what changes for you.
-Planned next: v0.22.1, a fix release for the one known issue of v0.22.0, and v0.23.0 (a true
+**v0.22.1 was released on 2026-11-01**, a fix release: a stored payload can no longer abort or crash
+a reader, and the `bincode` dependency left the tree. Planned next: v0.23.0 (a true
 least-recently-used eviction policy on a schema change). See the live
 [ROADMAP.md](https://github.com/nabbisen/localcache-rs/blob/main/ROADMAP.md) for the milestone
 table and RFC mapping.
