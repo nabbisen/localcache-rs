@@ -204,10 +204,14 @@ backup and does not create one automatically.
 
 The next minor release changes the stored schema (RFC 026), and this page is where to find what to do about it. The first writable open of a v5 database migrates
 it in one transaction: eviction gets a strict order of *use* (reads and writes), `last_accessed_at` becomes "when the entry was last read or written", and the
-redundant index `idx_files_namespace_path` is dropped (about 22% smaller database files and 11% to 15% faster inserts, measured on 300,000 rows).
+redundant index `idx_files_namespace_path` is dropped (in a raw-SQL benchmark on 300,000 synthetic rows the database file was 22% smaller and inserts 11% to 15% faster;
+the engine's own operations include work this index does not touch).
 
 - **It is one way.** A migrated database is refused by v0.22.x and earlier. To keep a way back, export first (`localcache export`, or `export_entries`).
-- A read-only open of a v5 database reports `SchemaNotCurrent` until a writable open migrates it (`localcache copy --from-db … --upgrade-source` does that for a source).
+- From v0.23.0, a read-only open of a v5 database reports `SchemaNotCurrent` until a writable open migrates it (`localcache copy --from-db … --upgrade-source` does that
+  for a source). In v0.22.x, v5 is the current schema and opens read-only as usual.
+- The migration runs in one transaction and needs free disk space of up to about the size of the database (measured: 0.2 to 0.8 GB of write-ahead log for 1 to 2 million
+  entries); on a full disk it fails and leaves the database as it was.
 - Payload bytes, encryption, compression and the wire format do not change.
 
 ## Wire-format stability guarantee (v0.18.0+)

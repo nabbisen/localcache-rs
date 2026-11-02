@@ -55,8 +55,15 @@ across connections and processes. Eviction becomes `ORDER BY last_used_us ASC, i
 Uses: `get` and `get_if_fresh` hits (as today), `touch`, `set`, `batch_set`, and an overwrite (all new). Read-only engines and `ReadPool` slots never
 write, so never assign (as today). `check_status`, `explain` and queries are not uses (as today).
 
-**Overflow.** A value must stay below 2^62. A database whose maximum is at or above that bound (a hostile or damaged file) makes the next use fail with a
-typed error (`DatabaseState`, "use order exhausted"), never a silent wrap or a conversion to a float.
+**Overflow.** A value must be an integer below 2^62. SQLite does not wrap or fail at the limit of `i64`: `MAX + 1` at 2^63−1 becomes a **float** and is stored as
+one (verified, step 0). So the column carries the rule itself:
+`last_used_us INTEGER NOT NULL DEFAULT 0 CHECK (typeof(last_used_us) = 'integer' AND last_used_us < 4611686018427387904)`. A use that would break it fails with
+`SQLITE_CONSTRAINT_CHECK` and changes nothing; the engine maps that error to `DatabaseState` ("use order exhausted"). The fresh v6 table is defined with the
+same column (same position, default and check) as the migrated one, and the classifier compares the table's structure (`PRAGMA table_xinfo`), never its SQL text.
+
+**Where a failed use is reported.** `set`, `batch_set` and `touch` return the error. A `get` or `get_if_fresh` **hit** keeps today's behaviour: the value is
+returned and a failure to record the use is ignored, because a read must not fail for want of bookkeeping (documented on those methods). Only a hostile file can
+make a use fail, so this costs nothing in practice.
 
 ### R2 — What the public fields mean
 
@@ -65,19 +72,30 @@ was last used (read or written)"**, replacing "last read; 0 = never read". A sto
 it. The rustdoc, `README.md`, `builder.md` and `architecture.md` say so, and say that the eviction order is finer than the public seconds.
 
 **Import** keeps the exported recency: an imported row gets `s × 1_000_000`, where `s` is the record's `last_accessed_at` if it is above 0, else its `updated_at`
-(the same rule as R3 step 1; an import is a restore, not a use). Two rows may then share a value; `id` breaks that tie, deterministically. The strict rule is about uses, and every later use exceeds every stored value.
+(the same rule as R3 step 1; an import is a restore, not a use). `s` must be non-negative and `s × 1_000_000` must be below 2^62, computed with checked
+arithmetic; a record outside that range makes the whole import fail before anything is written, with `InvalidArgument { argument: "records" }`. Two rows may
+share a value; `id` (the order in which the import inserts them) breaks that tie. **Export is ordered by use, oldest first, ties by `id`** (it was ordered by
+`updated_at` descending, with no tie-break, and the order was not documented), so an export made by v0.23.0 imports with its relative recency intact even within
+one second; an export made by an older version has no finer information to keep. The strict rule is about uses, and every later use exceeds every stored value.
 
 ### R3 — The migration `v5 → v6` (one transaction, RFC 010)
 
 1. Compute each row's last-use seconds `s = last_accessed_at` if it is above 0, else `updated_at` (a never-read entry is ordered by when it was written,
    among the others: this is the intended change). Per namespace, in order of `(s, updated_at, id)`, assign `v_1 = s_1 × 10^6` and
    `v_i = max(s_i × 10^6, v_{i-1} + 1)`. No two rows share a value, the order of `s` is preserved, and more than 10^6 rows in one second cannot collide.
-2. Create the column `last_used_us`, backfill it, drop `last_accessed_at`; drop `idx_files_lru` and **`idx_files_namespace_path`**; create
-   `idx_files_use` on `(namespace, last_used_us)`.
+2. The order SQLite forces, all in the one transaction: add the column (with the check of R1); run the backfill as **one SQL statement** (`UPDATE … FROM` over window
+   functions: `v_i = i + max_{j≤i}(s_j × 10^6 − j)` is the same recurrence in closed form, verified against an independent implementation, step 0); drop `idx_files_lru` and
+   **`idx_files_namespace_path`** (a column cannot be dropped while an index uses it); drop `last_accessed_at`; create `idx_files_use` on `(namespace, last_used_us)`.
+   The backfill must not be written as a row-by-row loop (step 0: 345 s against 4 s at 1M rows).
 3. Postconditions, checked before `user_version = 6` is set last: the classifier accepts exact v6; the row count and every payload are unchanged; per
    namespace the values are strictly increasing in the order of step 1; no value is at or above 2^62.
-4. The classifier expects, for v6, the objects of R3 step 2 and nothing else. Crash-injection hooks as in the existing migrations; a failed migration
+4. The classifier expects, for v6, the objects of R3 step 2 and nothing else, with the structure of R1. Crash-injection hooks as in the existing migrations; a failed migration
    leaves the database as it was.
+
+Resources, stated: the transaction writes about as much write-ahead log as a fifth to four fifths of the database (measured: 0.2 to 0.8 GB for 1 to 2 million
+entries) and `DROP COLUMN` rewrites the table, so the migration needs free disk space of up to about the size of the database and takes seconds to tens of
+seconds at a million entries on a good disk; on a full disk it fails and leaves the database as it was. The existing migrations share the property; the
+announcement and the migration page say it.
 
 Compatibility consequences, stated: **a migrated database is refused by v0.22.x and earlier** (their classifier expects the dropped objects); rollback
 means export, then import into an older version. A read-only open of a v5 database reports `SchemaNotCurrent` until a writable open migrates it, as
@@ -90,11 +108,11 @@ Every statement of "least recently **read**", of `last_accessed_at == 0`, and of
 
 ## Test plan
 
-- **Step 0, by the dev team before any code:** on scratch copies, with the bundled SQLite (3.53.2): the use statement under two connections racing
-  (never a tie, never a gap that matters); the backfill rule on a namespace with more than 10^6 rows in one second, and its time at 1M rows; the
-  planner on the real queries without the duplicate index; the list of every reader of `last_accessed_at` (queries, candidates, export, import, CLI) and
-  what each needs. **If this shows the design cannot stay simple, A (R1, R2, the column change) is removed from the release and B (the index drop) ships alone;
-  the dev team stops and reports.**
+- **Step 0, done (request 052, 2026-11-01; its findings are folded into R1 to R3 above).** On scratch copies with the bundled SQLite (3.53.2): 4.5 million use values returned
+  to eight concurrent connections (separate processes and threads; a real, a stuck and a backwards clock) with no duplicate; the overflow behaviour; the backfill at 1M
+  and 2M rows sharing one second, in at most 20 MiB; the 26 real statements on the v5 and v6 shapes (no path or namespace plan changes shape, `path_in_dir` included);
+  every reader of `last_accessed_at`. Its verdict: the design stays simple. **Still to measure, at implementation:** the cost of the `MAX` seek on a warm `get` hit
+  through the engine (0.3 to 5.9 µs of CPU in memory), reported, with a regression above 10% of the hit's time brought to the architect.
 - The observed pathology as a test: the `a`/`g`/`h` sequence now evicts `a`.
 - `touch` protects from eviction even inside one microsecond; a write counts as a use; an overwrite counts; read-only engines write nothing.
 - Migration from **every** historical fixture (v1 to v5) reaches v6 with all entries and payloads intact; the failure-injection points of the
@@ -142,4 +160,4 @@ Handoffs: `../handoffs/026-use-order-and-one-path-index/` (v0.22.2 preparation, 
 
 ## Open questions
 
-None. Step 0 exists to settle the implementation questions that cannot be settled by reading.
+None.

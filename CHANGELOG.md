@@ -21,9 +21,11 @@ notes promised "one release ahead" of the change they described.
 - **`last_accessed_at` means last use.** `EntryInfo::last_accessed_at`, `ExportRecord::last_accessed_at` and `SortKey::LastAccessed` keep their types and their
   unit (Unix seconds) but report when the entry was last read **or written**; a stored entry no longer reports `0`.
 - **Schema v6, one way.** The first writable open of a v5 database migrates it in one transaction: the use order replaces `last_accessed_at` and the LRU index,
-  and `idx_files_namespace_path`, which duplicates the index SQLite already builds for `UNIQUE(namespace, path)`, is dropped (measured on 300,000 rows: the database
-  file is 22% smaller and inserts are 11% to 15% faster). **A migrated database is refused by v0.22.x and earlier.** To keep a way back, export before
-  upgrading (`localcache export`, or `export_entries`). A read-only open of a v5 database reports `SchemaNotCurrent` until a writable open migrates it.
+  and `idx_files_namespace_path`, which duplicates the index SQLite already builds for `UNIQUE(namespace, path)`, is dropped (in a raw-SQL benchmark on 300,000 synthetic rows the
+  database file was 22% smaller and inserts 11% to 15% faster; the engine's own operations include work this index does not touch). **A migrated database is
+  refused by v0.22.x and earlier.** To keep a way back, export before upgrading (`localcache export`, or `export_entries`). From v0.23.0, a read-only open of a v5
+  database reports `SchemaNotCurrent` until a writable open migrates it (in v0.22.x, v5 is the current schema). The migration runs in one transaction and needs
+  free disk space of up to about the size of the database (measured: 0.2 to 0.8 GB of write-ahead log for 1 to 2 million entries).
 - No payload byte changes: payloads, encryption, compression and the wire format are untouched.
 
 ---
