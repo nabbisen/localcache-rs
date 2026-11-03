@@ -83,7 +83,9 @@ The "Background" section is optional in both templates.
 
 ### Proposed
 
-*(none)*
+| RFC | Title | Release |
+|-----|-------|---------|
+| [030](./proposed/030-two-crates-behind-one.md) | Two Crates Behind One: `localcache-format` and `localcache-storage` | v0.25.0, after v0.24.0 |
 
 ### Archive
 
