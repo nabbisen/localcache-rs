@@ -107,9 +107,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   format or as JSON.
 - **Atomic writes** — `set` uses a single SQLite transaction; partial failures
   leave no corrupt state.
-- **LRU eviction** — `max_entries` evicts the least recently **read** entries
-  automatically; a write never evicts what it just wrote. From v0.23.0 a write also counts
-  as a use (announced; see the CHANGELOG).
+- **LRU eviction** — `max_entries` evicts the least recently **used** entries
+  automatically; a read, a `touch` and a write all count as a use, and a write never
+  evicts what it just wrote.
 - **Thread-safe** — `SyncCacheEngine<T>` wraps the engine in `Arc<Mutex<…>>` for
   multi-threaded use; `ReadPool<T>` gives N concurrent read-only connections for
   read-heavy workloads with a separate writer; `AsyncCacheEngine<T>` for async

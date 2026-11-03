@@ -99,7 +99,7 @@ whole table. But finding and ordering those 25 candidates still means reading
 every entry's metadata through the covering index:
 
 ```text
-SEARCH main.files USING COVERING INDEX idx_files_namespace_path (namespace=?)
+SEARCH main.files USING COVERING INDEX sqlite_autoindex_files_1 (namespace=?)
 ```
 
 That scan is real work — path, mtime, size, and hash for every entry in the
@@ -143,7 +143,7 @@ The same index explains the glob difference. A leading literal produces a range
 scan:
 
 ```text
-SEARCH main.files USING COVERING INDEX idx_files_namespace_path (namespace=? AND path>? AND path<?)
+SEARCH main.files USING COVERING INDEX sqlite_autoindex_files_1 (namespace=? AND path>? AND path<?)
 ```
 
 A leading wildcard cannot, so the pattern is tested against every entry in the
@@ -162,6 +162,22 @@ Both returned the same 1000 rows in the measurements above; the only difference 
 the prefix. At ten thousand entries the wildcard is already 1.7× the literal's
 time, growing to 68× at a million — easy to miss in a small test, and severe at
 scale.
+
+## What a read hit costs (v0.23.0)
+
+A read hit records a use: it reads the namespace's largest use value and moves one index entry
+(RFC 026); before v0.23.0 it rewrote a whole-second timestamp. On a 100,000-entry database a hot hit took
+**about 7 to 11 µs more** than before. Two measurements are the two ends: a first micro-measurement gave
+6.6 µs, and seven alternating rounds of paired runs gave a median of 11 µs, for a 64-byte payload and for
+the `scale_profile` payload alike (single measurements ranged from about −4 to +33 µs). The cost did not
+grow with the payload size. A hit that lands on a cold page costs far more than that in either version; the
+difference above is only what the use adds.
+
+These are bounds, not promises: they were measured on one shared host, for one database size and two payload
+shapes. Measure on your own hardware if a few microseconds per hit matter.
+Writing gets cheaper in the same change: `batch_set` took about three quarters of its former time per entry, and
+a new database file is about a quarter smaller (one fewer index to maintain). A file migrated from v5 does not
+get smaller by itself; see [Migration](./migration.md).
 
 ## Namespaces are the main scaling lever
 

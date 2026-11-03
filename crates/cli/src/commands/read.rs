@@ -30,18 +30,14 @@ pub(crate) fn cmd_list(opts: CacheOptions, args: ListArgs) -> Result<(), LocalFi
     // Header
     println!(
         "{:<55}  {:<7}  {:<8}  {:<18}  {:<18}",
-        "PATH", "VERSION", "ENCODING", "UPDATED_AT", "LAST_ACCESS"
+        "PATH", "VERSION", "ENCODING", "UPDATED_AT", "LAST_USED"
     );
     println!("{}", "-".repeat(120));
 
     for e in &entries {
         let path_str = e.path.display().to_string();
         let updated = format_unix_seconds(e.updated_at);
-        let accessed = if e.last_accessed_at == 0 {
-            "never".to_owned()
-        } else {
-            format_unix_seconds(e.last_accessed_at)
-        };
+        let accessed = format_unix_seconds(e.last_accessed_at);
         println!(
             "{:<55}  {:<7}  {:<8}  {:<18}  {:<18}",
             truncate(&path_str, 55),

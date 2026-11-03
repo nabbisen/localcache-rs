@@ -110,10 +110,11 @@ guarantee below controls how those bytes decode.
 | 3 | 0.4 | Added `payload_version`, `encoding` |
 | 4 | 0.6 | Added `last_accessed_at` + LRU index |
 | 5 | 0.20 | `mtime` precision: whole seconds → **nanoseconds** |
+| 6 | 0.23 | `last_used_us` (the use order) replaces `last_accessed_at` and its index; the duplicate path index is dropped |
 
 ### Atomic and payload-preserving upgrades
 
-Fresh schema creation and every supported v1-through-v4 upgrade run in one
+Fresh schema creation and every supported v1-through-v5 upgrade run in one
 SQLite `IMMEDIATE` transaction. The transaction classifies the starting
 schema, performs every required step, advances `user_version` once, validates
 the final schema and foreign keys, and then commits. Any returned error or
@@ -200,19 +201,50 @@ process-crash durability claim. Keep normal application backups appropriate
 to the value of your cache data; atomic migration is not a replacement for a
 backup and does not create one automatically.
 
-### Announced: schema v6 (v0.23.0)
+### Schema v6 (v0.23.0): the use order, and one path index
 
-The next minor release changes the stored schema (RFC 026), and this page is where to find what to do about it. The first writable open of a v5 database migrates
-it in one transaction: eviction gets a strict order of *use* (reads and writes), `last_accessed_at` becomes "when the entry was last read or written", and the
-redundant index `idx_files_namespace_path` is dropped (in a raw-SQL benchmark on 300,000 synthetic rows a new database file was 22% smaller and inserts 11% to 15% faster;
-the engine's own operations include work this index does not touch; a migrated file does not shrink by itself, and `shrink_database()` reclaims its free pages).
+The first **writable** open of a v5 database migrates it to v6 in one transaction. Two things
+change in the file, and one in the meaning of a field.
 
-- **It is one way.** A migrated database is refused by v0.22.x and earlier. To keep a way back, export first (`localcache export`, or `export_entries`).
-- From v0.23.0, a read-only open of a v5 database reports `SchemaNotCurrent` until a writable open migrates it (`localcache copy --from-db … --upgrade-source` does that
-  for a source). In v0.22.x, v5 is the current schema and opens read-only as usual.
-- The migration runs in one transaction and needs free disk space of up to about the size of the database (measured: about 0.6 of it for 1 million entries, which took 8 seconds);
-  on a full disk it fails and leaves the database as it was.
-- Payload bytes, encryption, compression and the wire format do not change.
+* **Eviction follows uses, not reads.** The column `last_accessed_at` (Unix seconds of the last
+  read, `0` for an entry never read) is replaced by `last_used_us`, a strict order of uses: a read
+  hit, a `touch`, a write and an overwrite are all uses, and two uses never tie. An entry read once
+  no longer outlives every entry that was only written. The migration places every existing entry
+  by the second of its last use (`last_accessed_at` when above 0, otherwise `updated_at`), in the
+  order of that second, then `updated_at`, then `id`, and gives entries that share a second
+  consecutive values, so no two entries of a namespace share one. Entries never read are therefore
+  ranked among the others by when they were written, which is the intended change and the one visible
+  change in what a cache keeps.
+* **`last_accessed_at` means the last use.** `EntryInfo::last_accessed_at`,
+  `ExportRecord::last_accessed_at` and `SortKey::LastAccessed` keep their types and their unit
+  (seconds) and now report the second an entry was last read **or written**; a stored entry no longer
+  reports `0`. `localcache list` prints that second in a column named `LAST_USED`, and no longer
+  prints `never`.
+* **One path index.** `idx_files_namespace_path` duplicated the index SQLite already builds for
+  `UNIQUE(namespace, path)`, and is dropped (with `idx_files_lru`, which `idx_files_use` replaces).
+  Path lookups and the `path_in_dir` range query are served by the UNIQUE index with the same plans.
+
+**What to do before you upgrade**
+
+* **It is one way.** A migrated database is refused by v0.22.x and earlier (their classifier expects
+  the dropped objects), and there is no downgrade command. To keep a way back, **export first**:
+  `localcache export` (or `export_entries`) writes JSON Lines, which you can import into a fresh database of the older version.
+* The migration runs in one transaction, takes about **8 seconds at 1,000,000 entries**, uses about
+  20 MiB of memory, and needs free disk space of about **0.6 of the database's size** (measured at
+  1,000,000 entries on one host: the file was 507 MiB and the footprint peaked at about 810 MiB). On a
+  full disk, or on any failure, it leaves the database exactly as it was.
+* **A migrated file does not shrink.** The dropped index and column leave free pages in it;
+  `shrink_database()` (or SQLite's `VACUUM`) returns them. A *new* v6 database is smaller than a v5 one
+  with the same entries, and writing is faster (see [Performance](./performance.md)).
+* A read-only open of a v5 database reports `SchemaNotCurrent` until a writable open migrates it
+  (`localcache copy --from-db … --upgrade-source` does that for a source). In v0.22.x, v5 is the
+  current schema.
+* A database whose stored recency is damaged (a last-use second that is negative, or that the use order
+  cannot hold) is **refused**, not repaired: the migration fails with `DatabaseState` and changes nothing.
+* **Export order and import.** An export now lists entries oldest use first, and an import keeps each
+  entry's recency instead of treating the import as a use; see [Data Portability](./portability.md).
+  An import refuses a record whose recency is out of range.
+* Payload bytes, encryption, compression and the wire format do not change.
 
 ## Wire-format stability guarantee (v0.18.0+)
 

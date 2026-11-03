@@ -7,6 +7,37 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [Unreleased]
+
+**Breaking: the eviction order, the stored schema (v6, one way), the meaning of `last_accessed_at`, the export order and one CLI column** (RFC 026).
+
+### Breaking
+
+- **Eviction follows uses, not reads.** `max_entries` evicts the entry whose last *use* is oldest. A read hit, `touch`, a write (`set`, `batch_set`) and an overwrite are uses; an import is
+  a restore, not a use. The order is strict (no two entries of a namespace tie), is assigned in the statement that records the use, and does not depend on the clock's resolution or
+  on the clock stepping backwards. An entry read once no longer outlives every entry that was only written.
+- **`last_accessed_at` means the last use.** `EntryInfo::last_accessed_at`, `ExportRecord::last_accessed_at` and `SortKey::LastAccessed` keep their types and their unit (Unix
+  seconds) and now report when the entry was last read **or written**; a stored entry no longer reports `0`.
+- **Export order and import range.** `export_entries` lists entries oldest use first (it was newest write first). An import keeps each record's recency and refuses a record whose recency is
+  negative or too large for the use order (`last_accessed_at` above 4,611,686,018,427 seconds).
+- **`touch`, `set` and `batch_set` can return a new error** when a namespace's use order is exhausted (`DatabaseState`, "use order exhausted"); `get` and `get_if_fresh` ignore a failed use.
+- **Schema v6, one way.** The first writable open of a v5 database migrates it in one transaction: `last_used_us` replaces `last_accessed_at`, and `idx_files_lru` and
+  `idx_files_namespace_path` (a duplicate of the index SQLite builds for `UNIQUE(namespace, path)`) are dropped in favour of `idx_files_use`. A database whose stored recency is negative
+  or out of range is refused with `DatabaseState` and left unchanged.
+  - **What a migrated cache keeps changes in one way:** entries that were never read are now ranked among the others by when they were written, so they no longer all go first.
+  - **A migrated database is refused by v0.22.x and earlier.** To keep a way back, export before upgrading (`localcache export`, or `export_entries`).
+  - **Cost:** about 8 seconds, about 20 MiB of memory and free disk space of about 0.6 of the database's size at 1,000,000 entries (one host, one run). On any failure the file is unchanged.
+  - **A migrated file does not shrink** (measured: 507 MiB before, 529 MiB after, at 1,000,000 entries); `shrink_database()` reclaims its free pages. A *new* v6 file is smaller.
+  - A read-only open of a v5 database reports `SchemaNotCurrent` until a writable open migrates it; `localcache copy --from-db … --upgrade-source` upgrades a source.
+- **CLI:** `localcache list` names its last column `LAST_USED` (it was `LAST_ACCESS`) and no longer prints `never`.
+
+### Changed
+
+- A read hit now reads the namespace's largest use value and moves one index entry; in a micro-measurement on a 100,000-entry database it cost about 7 to 11 µs more per hot hit, measured on one shared host. A
+  `batch_set` took about 0.74 of its former time and a new file is about 24% smaller. See [Performance](docs/src/performance.md) for the figures and their limits.
+
+---
+
 ## [0.22.2] — 2026-11-03
 
 Authorized by the project owner on 2026-11-03. The source is that of release candidate `3374539`; the release

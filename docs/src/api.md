@@ -168,8 +168,8 @@ CacheOptions {
 
 `read_only` accepts only an existing file-backed database with the exact
 current schema. It never initializes or migrates the database, and every
-mutating method returns `LocalFileCacheError::ReadOnly`. Pure reads skip the
-LRU timestamp update. For file-backed databases, `shared_cache` implies this
+mutating method returns `LocalFileCacheError::ReadOnly`. Pure reads skip
+recording a use (recording it writes the database). For file-backed databases, `shared_cache` implies this
 same read-only contract.
 
 ## `ScanOptions`

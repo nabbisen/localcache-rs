@@ -500,7 +500,7 @@ fn main() {
         |result| assert!(result.is_some(), "probe get_if_fresh must return Some"),
     );
 
-    // Hypothesis: a leading literal lets SQLite use idx_files_namespace_path,
+    // Hypothesis: a leading literal lets SQLite use the (namespace, path) index,
     // while a leading wildcard cannot, forcing a full scan.
     //
     // The two patterns below are chosen to select the **same 1000 rows**, so the

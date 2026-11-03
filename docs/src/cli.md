@@ -49,7 +49,7 @@ localcache -d cache.sqlite3 list
 localcache -d cache.sqlite3 list --limit 50
 ```
 
-Output columns: `PATH`, `VERSION`, `ENCODING`, `UPDATED_AT`, `LAST_ACCESS`
+Output columns: `PATH`, `VERSION`, `ENCODING`, `UPDATED_AT`, `LAST_USED` (the second the entry was last read or written)
 
 ### `stats`
 

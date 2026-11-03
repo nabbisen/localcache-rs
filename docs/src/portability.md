@@ -7,6 +7,13 @@
 Base64-encoded payload — making it fully text-portable and easy to
 inspect with standard tools.
 
+**The order of an export is the order of use, oldest first** (ties by the order the entries
+were stored). From v0.23.0 this is what `export_entries` and `localcache export` produce; before,
+the order was by write time, newest first, and was not documented. It matters because a record's
+`last_accessed_at` is in seconds: entries used within the same second are told apart only by their
+position, and an import stores records in order, so importing an export in order keeps their
+relative recency. An export made before v0.23.0 carries no finer information to keep.
+
 ### Exporting
 
 ```rust
@@ -39,10 +46,17 @@ println!("imported: {imported}");
 **distinct** paths (the stored key; the same path twice counts once) are rejected before anything
 is written, with `InvalidArgument { argument: "records", .. }`: split the import, or raise the
 bound. An import that fits is stored together with the eviction it triggers in one transaction:
-the least recently read older entries of the namespace make room, and the imported entries are
+the least recently used older entries of the namespace make room, and the imported entries are
 never the ones evicted. `import_from`, and the `import` and `copy` CLI commands built on it,
 follow the same rule. (Before v0.22.0 an import ignored the bound and could leave the namespace
 over it.) The CLI has no `max_entries` option, so it is unaffected.
+
+**An import is a restore, not a use.** Each imported entry keeps the recency it was exported with, as
+its `last_accessed_at` seconds (for a record from before v0.23.0 that was never read, whose
+`last_accessed_at` is 0, its `updated_at`); an entry used after the import ranks above every imported
+one. A record whose recency is negative, or too large to hold (the second times a million must stay below
+2^62), makes the **whole** import fail before anything is written, with
+`InvalidArgument { argument: "records", .. }`.
 
 Via the CLI:
 

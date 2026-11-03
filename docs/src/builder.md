@@ -103,10 +103,13 @@ use `no_ttl()` for entries that never expire by age.
 
 ### `max_entries(n)`
 
-Cap the namespace at `n` entries. Eviction removes the entries with the
-oldest `last_accessed_at` first — **never-read entries first** (`last_accessed_at
-== 0`), then oldest `updated_at`, then lowest `id` as a final deterministic
-tiebreak. **A write never evicts what it just wrote.** `max_entries(0)` is
+Cap the namespace at `n` entries. Eviction removes the entry whose last **use**
+is oldest: a read hit (`get`, `get_if_fresh`), a `touch`, a write (`set`,
+`batch_set`) and an overwrite are all uses, and the order is strict, so two uses
+never tie whatever the clock's resolution (details in
+[Architecture](./architecture.md#eviction)). Before v0.23.0 only a read counted,
+and an entry read once outlived every entry that was only written.
+**A write never evicts what it just wrote.** `max_entries(0)` is
 rejected at open with `InvalidConfiguration { option: "max_entries", .. }`;
 use no `max_entries` for no limit. A `batch_set` with more **distinct** paths
 than `max_entries` is rejected before anything is written, with
@@ -118,7 +121,7 @@ invalid path) occupies no row and is not counted — and a batch of exactly
 path, imports included: `import_entries` and `import_from` reject more
 **distinct** entries than `max_entries` (the stored key; the same path twice
 counts once) with `InvalidArgument { argument: "records", .. }` before
-anything is written, and an import that fits evicts the least recently read
+anything is written, and an import that fits evicts the least recently used
 older entries in its own transaction, never a row it wrote. (Before v0.22.0
 the imports ignored the bound.)
 
@@ -155,7 +158,7 @@ Every operation that can mutate database state returns
 `LocalFileCacheError::ReadOnly` before validating other arguments or doing
 other work. This includes `touch`, maintenance and index operations, imports,
 preload, and both watcher constructors. Reads remain available; `get` and
-`get_if_fresh` skip the normal LRU timestamp update.
+`get_if_fresh` skip recording a use, since recording it writes the database.
 
 ### `shared_cache()`
 

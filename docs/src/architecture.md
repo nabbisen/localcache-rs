@@ -5,7 +5,7 @@
 `localcache` uses a single **SQLite** file (via the `rusqlite` crate with
 bundled SQLite).  No daemon, no network, no external process.
 
-### Schema (v5)
+### Schema (v6)
 
 ```sql
 CREATE TABLE files (
@@ -17,7 +17,8 @@ CREATE TABLE files (
     hash              TEXT,                    -- BLAKE3 hash (optional)
     updated_at        INTEGER NOT NULL,        -- Unix seconds of last write
     payload_version   INTEGER NOT NULL DEFAULT 0,
-    last_accessed_at  INTEGER NOT NULL DEFAULT 0,  -- Unix seconds of last read; 0 = never read
+    last_used_us      INTEGER NOT NULL DEFAULT 0   -- the use order, see Eviction
+        CHECK (typeof(last_used_us) = 'integer' AND last_used_us < 4611686018427387904),
     UNIQUE(namespace, path)
 );
 
@@ -28,13 +29,16 @@ CREATE TABLE payloads (
     FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
 );
 
-CREATE INDEX idx_files_namespace_path ON files(namespace, path);
-CREATE INDEX idx_files_lru ON files(namespace, last_accessed_at, updated_at);
+CREATE INDEX idx_files_use ON files(namespace, last_used_us);
 ```
 
 `mtime` has been nanosecond-resolution since schema v5, so two writes to the same file within the
-same second are still detected as distinct. `idx_files_namespace_path` backs path lookups and
-`path_like`/`path_glob`/`path_in_dir` queries; `idx_files_lru` backs the eviction scan below.
+same second are still detected as distinct. Path lookups and the `path_like`/`path_glob`/`path_in_dir`
+queries are served by the index SQLite builds for `UNIQUE(namespace, path)` (`sqlite_autoindex_files_1`,
+the one the plans in [Performance](./performance.md) name); `idx_files_use` backs the eviction scan
+below and the lookup of a namespace's newest use. Before v0.23.0 (schema v5) a second index on
+`(namespace, path)` duplicated that autoindex, and `last_accessed_at` and `idx_files_lru` took the place
+of `last_used_us` and `idx_files_use`; [Migration](./migration.md) describes the move.
 
 ### Encoding tags
 
@@ -94,28 +98,47 @@ engine.get_if_fresh(path)
   │     decrypt? (AES-256-GCM)
   │     decompress? (zstd; bounded by max_decompressed_bytes)
   │     deserialise (bincode / json)
-  └── touch_last_accessed()         → UPDATE last_accessed_at
+  └── record_use()                  → UPDATE last_used_us (a read must not fail for want of this)
 ```
 
 ## Eviction
 
-`last_accessed_at` reflects the last **read** — it is set on every successful `get`,
-`get_if_fresh`, and `touch`, and left untouched by a write to an existing entry. A brand-new row starts at
-`last_accessed_at = 0` ("never read"). When `max_entries` is set, `enforce_max_entries` after each
-`set`/`batch_set` selects eviction candidates in this order, oldest first:
+`max_entries` evicts the entry whose last **use** is oldest. A use is a read hit (`get`,
+`get_if_fresh`), a `touch`, a `set` or `batch_set`, or an overwrite of an existing entry. The order is
+strict: a use assigns the entry
 
-1. `last_accessed_at` ascending — never-read entries (`0`) sort first.
-2. `updated_at` ascending, as a tiebreak.
-3. `id` ascending, as a final, fully deterministic tiebreak.
+```
+last_used_us = max(now_us, <largest last_used_us of its namespace> + 1)
+```
+
+in the statement that writes it, so it is greater than every other value in the namespace whatever the
+resolution of the clock, and a clock that never moves, or steps backwards, cannot produce a tie or a
+reversal. SQLite lets one writer at a time through, so the statement is atomic across connections and
+processes. After each `set`/`batch_set`/import, `enforce_max_entries` evicts, oldest first, by
+`last_used_us` ascending and then `id` ascending (which decides only the ties an import can create:
+it restores seconds, not microseconds).
+
+`last_accessed_at`, the public field of `EntryInfo` and `ExportRecord`, is `last_used_us / 1_000_000`:
+the second of the last use, never 0 for a stored entry. The eviction order is finer than that field.
+An entry that is only read in one second is not ranked above one written in it; before v0.23.0 only
+a read counted, and an entry read once, ever, outlived every entry that was only written.
+
+An **import is a restore, not a use**: each entry keeps its exported recency (`last_accessed_at` seconds,
+or `updated_at` for a record from before v0.23.0 that was never read), a record whose recency is
+negative or too large for the order refuses the whole import before anything is written, and every
+later use ranks above every imported entry. `export_entries` lists the entries oldest use first, so an
+export imported in order keeps the relative recency of entries used in the same second.
+
+A use that would take the value to 2^62 (only a damaged or hostile database holds one near it) fails
+with `DatabaseState`, the column's `CHECK` stopping it: a read ignores that, `touch`, `set` and
+`batch_set` return it.
 
 **A write never evicts what it just wrote.** The row(s) a `set`/`batch_set`/`import_entries`/
-`import_from` call just inserted or updated are excluded from that call's own eviction candidates,
-even though a brand-new row's `last_accessed_at = 0` would otherwise make it the first entry
-eligible for eviction. A `batch_set` with more distinct paths than `max_entries`, and an import of
-more distinct entries, is rejected before it writes anything, so one call can no longer exceed the
-bound; `max_entries(0)` is rejected at open. Every write path shares one `enforce_max_entries`
-and runs it in the write's own `IMMEDIATE` transaction. (Before v0.22.0 the imports ignored the
-bound.)
+`import_from` call just inserted or updated are excluded from that call's own eviction candidates.
+A `batch_set` with more distinct paths than `max_entries`, and an import of more distinct entries, is
+rejected before it writes anything, so one call can no longer exceed the bound; `max_entries(0)` is
+rejected at open. Every write path shares one `enforce_max_entries` and runs it in the write's own
+`IMMEDIATE` transaction. (Before v0.22.0 the imports ignored the bound.)
 
 ## SQLite settings
 

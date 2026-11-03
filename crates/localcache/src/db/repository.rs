@@ -415,7 +415,7 @@ pub(crate) fn evict_lru(
 /// RFC 020: one page of paths in `namespace`, ordered by `path`, strictly
 /// after `after`. Pass `""` for the first page — every stored path is a
 /// non-empty absolute path, so `path > ''` selects all of them. Served by
-/// the existing `idx_files_namespace_path`; no new index.
+/// the index SQLite builds for `UNIQUE(namespace, path)`; no new index.
 pub(crate) fn paths_page_in_namespace(
     conn: &Connection,
     namespace: &str,

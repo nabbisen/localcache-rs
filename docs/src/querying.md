@@ -37,7 +37,7 @@ let docs = engine.keys(Some("/data/docs/%"))?;
 // Full metadata for all entries (no payload loaded).
 let entries: Vec<EntryInfo> = engine.list_entries()?;
 // EntryInfo has: path, metadata, encoding, payload_version,
-//                updated_at, last_accessed_at
+//                updated_at, last_accessed_at (the second of the last use)
 
 // Aggregate statistics.
 let stats = engine.cache_stats()?;
@@ -48,7 +48,7 @@ println!("bytes:   {}", stats.total_payload_bytes);
 ## `QueryBuilder`
 
 `QueryBuilder` filters and sorts entries. Path filters, pagination, and
-non-field sorting (by path, `updated_at`, or `last_accessed_at`) are always
+non-field sorting (by path, `updated_at`, or `last_accessed_at`, the second of the last use) are always
 available. Only payload predicates and sorting by a payload field
 (`SortKey::Field`) require the `json` feature — see the tables below.
 Payloads are evaluated as `serde_json::Value`, so any codec works.
@@ -98,6 +98,8 @@ written as `\%`, `\_`, or `\\`. This matters for Windows paths, whose separator 
 engine.query().order_by(SortKey::Field("score".into()), SortOrder::Desc).run()?;
 engine.query().order_by(SortKey::Path, SortOrder::Asc).run()?;
 engine.query().order_by(SortKey::Mtime, SortOrder::Desc).run()?;
+// Last use (read, write or touch), to the second: entries used in the same second tie
+// here and fall to the next sort key; eviction itself uses a finer, strict order.
 engine.query().order_by(SortKey::LastAccessed, SortOrder::Desc).run()?;
 
 // Multi-column sort (primary + secondary).
