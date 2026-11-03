@@ -1705,7 +1705,7 @@ does not depend on a clock) and one path index, in one schema v6; Q12 = the migr
 Review of scope: `.git-exclude/reviewed/071-…`. **RFC 029** (encryption integrity: payload bound to its row, a strict mode, key zeroization, a paged upgrade; no schema change) is proposed as the
 subject of v0.24.0 and is not yet drafted; the owner decides it after RFC 026. **1.0:** not planned. It requires the owner's explicit confirmation.
 
-Order of the dev team's work: v0.22.2 preparation (done; release candidate `88d80f0` after the lockfile fix, reviews 072 and 074) → step 0 (done) → Q12 (implemented, in review: request 054, review 075) → Q13 → v0.23.0 release preparation.
+Order of the dev team's work: v0.22.2 preparation (done; release candidate `88d80f0` after the lockfile fix, reviews 072 and 074) → step 0 (done) → Q12 (done: committed locally as `6daeb26`, reviews 075 and 076) → Q13 (written, in review: request 056) → v0.23.0 release preparation.
 
 ### v0.22.1 — released 2026-11-01
 

@@ -118,7 +118,9 @@ Every statement of "least recently **read**", of `last_accessed_at == 0`, and of
   and 2M rows sharing one second, in at most 20 MiB; the 26 real statements on the v5 and v6 shapes (no path or namespace plan changes shape, `path_in_dir` included);
   every reader of `last_accessed_at`. Its verdict: the design stays simple.
 - **The warm hit, measured at implementation (request 054, 2026-11-03).** Through the engine, a hit of one hot entry costs +1% in a one-entry database and +6.6 µs
-  (14 → 20 µs, +48%) in a 100,000-entry database with a 64-byte payload; random hits in the same database show no difference. **Decision (architect, 2026-11-03):
+  (14 → 20 µs, +48%) in a 100,000-entry database with a 64-byte payload; random hits in the same database show no difference. The attribution (request 055, seven rotated
+  rounds, a shared host) gives about +11 µs per hot hit for a 64-byte payload and for `scale_profile`'s alike, not growing with the payload; the `scale_profile` rise that was
+  unexplained was a misreading (its figure is the total over 199 calls: 10.1 → 11.7 µs per call). Both figures are bounds, 7 to 11 µs, far below the 50 µs stop condition. **Decision (architect, 2026-11-03):
   accepted, the design stays.** A hit was already a write transaction; the extra is the `MAX` seek and an index entry that now really moves, in exchange for an
   eviction order that is true and a `set` that is 26% faster per entry. Weakening the guarantee to make the seek disappear (a hit assigning only its own value plus one)
   would let an entry read just after a clock step backwards rank as old, which is the defect this RFC removes. The same change makes `batch_set` of 100,000 entries 26%
