@@ -505,7 +505,7 @@ where
     ///   than `CacheOptions::max_decompressed_bytes`,
     ///   so it could not be read back. Nothing was stored. A payload that is
     ///   not compressed is not checked.
-    /// * [`LocalFileCacheError::EncryptionError`] — encrypting the payload
+    /// * `LocalFileCacheError::EncryptionError` — encrypting the payload
     ///   failed (`encryption` feature).
     /// * [`LocalFileCacheError::DatabaseState`] — the use order is exhausted
     ///   (a stored use value is at or above 2^62; only a damaged or hostile

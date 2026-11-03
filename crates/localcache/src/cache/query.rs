@@ -511,7 +511,7 @@ where
     /// An entry whose payload cannot be decoded is an error, as it is for
     /// `get`: `run()` returns the error of the first such entry, in the order
     /// the query would have returned its entries. Under the wrong encryption
-    /// key it returns [`LocalFileCacheError::EncryptionError`]; an entry that
+    /// key it returns `LocalFileCacheError::EncryptionError`; an entry that
     /// an engine with a key may not read (plain, or sealed before v0.24.0)
     /// gives `LocalFileCacheError::UnsealedEntry`; an entry with an unknown
     /// encoding tag gives [`LocalFileCacheError::UnknownEncoding`].

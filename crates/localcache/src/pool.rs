@@ -57,7 +57,8 @@ use crate::{CacheStatus, ScanOptions};
 // ---------------------------------------------------------------------------
 
 /// A cloneable, thread-safe wrapper around one [`CacheEngine<T>`]: the
-/// synchronous counterpart of [`AsyncCacheEngine`][crate::AsyncCacheEngine].
+/// synchronous counterpart of `AsyncCacheEngine` (the `async`, `async-std` and
+/// `smol` features).
 ///
 /// All clones share the same underlying engine and SQLite connection.
 /// Operations acquire the internal mutex for their duration, so this is a

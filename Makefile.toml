@@ -184,6 +184,7 @@ script = [
     '''
     set -ex
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features --locked
+    RUSTDOCFLAGS="-D warnings" cargo doc -p localcache --no-deps --no-default-features --locked
     mdbook build docs
     cargo package --workspace --locked
     '''
