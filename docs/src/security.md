@@ -80,7 +80,7 @@ anything in it. The rest of this page is mostly about what that can and cannot d
 - **Replace or swap entries.** Without a key, the cache holds whatever the file holds. With a
   key, an attacker cannot read or forge a payload, but the ciphertext is not bound to its row,
   so someone with write access can move an encrypted payload from one path to another. Binding
-  ciphertext to its row is planned with the next stored-format change (v0.23.0).
+  ciphertext to its row is not done: it needs a stored-format change, and none is scheduled.
 - **Fill the disk or the cache.** `max_entries` bounds the number of entries and
   `max_decompressed_bytes` the size of a decompressed payload; the library does not bound the
   size of an uncompressed payload, which is exactly as large as the blob in the file.

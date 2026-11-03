@@ -6,7 +6,7 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-localcache = "0.22.2"
+localcache = "0.23.0"
 serde = { version = "1", features = ["derive"] }
 ```
 

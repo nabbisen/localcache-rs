@@ -7,9 +7,19 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [Unreleased]
+## [0.23.0] — Unreleased
+
+*Date set at owner authorization.*
 
 **Breaking: the eviction order, the stored schema (v6, one way), the meaning of `last_accessed_at`, the export order and one CLI column** (RFC 026).
+
+### Upgrading from 0.22.x, in this order
+
+1. **Export first** if you may need to go back: a migrated database is refused by v0.22.x (entry "A migrated database is refused by v0.22.x and earlier", under "Schema v6, one way").
+2. **The first writable open migrates** the database in one transaction, and a read-only open of a v5 database reports `SchemaNotCurrent` until then; for the cost, see "Cost" under "Schema v6, one way".
+3. **A migrated file does not shrink**; `shrink_database()` reclaims its free pages (entry "A migrated file does not shrink").
+4. **Code that reads `last_accessed_at` or the export order**: its meaning and the order change (entries "`last_accessed_at` means the last use" and "Export order and import range"), and what a migrated cache keeps changes in one way (entry "What a migrated cache keeps changes in one way").
+5. **`touch`, `set` and `batch_set` can return a new error** when a namespace's use order is exhausted (entry of that name).
 
 ### Breaking
 
@@ -1768,7 +1778,8 @@ Namespaces, batch ops, TTL, PRAGMAs, schema migration.
 ## [0.1.0] — 2026-05-03
 Initial release.
 
-[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/0.22.2...HEAD
+[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/0.23.0...HEAD
+[0.23.0]: https://github.com/nabbisen/localcache-rs/compare/0.22.2...0.23.0
 [0.22.2]: https://github.com/nabbisen/localcache-rs/compare/0.22.1...0.22.2
 [0.22.1]: https://github.com/nabbisen/localcache-rs/compare/0.22.0...0.22.1
 [0.22.0]: https://github.com/nabbisen/localcache-rs/compare/0.21.6...0.22.0
