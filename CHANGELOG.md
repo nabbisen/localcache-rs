@@ -7,9 +7,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [0.22.2] — Unreleased
+## [0.22.2] — 2026-11-03
 
-*Date set at owner authorization.*
+Authorized by the project owner on 2026-11-03. The source is that of release candidate `3374539`; the release
+commit changes only this date.
 
 **A documentation release. Not breaking.** No change to the crate's code, schema, wire format, declared dependencies or MSRV. One locked transitive dependency
 (`async-executor`, used only by the optional `async-std` and `smol` features) was updated in `Cargo.lock` because its locked version had been yanked. It carries the announcement that the v0.21.5
