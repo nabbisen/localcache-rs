@@ -7,9 +7,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [0.23.1] — Unreleased
+## [0.23.1] — 2026-11-03
 
-*Date set at owner authorization.*
+Authorized by the project owner on 2026-11-03. The source is that of release candidate `228546e`; the release
+commit changes only this date.
 
 **A security fix and an announcement. Not breaking.** No API, schema or stored-byte change. Nothing of RFC 029's binding is implemented here; v0.24.0 will do that, and this release says so one release ahead.
 
