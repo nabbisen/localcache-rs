@@ -76,8 +76,7 @@ where
     ///   `-aes256gcm-bound`: it is plain, or was sealed by v0.23 or earlier).
     ///   The whole import is refused before anything is written; import such
     ///   records into an engine without a key, then call
-    ///   [`rotate_encryption_key`](Self::rotate_encryption_key) on the engine
-    ///   with the key. The check is of the tag, not of the authenticity: a
+    ///   `rotate_encryption_key` on the engine with the key. The check is of the tag, not of the authenticity: a
     ///   record that is forged or sealed under another key is imported, and
     ///   fails closed when it is read, like any corrupt entry. An engine
     ///   without a key stores every record verbatim.

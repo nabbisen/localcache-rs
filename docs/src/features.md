@@ -109,7 +109,11 @@ let results = engine.query()
 ## encryption
 
 Payloads are encrypted with **AES-256-GCM** before storage.  A fresh
-96-bit nonce is generated per write and prepended to the ciphertext.
+96-bit nonce is generated per write and prepended to the ciphertext. Each
+payload is **bound to its entry's path** (the path and the encoding tag are
+authenticated along with the ciphertext), so a ciphertext copied onto another
+row does not open. With a key, an engine reads only such bound entries; see
+[Security Model](./security.md#encryption).
 
 ```rust
 let key: Vec<u8> = /* 32 random bytes */;
@@ -120,7 +124,13 @@ let engine = CacheEngine::<Vec<f32>>::builder()
     .build()?;
 ```
 
-Key rotation is supported via `engine.rotate_encryption_key(&new_key)`.
+`engine.rotate_encryption_key(&new_key)` seals **every** entry of the engine's namespace under
+`new_key`, bound to its path, in pages and in one atomic transaction: memory is bounded by the
+page (1,000 rows or 8 MiB), not by the namespace. `new_key` may equal the current key. That is
+the **upgrade** of a database written by v0.23 or earlier (call it once with the same key), and
+how encryption is switched on for a database written without a key (open with the key, rotate
+to it). It returns the number of entries sealed. The write-ahead log grows by about the size of
+the namespace's payloads while it runs, and a failure changes nothing.
 
 > **Warning**: losing the encryption key makes all encrypted entries
 > permanently unreadable.

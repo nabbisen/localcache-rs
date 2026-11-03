@@ -244,7 +244,9 @@ where
     ///
     /// Encrypts payload content only — paths, namespaces, file sizes,
     /// modification times, content hashes, and timestamps stay unencrypted.
-    /// See [`CacheOptions::encryption_key`] for the full scope.
+    /// With a key, entries are sealed bound to their path and only such
+    /// entries are read. See [`CacheOptions::encryption_key`] for the full
+    /// scope.
     ///
     /// Requires the `encryption` Cargo feature.
     #[cfg(feature = "encryption")]

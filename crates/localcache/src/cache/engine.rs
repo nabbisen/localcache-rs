@@ -336,6 +336,12 @@ where
     /// * [`LocalFileCacheError::Serialization`], [`LocalFileCacheError::Io`]
     ///   (a malformed compressed frame), [`LocalFileCacheError::UnknownEncoding`]
     ///   — the stored payload cannot be decoded.
+    /// * With the `encryption` feature and a key on this engine:
+    ///   `LocalFileCacheError::UnsealedEntry` — the entry is not sealed
+    ///   bound to its path (plain, or sealed by v0.23 or earlier; call
+    ///   `rotate_encryption_key` once), and `LocalFileCacheError::EncryptionError`
+    ///   — wrong key, damage, or an entry moved from another path. Without a
+    ///   key, a sealed entry is `LocalFileCacheError::MissingEncryptionKey`.
     /// * `LocalFileCacheError::PayloadTooLarge` (`compression` feature) — a
     ///   stored compressed payload would be larger than
     ///   `CacheOptions::max_decompressed_bytes`

@@ -511,8 +511,10 @@ where
     /// An entry whose payload cannot be decoded is an error, as it is for
     /// `get`: `run()` returns the error of the first such entry, in the order
     /// the query would have returned its entries. Under the wrong encryption
-    /// key it returns [`LocalFileCacheError::EncryptionError`]; an entry with
-    /// an unknown encoding tag gives [`LocalFileCacheError::UnknownEncoding`].
+    /// key it returns [`LocalFileCacheError::EncryptionError`]; an entry that
+    /// an engine with a key may not read (plain, or sealed before v0.24.0)
+    /// gives `LocalFileCacheError::UnsealedEntry`; an entry with an unknown
+    /// encoding tag gives [`LocalFileCacheError::UnknownEncoding`].
     /// It fails exactly when [`run_report`](Self::run_report) would list a
     /// skipped entry for the same query, because the two run the same code.
     /// Use `run_report()` to ask to skip undecodable entries instead.

@@ -78,12 +78,12 @@ anything in it. The rest of this page is mostly about what that can and cannot d
   size of the blob, and the decoded value can be larger than the blob (a one-byte `None` becomes
   a whole `Option<T>`). Decoding time is proportional to the blob.
 - **Replace or swap entries.** Without a key, the cache holds whatever the file holds. With a
-  key, an attacker cannot read a payload or forge one sealed under your key, but the cache does
-  not yet insist that what it reads was sealed under it: the ciphertext is not bound to its
-  row, so someone with write access can move an encrypted payload from one path to another, and
-  an entry stored without a key is read as plain. v0.24.0 is planned to close both (see
-  [Migration](./migration.md#announced-encryption-integrity-v0240)); until then, treat the file
-  as writable only by you.
+  key (v0.24.0 and later), an attacker who can write the file cannot read a payload, cannot forge
+  one, cannot move one to another path, cannot downgrade one to plain and cannot change how a
+  sealed entry is decoded (see "Encryption" below). What they can still do is delete entries,
+  restore an older valid ciphertext of the same row, and move a payload between namespaces that
+  share a key. Before v0.24.0 the ciphertext was not bound to its row, so a payload could be moved to
+  another path and a plain entry was read as if it were protected.
 - **Fill the disk or the cache.** `max_entries` bounds the number of entries and
   `max_decompressed_bytes` the size of a decompressed payload; the library does not bound the
   size of an uncompressed payload, which is exactly as large as the blob in the file.
@@ -112,6 +112,38 @@ using a fresh 96-bit nonce per write and stored as nonce followed by ciphertext.
 authenticates the ciphertext, so a payload altered without the key fails to decrypt (an
 `EncryptionError`) and never reaches the decoder.
 
+**With a key, an entry is readable only if it is sealed under that key and bound to its row**
+(v0.24.0). Each payload is sealed with associated data made of a fixed label, the **full encoding
+tag** and the **entry's path as stored**, so the ciphertext authenticates which entry it belongs to
+and how it is to be decoded. A bound entry carries a tag ending in `-aes256gcm-bound`. With a key,
+anything else is an error that names the remedy, never a silent read: a plain entry, or one sealed
+by v0.23 or earlier without binding, is `UnsealedEntry`; a bound entry that does not open (wrong
+key, damage, or moved from its path) is `EncryptionError`. An engine without a key reads plain
+entries as before and names a missing key (`MissingEncryptionKey`) for sealed ones. A query on an
+engine with a key never evaluates payloads in SQL. A database written by v0.23 or earlier needs one
+`rotate_encryption_key` with the same key, which seals every entry of the namespace bound to its path
+(see [Migration](./migration.md#encryption-integrity-v0240)).
+
+**What an attacker who can write the file, but has no key, can and cannot do:**
+
+| | |
+|---|---|
+| Read a payload | **cannot** (AES-256-GCM) |
+| Forge a payload | **cannot** (without the key a ciphertext does not authenticate) |
+| Move an entry to another path | **cannot** (the path is authenticated; the entry fails to open) |
+| Downgrade an entry to plain | **cannot** (with a key a plain or unbound entry is refused, and editing a bound tag fails to open) |
+| Change how a sealed entry is decoded | **cannot** (the tag is authenticated) |
+| Delete entries | **can** |
+| Restore an older valid ciphertext of the same row | **can** (freshness is not authenticated: the attacker can rewrite the row's metadata too) |
+| Move a payload between namespaces that share a key | **can**: the namespace is not bound (binding it would make every raw copy, `import_from` and the CLI's `copy`, re-seal entries, which the CLI cannot do because it takes no key). **Use one key per trust domain** |
+| Read all metadata | **can** (paths, namespaces, sizes, times, hashes and the encoding tag are stored in the clear) |
+
+Not protected, and not claimed: an attacker who can read the process's memory.
+
+**The nonce limit.** With random 96-bit nonces, NIST SP 800-38D allows one key at most 2^32
+encryptions (about 50 days at 1,000 writes per second). Rotation starts a new key, so rotate before
+a key has sealed that many entries.
+
 What it does **not** do:
 
 - It encrypts **payload content only**. Paths, namespaces, sizes, modification times, hashes
@@ -128,7 +160,8 @@ What it does **not** do:
 - Fixed in v0.23.1: `CacheOptions` printed the encryption key with `{:?}`; it now prints
   `Some("[redacted]")`. In v0.23.0 and earlier it still does, so do not log the options of an
   engine that has a key under those versions. No other type of the crate can print the key.
-- Authentication does not bind a payload to its path (see above).
+- It does not authenticate **freshness** (see the table), and it does not isolate namespaces that
+  share a key.
 
 ## Decoding limits at a glance
 
@@ -138,6 +171,7 @@ What it does **not** do:
 | uncompressed binary (`raw`, the legacy `bincode` wire format) | every length and count must fit the bytes that remain, and all counts in one read together the blob's length, checked before anything is allocated; nesting ≤ 128 levels, on write too; the blob's own size is not limited | `Serialization` |
 | JSON | the document's size; nesting depth is limited by the JSON parser, a million opening brackets is an error and not a stack overflow | `Serialization` |
 | unknown or foreign encoding tag | not decoded | `UnknownEncoding` |
+| with a key, an entry that is plain or sealed without binding | not decoded | `UnsealedEntry` |
 
 ## Supply chain and releases
 

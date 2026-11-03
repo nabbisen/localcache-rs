@@ -50,11 +50,27 @@ raw                  — bincode only
 zstd                 — bincode + zstd
 json                 — serde_json only
 json-zstd            — serde_json + zstd
-raw-aes256gcm        — bincode + AES-256-GCM
-zstd-aes256gcm       — bincode + zstd + AES-256-GCM
-json-aes256gcm       — serde_json + AES-256-GCM
-json-zstd-aes256gcm  — serde_json + zstd + AES-256-GCM
+raw-aes256gcm-bound        — bincode + AES-256-GCM, bound to the entry's path
+zstd-aes256gcm-bound       — bincode + zstd + AES-256-GCM, bound to the entry's path
+json-aes256gcm-bound       — serde_json + AES-256-GCM, bound to the entry's path
+json-zstd-aes256gcm-bound  — serde_json + zstd + AES-256-GCM, bound to the entry's path
+
+raw-aes256gcm        — the same four, sealed WITHOUT binding (written by v0.23 and earlier)
+zstd-aes256gcm       — ...
+json-aes256gcm       — ...
+json-zstd-aes256gcm  — ...
 ```
+
+A **bound** payload is sealed with associated data
+`"localcache/seal/1" 0x00 <the full tag> 0x00 <the entry's path>`, so its
+ciphertext authenticates which entry it belongs to and how it is to be decoded:
+moved to another path, or read under another tag, it fails to open. The path is
+the string `files.path` stores; the associated data is not stored. The tag is
+matched exactly and case-sensitively. An engine writes bound tags when it has
+a key. With a key it reads **only** bound entries: a plain tag or a tag without
+`-bound` is refused (`UnsealedEntry`) until `rotate_encryption_key` has sealed
+it; without a key it reads plain entries and names a missing key for sealed
+ones. See [Security Model](./security.md#encryption).
 
 Encoding is decoded from the tag at read time, so different entries in the
 same namespace can have different encodings.
@@ -67,10 +83,10 @@ engine.set(path, payload)
   ├── normalize_path(path)          → canonical PathBuf
   ├── collect_metadata(path)        → mtime, file_size
   ├── compute_hash_for_mode(path)   → Option<BLAKE3 hash>
-  ├── encode_payload(payload)       → (bytes, encoding_tag)
+  ├── encode_payload(payload, path) → (bytes, encoding_tag)
   │     codec (bincode / json)
   │     compress? (zstd; refused above max_decompressed_bytes)
-  │     encrypt? (AES-256-GCM + nonce)
+  │     encrypt? (AES-256-GCM + nonce, bound to the path)
   │
   ├── BEGIN IMMEDIATE
   │     ├── repository::upsert_in_tx()   → INSERT ... ON CONFLICT(namespace, path) DO UPDATE
@@ -94,8 +110,8 @@ engine.get_if_fresh(path)
   ├── version check                 → payload_version match?
   ├── detect_change(path, metadata) → CacheStatus
   ├── repository::load_payload()    → (content, encoding)
-  ├── decode_payload(content)       → T
-  │     decrypt? (AES-256-GCM)
+  ├── decode_payload(content, tag, path) → T
+  │     decrypt? (AES-256-GCM; with a key only bound entries, opened with the path)
   │     decompress? (zstd; bounded by max_decompressed_bytes)
   │     deserialise (bincode / json)
   └── record_use()                  → UPDATE last_used_us (a read must not fail for want of this)
@@ -154,7 +170,7 @@ rejected at open. Every write path shares one `enforce_max_entries` and runs it 
 User payload (T: Serialize)
   ↓  codec   (bincode or json)
   ↓  compress (zstd, optional)
-  ↓  encrypt  (AES-256-GCM, optional)
+  ↓  encrypt  (AES-256-GCM, bound to the entry's path, optional)
 → BLOB stored in payloads.content
 ```
 
@@ -174,9 +190,10 @@ The inverse is applied on read, driven entirely by the stored `encoding` tag: wh
 whether to decompress, and whether to decrypt are all read from the tag, not from the engine's
 current configuration. Configuration supplies only the encryption key (when needed) — this is
 what lets different entries in the same namespace carry different encodings and still decode
-correctly.
+correctly. One rule is configuration-dependent on purpose: with a key, a payload that is not
+sealed bound to its path is refused instead of decoded (`UnsealedEntry`).
 
 This is accurate about *configuration*, but which tags can be decoded **at all** is fixed by which
 Cargo features this build was compiled with: `zstd`/`json-zstd` need `compression`, `json*` needs
-`json`, and `*-aes256gcm` needs `encryption`. A tag this build cannot handle returns
+`json`, and `*-aes256gcm` and `*-aes256gcm-bound` need `encryption`. A tag this build cannot handle returns
 `UnknownEncoding` (`crates/localcache/src/serialization.rs`, `decode_payload`).

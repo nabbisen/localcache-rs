@@ -143,11 +143,18 @@ let engine = CacheEngine::<Vec<f32>>::builder()
     .encryption_key(key)
     .build()?;
 
-// Key rotation (re-encrypt all entries atomically).
+// Key rotation (re-seal every entry, atomically).
 let new_key = generate_new_key();
 let rotated = engine.rotate_encryption_key(&new_key)?;
 println!("rotated {rotated} entries");
 ```
+
+With a key, an engine reads only entries that are sealed under a key **and bound to their
+path**. A database written by v0.23 or earlier, or written without a key, is refused with
+`UnsealedEntry` until you call `engine.rotate_encryption_key(&same_key)` once (it seals every
+entry of the namespace, a plain one included, in pages, atomically). Use **one key per trust
+domain**: a payload sealed for one path cannot be moved to another, but someone who can write the
+file can move it between namespaces that share a key. See [Security Model](./security.md#encryption).
 
 Rotation covers only **this engine's namespace, on this engine**. Every other open engine on the
 same database and namespace — another `SyncCacheEngine`, `ReadPool` slot, or process — keeps the

@@ -19,13 +19,14 @@ Existing exhaustive matches must add a `_` arm to upgrade to v0.21.0.
 | `UnknownEncoding(String)` | Stored encoding tag not recognised | Wrong feature enabled for decoding |
 | `PayloadTooLarge { limit }` *(compression)* | A compressed payload would be larger than `max_decompressed_bytes` once decompressed: found when reading a stored compressed entry, or when writing a payload that is about to be compressed | Raise `max_decompressed_bytes` if the payload is legitimate; otherwise treat the entry as unusable. Uncompressed payloads are never refused |
 | `Poisoned { resource: &'static str }` | A lock guarding shared cache state was poisoned by a panic in another thread | The poisoning caller's bug, not yours — recreate the pool/engine/watcher |
-| `EncryptionError(String)` *(encryption)* | Wrong key or corrupt data — *not* a missing feature or a missing key (see below) | Verify encryption key |
+| `EncryptionError(String)` *(encryption)* | Wrong key, corrupt data, or an entry moved from another path — *not* a missing feature, a missing key or an unsealed entry (see below) | Verify encryption key |
+| `UnsealedEntry` *(encryption)* | An engine with a key met an entry that is not sealed bound to its path: it is stored plain, or was sealed before v0.24.0 | Call `rotate_encryption_key` once with the same key, or purge the entry |
 | `AsyncTaskPanicked` *(async / async-std / smol)* | `spawn_blocking` task panicked | Check payload type and encoding |
 | `InvalidConfiguration { option, reason }` | A configuration option is invalid or unsupported: `option` is `database_path`, `read_only`, `encryption_key`, `size`, `max_entries` or `ttl` (and, with `compression`, `max_decompressed_bytes`). Found before the database is touched | Fix the named option and open again; nothing was created or changed |
 | `InvalidArgument { argument, reason }` | A call's argument is invalid: `argument` is `new_key`, `path_glob`, `index_name`, `records` or `items` | Correct that argument and call again |
 | `SchemaNotCurrent` | A read-only open of a database whose schema is not the current one (older, or empty) | Open it writable once to migrate it, or use the CLI's `copy --from-db --upgrade-source`; the database was not modified |
 | `IncompatibleSchema(String)` | The schema is newer than this version understands, is not a localcache database, or is damaged; the message says what was found | Use a version that matches the database, or restore a backup; the database was not modified |
-| `MissingEncryptionKey` *(encryption)* | An operation needs an encryption key and none is configured: rotating a key, or reading an encrypted entry | Configure `encryption_key` on the engine |
+| `MissingEncryptionKey` *(encryption)* | An operation needs an encryption key and none is configured: rotating a key, or reading an encrypted entry (bound or not) | Configure `encryption_key` on the engine |
 | `DatabaseState(String)` | The database or connection is in a state this crate will not work with: an unsafe journal mode for a migration, SQLite not honouring a setting, a failed migration postcondition | Read the message; it says whether the database was left unchanged |
 | `Watcher(String)` *(watching)* | Setting up or running a file-system watcher failed | Check that the path exists and the system's watch limits |
 
@@ -114,6 +115,7 @@ before are rejected in the same release; they are listed after the table.)
 | an index name that is not allowed | `InvalidArgument` | `argument: "index_name"` |
 | an import record whose payload is not base64 | `InvalidArgument` | `argument: "records"` |
 | rotating a key, or reading an encrypted entry, with no key configured | `MissingEncryptionKey` | the variant |
+| reading, with a key, an entry that is plain or was sealed before v0.24.0; a keyed import of such a record is `InvalidArgument` with `argument: "records"` instead | `UnsealedEntry` | the variant |
 | a read-only open of an older or empty database | `SchemaNotCurrent` | the variant |
 | an unrecognised, newer or damaged schema | `IncompatibleSchema` | the variant |
 | an unsafe journal mode for a migration, SQLite not honouring a setting, a failed migration postcondition, a failed runtime configuration | `DatabaseState` | the variant |
@@ -244,17 +246,33 @@ use localcache::LocalFileCacheError;
 
 match engine.get("file.txt") {
     Err(LocalFileCacheError::EncryptionError(msg)) => {
-        eprintln!("wrong key or corrupt data: {msg}");
+        eprintln!("wrong key, corrupt data or a moved entry: {msg}");
+    }
+    Err(LocalFileCacheError::UnsealedEntry) => {
+        // not sealed under a key and bound to its path: seal the namespace once
+        engine.rotate_encryption_key(&key)?; // the same key
     }
     other => { other?; }
 }
 ```
 
-Two related, but distinct, failures return different variants: decoding an encrypted entry
-without the `encryption` Cargo feature compiled in returns `UnknownEncoding`, and decoding one
+Three related, but distinct, failures return different variants: decoding an encrypted entry
+without the `encryption` Cargo feature compiled in returns `UnknownEncoding`, decoding one
 with the feature compiled in but no encryption key configured on the engine returns
-`MissingEncryptionKey`. `EncryptionError` itself only covers an actual decrypt failure — the wrong
-key, or corrupted stored data.
+`MissingEncryptionKey`, and an engine **with** a key that meets an entry which is not sealed
+under a key and bound to its path returns `UnsealedEntry`. `EncryptionError` itself only
+covers an actual decrypt failure — the wrong key, corrupted stored data, or a bound entry that
+was moved from the path it was written for (its ciphertext is tied to that path).
+
+**`UnsealedEntry`: when, why, and the remedy.** From v0.24.0, an engine with a key reads only
+entries that are sealed under a key and bound to their path. Anything else is refused, never read
+silently, because a plain entry in a database that is supposed to be protected is exactly what
+an attacker who can write the file would plant. It occurs for entries stored plain (written by an
+engine with no key) and for every entry written by v0.23 or earlier. The remedy is one call:
+`rotate_encryption_key` with the **same** key seals every entry of the namespace bound to its
+path (and is how encryption is switched on for a database written without a key); or purge the
+entry. A query's `run()` stops at the first such entry, `run_report()` lists each in `skipped`, and
+`batch_get` reports it per path. See [Migration](./migration.md#encryption-integrity-v0240).
 
 ## Using `?` with custom error types
 

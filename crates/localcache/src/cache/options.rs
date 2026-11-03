@@ -261,6 +261,16 @@ pub struct CacheOptions {
     /// AES-256-GCM.  A fresh 96-bit nonce is generated per write; the nonce
     /// is prepended to the ciphertext in the database.
     ///
+    /// **Entries are bound to their path** (v0.24.0): the entry's path and
+    /// its encoding tag are authenticated with the ciphertext, so an entry
+    /// moved to another path does not open. With a key, the engine reads
+    /// **only** such bound entries: a plain entry, or one sealed by v0.23 or
+    /// earlier, is refused with
+    /// [`LocalFileCacheError::UnsealedEntry`](crate::LocalFileCacheError::UnsealedEntry)
+    /// until [`rotate_encryption_key`](crate::CacheEngine::rotate_encryption_key)
+    /// has sealed it. The namespace is not bound: use one key per trust
+    /// domain.
+    ///
     /// **This encrypts payload content only.** Paths, namespaces, file
     /// sizes, modification times, content hashes, and timestamps are
     /// stored unencrypted — anyone who can read the database file can read

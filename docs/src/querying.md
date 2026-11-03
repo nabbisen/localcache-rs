@@ -133,8 +133,9 @@ let results = engine.query()
 `run()` returns an error when the query meets an entry whose payload cannot be decoded: the
 error of the first such entry, in the order the query would have returned its entries, exactly as
 `get` does. Under the wrong encryption key every payload fails to decode, so a query fails with
-`EncryptionError` instead of returning an empty `Vec`; an entry with an unknown encoding tag fails
-with `UnknownEncoding`. To tolerate undecodable entries, ask to skip them with `run_report()`,
+`EncryptionError` instead of returning an empty `Vec`; an entry that a keyed engine may not read
+(plain, or sealed before v0.24.0) fails with `UnsealedEntry`; an entry with an unknown encoding tag
+fails with `UnknownEncoding`. To tolerate undecodable entries, ask to skip them with `run_report()`,
 which returns the entries that decode and lists what it passed over and why:
 
 ```rust
@@ -228,6 +229,13 @@ println!("{plan}");
 
 `dry_run()` runs `EXPLAIN QUERY PLAN` on the path-listing SQL, then appends which execution path
 `run()` would actually take — no payloads are loaded, and the cache is not modified.
+
+**An engine with an encryption key never takes the SQL tier.** A numeric field predicate or sort on
+a namespace of plain `json` entries is normally evaluated inside SQLite (tier 2); with a key
+configured the query always decodes the payloads in Rust first (tier 3, and `dry_run()` says so),
+because the SQL tier would read stored text that nothing has authenticated. Over plain entries a
+keyed query therefore fails with `UnsealedEntry` rather than filtering them; see
+[Errors](./errors.md#encryption-key-errors).
 
 With `AsyncCacheEngine`:
 

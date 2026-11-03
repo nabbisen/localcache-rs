@@ -7,6 +7,28 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [Unreleased]
+
+**Breaking: with an encryption key, an entry is readable only if it is sealed under that key and bound to its path** (RFC 029, announced in v0.23.1). No schema change. Unencrypted databases and engines without a key are not affected.
+
+### Breaking
+
+- **A keyed engine reads only bound entries.** `get`, `get_if_fresh`, the batch reads and every query on an engine with an encryption key read an entry only if its tag ends in `-aes256gcm-bound`; a plain entry, or an entry sealed without binding (everything written with a key by v0.23 and earlier), is refused with the new error `UnsealedEntry`, whose text names the remedy. Without a key nothing changes (plain entries are read; a sealed one is `MissingEncryptionKey`).
+- **Payloads are bound to their path.** An engine with a key now seals each payload with associated data made of the full encoding tag and the entry's path as stored, and writes the tags `raw-aes256gcm-bound`, `zstd-aes256gcm-bound`, `json-aes256gcm-bound` and `json-zstd-aes256gcm-bound`. A ciphertext copied onto another row, a tag edited in the file, and a plain entry planted in a protected database no longer read. The namespace is not bound: use one key per trust domain. The associated data is not stored, so the stored payload size is unchanged (the tag is six characters longer).
+- **`rotate_encryption_key` seals every entry of the namespace, and is the upgrade.** It re-seals plain entries, entries sealed without binding and bound entries alike, bound to their path under the new key (`new_key` may equal the current key), in pages of 1,000 rows or 8 MiB read by `(namespace, path)`, in one `IMMEDIATE` transaction; a failure, including an entry with a tag this build cannot decode, changes nothing and the engine keeps its old key. It returns the number of entries sealed, which is now every entry of the namespace (before, entries not sealed were not counted and not touched). **After upgrading, call it once per namespace with the same key.** Memory is bounded by the page (about 8 MiB at 1,000,000 entries of 64 bytes, where the earlier method used 336 MiB); the write-ahead log still grows by about the size of the namespace's payloads. It is also how encryption is switched on for a database written without a key.
+- **A keyed import accepts only bound records.** `import_entries` and `import_from` on an engine with a key refuse the whole import before writing, with `InvalidArgument { argument: "records" }`, if any record is not bound; the text says to import into an engine without a key and rotate. The check is of the tag, not the authenticity. Without a key, records are stored verbatim as before; `export_entries` and the CLI's `export`, `import` and `copy` are unchanged and keep working on a sealed namespace (the CLI takes no key).
+- **A keyed engine never uses the SQL pushdown for field queries.** It always takes the decoding tier, so stored text that nothing has authenticated is never filtered in SQL; `dry_run` says tier 3. Over plain entries such a query is `UnsealedEntry`.
+- **A new error variant and a changed message.** `LocalFileCacheError::UnsealedEntry` (`encryption` feature; the enum is `#[non_exhaustive]`). The text of `EncryptionError` for a failed decryption now reads "wrong key, corrupted data, or the entry was moved from another path".
+- **One way for encrypted entries.** v0.23.x and earlier read the new tags as `UnknownEncoding`. **Do not call `rotate_encryption_key` with an older version once v0.24.0 has written to the database**: v0.23.0 returns `Ok(0)` and still switches its in-memory key. The way back is a purge, or an export made before.
+- **The wire-format guarantee is scoped** (`docs/src/migration.md`, amended in place): it is about the payload codec bytes, and holds for every entry except a sealed entry read by an engine with a key, which needs the one rotation. The codec bytes inside the ciphertext do not change.
+
+### Changed
+
+- With a key, a 64-byte `set` took about 0.12 µs longer (+1%) and a 64-byte `get` about 0.17 µs longer (+3%); a 1 MiB entry was not distinguishable from the spread (about 0.5% or less), measured on one shared host against v0.23.1. See [Performance](docs/src/performance.md).
+- `docs/src/security.md` states what an attacker who can write the file, but has no key, can and cannot do, and the nonce limit (NIST SP 800-38D: 2^32 encryptions per key).
+
+---
+
 ## [0.23.1] — 2026-11-03
 
 Authorized by the project owner on 2026-11-03. The source is that of release candidate `228546e`; the release

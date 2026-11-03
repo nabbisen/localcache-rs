@@ -51,6 +51,19 @@ never the ones evicted. `import_from`, and the `import` and `copy` CLI commands 
 follow the same rule. (Before v0.22.0 an import ignored the bound and could leave the namespace
 over it.) The CLI has no `max_entries` option, so it is unaffected.
 
+**With an encryption key, an import accepts only bound records.** On an engine that has a key,
+`import_entries` and `import_from` (and so the records `copy` moves into it) refuse the **whole**
+import before writing, with `InvalidArgument { argument: "records", .. }`, if any record is not
+sealed bound to its path (its tag does not end in `-aes256gcm-bound`: it is plain, or was sealed
+by v0.23 or earlier). The check is of the tag, not the authenticity: a record sealed under another
+key is imported and fails closed on read, like any corrupt entry. To bring older records forward,
+import them into an engine **without** a key and call `rotate_encryption_key` on an engine with
+the key. Without a key, records are stored verbatim, sealed or plain, and so are the CLI's `import`
+and `copy`; the CLI takes no key. **An export is always verbatim** (the ciphertext as stored, Base64),
+and a sealed namespace exported and imported, or copied, into another namespace of the same
+database or into another database reads under the same key: the namespace is not part of what an
+entry is bound to (use one key per trust domain).
+
 **An import is a restore, not a use.** Each imported entry keeps the recency it was exported with, as
 its `last_accessed_at` seconds (for a record from before v0.23.0 that was never read, whose
 `last_accessed_at` is 0, its `updated_at`); an entry used after the import ranks above every imported

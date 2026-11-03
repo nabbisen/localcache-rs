@@ -179,6 +179,22 @@ Writing gets cheaper in the same change: `batch_set` took about three quarters o
 a new database file is about a quarter smaller (one fewer index to maintain). A file migrated from v5 does not
 get smaller by itself; see [Migration](./migration.md).
 
+## What binding an encrypted entry costs (v0.24.0)
+
+With an encryption key, each payload is sealed bound to its path: the path and the encoding tag are
+authenticated along with the ciphertext (associated data of about 165 bytes for a 124-byte path). On a
+host shared with other work, with seven alternating rounds against v0.23.1, a 64-byte entry took about
+**0.12 µs longer to `set`** (+1.2%) and **0.17 µs longer to `get`** (+3%); a 1 MiB entry was not
+distinguishable from the spread of the runs (about 0.3% to 0.5%). These are bounds measured for one
+path length and two payload sizes, not promises.
+
+`rotate_encryption_key` is the one operation whose cost changed in kind: it now seals every entry of
+the namespace, in pages of 1,000 rows or 8 MiB. At 1,000,000 entries of 64 bytes it took about 2 s and
+8 MiB of memory (the earlier method held the whole namespace, 336 MiB in the same measurement, and 8 GiB
+at 4 KiB entries); the write-ahead log still grows by about the size of the namespace's payloads. Its
+pages are read by `(namespace, path)`, which SQLite serves from the unique index in order; paging by
+row id instead scans the whole namespace for every page, and was about 300 times slower for pages of 100 rows in the same test.
+
 ## Namespaces are the main scaling lever
 
 Every operation whose plan narrows only by `namespace=?` scans the whole namespace (a
