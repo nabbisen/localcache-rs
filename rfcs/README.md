@@ -82,7 +82,9 @@ The "Background" section is optional in both templates.
 
 ### Proposed
 
-*(none)*
+| RFC | Title | Release |
+|-----|-------|---------|
+| [029](./proposed/029-encryption-integrity.md) | Encryption Integrity: Entries Bound to Their Row, a Key That Does Not Leak | v0.23.1 (R4, R5, announcement), then v0.24.0 (R1 to R3) |
 
 ### Archive
 
