@@ -61,8 +61,11 @@ where
     let prepared = q.prepare_path_filters()?;
     let plan = classify_query(&q);
     let plan = match plan {
+        // A keyed engine never evaluates payloads in SQL (RFC 029 R2): the
+        // pushdown reads stored text that nothing has authenticated.
         QueryPlan::Tier2 { .. }
-            if !repository::namespace_all_json(q.core.conn, q.core.namespace)? =>
+            if q.core.is_keyed()
+                || !repository::namespace_all_json(q.core.conn, q.core.namespace)? =>
         {
             QueryPlan::Tier3
         }
@@ -451,8 +454,11 @@ pub(super) fn describe_query_plan<T>(
 ) -> Result<String, LocalFileCacheError> {
     let plan = classify_query(q);
     let plan = match plan {
+        // A keyed engine never evaluates payloads in SQL (RFC 029 R2): the
+        // pushdown reads stored text that nothing has authenticated.
         QueryPlan::Tier2 { .. }
-            if !repository::namespace_all_json(q.core.conn, q.core.namespace)? =>
+            if q.core.is_keyed()
+                || !repository::namespace_all_json(q.core.conn, q.core.namespace)? =>
         {
             QueryPlan::Tier3
         }
@@ -469,8 +475,8 @@ pub(super) fn describe_query_plan<T>(
         ),
         QueryPlan::Tier3 => "execution: tier 3 — every candidate payload is decoded before \
              ordering/limiting (a non-`field_gt`/`field_lt` predicate, a field path unsafe to \
-             push into SQL, or a payload encoding other than 'json' is present in this \
-             namespace)"
+             push into SQL, a payload encoding other than 'json' is present in this \
+             namespace, or the engine has an encryption key)"
             .to_owned(),
     })
 }

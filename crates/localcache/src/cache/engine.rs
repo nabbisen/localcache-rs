@@ -1408,6 +1408,22 @@ pub(crate) struct EngineCore<'e> {
     pub(crate) encryption_key: &'e std::cell::RefCell<Option<crate::key::Key>>,
 }
 
+impl EngineCore<'_> {
+    /// Whether the engine has an encryption key (RFC 029 R2: a keyed engine
+    /// never evaluates payloads in SQL).
+    #[cfg(feature = "json")]
+    pub(crate) fn is_keyed(&self) -> bool {
+        #[cfg(feature = "encryption")]
+        {
+            self.encryption_key.borrow().is_some()
+        }
+        #[cfg(not(feature = "encryption"))]
+        {
+            false
+        }
+    }
+}
+
 /// Decode `bytes` into `U`, using `core`'s configuration rather than a
 /// typed `CacheEngine<U>`. The generic replacement for the removed
 /// `CacheEngine::decode_pub`.

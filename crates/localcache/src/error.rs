@@ -34,9 +34,9 @@ use std::path::PathBuf;
 ///         LocalFileCacheError::UnknownEncoding(_) => {}
 ///         LocalFileCacheError::Poisoned { .. } => {}
 ///         // deliberately no `_` arm; variants that exist only with a Cargo
-///         // feature (`MissingEncryptionKey`, `EncryptionError`, `Watcher`,
-///         // `AsyncTaskPanicked`) are not named, so the match is the same in
-///         // every feature combination
+///         // feature (`MissingEncryptionKey`, `UnsealedEntry`, `EncryptionError`,
+///         // `Watcher`, `AsyncTaskPanicked`) are not named, so the match is the
+///         // same in every feature combination
 ///     }
 /// }
 /// ```
@@ -105,10 +105,13 @@ pub enum LocalFileCacheError {
     #[error("lock poisoned: {resource}")]
     Poisoned { resource: &'static str },
 
-    /// An AES-256-GCM encryption or decryption failure: wrong key or
-    /// corrupted data.
+    /// An AES-256-GCM encryption or decryption failure: wrong key, corrupted
+    /// data, or an entry that was moved from another path (a bound entry is
+    /// sealed to the path it was written for, RFC 029).
     ///
-    /// Two related failures return different variants, not this one: an
+    /// Three related failures return different variants, not this one: an
+    /// entry that is not sealed under the engine's key and bound to its path
+    /// returns [`LocalFileCacheError::UnsealedEntry`], an
     /// encrypted entry decoded without the `encryption` feature compiled in
     /// returns [`LocalFileCacheError::UnknownEncoding`], and an encrypted
     /// entry decoded with the feature compiled in but no key configured
@@ -177,6 +180,23 @@ pub enum LocalFileCacheError {
     #[cfg(feature = "encryption")]
     #[error("no encryption key is configured")]
     MissingEncryptionKey,
+
+    /// An engine with an encryption key met an entry that is not sealed under
+    /// a key and bound to its path: it is stored plain, or it was sealed by
+    /// v0.23 or earlier, before entries were bound to their path (RFC 029).
+    ///
+    /// With a key set, only bound entries are read; anything else is refused
+    /// here, never read silently. Call
+    /// [`rotate_encryption_key`](crate::CacheEngine::rotate_encryption_key)
+    /// once with the same key to seal every entry of the namespace bound to
+    /// its path, or purge the entry. An engine without a key is not affected.
+    #[cfg(feature = "encryption")]
+    #[error(
+        "unsealed entry: it is not sealed under this engine's key and bound to its path \
+         (it is stored plain, or was sealed before v0.24.0); call rotate_encryption_key once \
+         with the same key to seal it, or purge the entry"
+    )]
+    UnsealedEntry,
 
     /// The database or the connection is in a state this crate will not work
     /// with, for example a journal mode a migration cannot use, or SQLite not

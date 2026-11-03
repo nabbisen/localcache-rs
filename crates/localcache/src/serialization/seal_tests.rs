@@ -230,22 +230,64 @@ fn encode_returns_a_bound_tag_and_decode_needs_the_same_path() {
     ));
 }
 
+/// RFC 029 R2: with a key, a payload that is not bound is refused, whether it
+/// is stored plain or was sealed before binding; without a key a sealed tag is
+/// `MissingEncryptionKey` and a plain tag is read, as before.
 #[test]
-fn a_payload_sealed_before_binding_still_opens_without_associated_data() {
+fn with_a_key_only_a_bound_payload_is_read() {
     let key = [0x42_u8; 32];
     let value: Vec<u8> = (0..100).collect();
     let plain = payload_codec_bytes(&value);
-    let sealed = encrypt_bytes(&plain, &key, &[]).unwrap();
-    let back: Vec<u8> = decode_payload(
-        &sealed,
-        "raw-aes256gcm",
-        "/anywhere",
-        #[cfg(feature = "compression")]
-        crate::DEFAULT_MAX_DECOMPRESSED_BYTES,
-        Some(&key),
-    )
-    .unwrap();
-    assert_eq!(back, value);
+    let legacy = encrypt_bytes(&plain, &key, &[]).unwrap();
+    let decode = |bytes: &[u8], tag: &str, key: Option<&[u8; 32]>| {
+        decode_payload::<Vec<u8>>(
+            bytes,
+            tag,
+            "/anywhere",
+            #[cfg(feature = "compression")]
+            crate::DEFAULT_MAX_DECOMPRESSED_BYTES,
+            key,
+        )
+    };
+    // with a key
+    assert!(matches!(
+        decode(&plain, "raw", Some(&key)),
+        Err(LocalFileCacheError::UnsealedEntry)
+    ));
+    assert!(matches!(
+        decode(&legacy, "raw-aes256gcm", Some(&key)),
+        Err(LocalFileCacheError::UnsealedEntry)
+    ));
+    // a bound tag on legacy bytes is an authentication failure, not a read
+    assert!(matches!(
+        decode(&legacy, "raw-aes256gcm-bound", Some(&key)),
+        Err(LocalFileCacheError::EncryptionError(_))
+    ));
+    // a tag this build cannot decode stays `UnknownEncoding`, whatever the key
+    for tag in ["bogus", "bogus-aes256gcm", "bogus-aes256gcm-bound"] {
+        assert!(
+            matches!(
+                decode(&plain, tag, Some(&key)),
+                Err(LocalFileCacheError::UnknownEncoding(_))
+            ),
+            "{tag}"
+        );
+    }
+    // without a key
+    assert_eq!(decode(&plain, "raw", None).unwrap(), value);
+    for tag in ["raw-aes256gcm", "raw-aes256gcm-bound"] {
+        assert!(
+            matches!(
+                decode(&legacy, tag, None),
+                Err(LocalFileCacheError::MissingEncryptionKey)
+            ),
+            "{tag}"
+        );
+    }
+    // the refusal text names the remedy
+    let text = LocalFileCacheError::UnsealedEntry.to_string();
+    assert!(text.contains("rotate_encryption_key"), "{text}");
+    assert!(text.contains("purge"), "{text}");
 }
 
 fn payload_codec_bytes(value: &Vec<u8>) -> Vec<u8> {

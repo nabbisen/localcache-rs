@@ -223,11 +223,19 @@ where
 {
     #[cfg(not(feature = "encryption"))]
     let _ = path;
-    // Decryption step, if the tag says the payload is sealed. A bound payload
-    // is opened with its associated data, a legacy one without (RFC 029 R1).
+    // With a key, only a bound payload is read (RFC 029 R2); a plain or
+    // legacy-sealed one is refused as `UnsealedEntry`. Without a key, a sealed
+    // tag is `MissingEncryptionKey` and a plain tag is read, as before. A tag
+    // this build cannot decode is `UnknownEncoding` whatever the key.
     let (base, sealing) = parse_tag(encoding);
     let (inner_bytes_cow, inner_tag) = match sealing {
-        Sealing::None => (std::borrow::Cow::Borrowed(bytes), encoding),
+        Sealing::None => {
+            #[cfg(feature = "encryption")]
+            if encryption_key.is_some() && is_known_base(base) {
+                return Err(LocalFileCacheError::UnsealedEntry);
+            }
+            (std::borrow::Cow::Borrowed(bytes), encoding)
+        }
         Sealing::Legacy | Sealing::Bound => {
             #[cfg(feature = "encryption")]
             {
@@ -235,11 +243,10 @@ where
                 if !is_known_base(base) {
                     return Err(LocalFileCacheError::UnknownEncoding(base.to_owned()));
                 }
-                let aad = match sealing {
-                    Sealing::Bound => associated_data(encoding, path),
-                    _ => Vec::new(),
-                };
-                let decrypted = decrypt_bytes(bytes, key, &aad)?;
+                if sealing == Sealing::Legacy {
+                    return Err(LocalFileCacheError::UnsealedEntry);
+                }
+                let decrypted = decrypt_bytes(bytes, key, &associated_data(encoding, path))?;
                 (std::borrow::Cow::Owned(decrypted), base)
             }
             #[cfg(not(feature = "encryption"))]
@@ -441,7 +448,8 @@ fn decrypt_bytes(data: &[u8], key: &[u8; 32], aad: &[u8]) -> Result<Vec<u8>, Loc
         )
         .map_err(|_| {
             LocalFileCacheError::EncryptionError(
-                "decryption failed — wrong key or corrupted data".into(),
+                "decryption failed — wrong key, corrupted data, or the entry was moved from another path"
+                .into(),
             )
         })
 }
