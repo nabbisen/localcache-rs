@@ -51,7 +51,7 @@ to mean "sealed without binding". The tag, not a column, tells the two formats a
 ### R2 — With a key set, only bound entries are read
 
 With a key configured, `get`, `get_if_fresh`, the batch reads, queries (`run` and `run_report`) and every other path that decodes a payload open an entry only if its tag is bound; a plain entry or an entry sealed without binding
-returns the new `LocalFileCacheError::UnsealedEntry` (`#[cfg(feature = "encryption")]`; the enum is `#[non_exhaustive]`), whose text names the remedy (`rotate_encryption_key`, or purge the entry). A bound entry
+returns the new `LocalFileCacheError::UnsealedEntry` (a tag whose base this build cannot decode is `UnknownEncoding` whatever the key: an entry nobody can decode is not "unsealed") (`#[cfg(feature = "encryption")]`; the enum is `#[non_exhaustive]`), whose text names the remedy (`rotate_encryption_key`, or purge the entry). A bound entry
 that fails to open is `EncryptionError`, whose text now reads "wrong key, corrupted data, or the entry was moved". Without a key the behaviour is today's: a sealed tag is `MissingEncryptionKey`, a plain tag is read.
 
 **Writes.** With a key, `set` and `batch_set` write bound entries; without one, plain entries (a user's choice). A keyed `import_entries` or `import_from` accepts only records whose tag is bound and
@@ -68,7 +68,7 @@ This is a rule, not an option. A `require_encryption` option would leave the def
 sealed without binding (opened with the engine's current key, no associated data), or bound. `new_key` may equal the current key: that is the upgrade of a v0.23.0 database, and
 how encryption is switched on for a plain one (open with the key, rotate to it). Everything happens in **one `IMMEDIATE` transaction** (the all-or-nothing property of today's method, and its guard
 against a concurrent writer, are kept), but rows are read and written in **keyset pages by `(namespace, path)`**, served by the `UNIQUE(namespace, path)` index (RFC 020's pattern). Paging by `file_id` was measured and
-rejected: SQLite scans and sorts the namespace for every page (478.6 s for 1,000,000 entries against 1.6 s by path). A page ends at `PAGE_ROWS = 1,000` rows or `PAGE_BYTES = 8 MiB`, whichever comes first, and always holds at least one row;
+rejected: SQLite scans and sorts the namespace for every page (478.6 s for 1,000,000 entries against 1.6 s by path). A page ends at `PAGE_ROWS = 1,000` rows or after the row that brings it to `PAGE_BYTES = 8 MiB`, whichever comes first (so a page can exceed the byte cap by one row), and always holds at least one row;
 memory is then about 21 MiB at 4 KiB entries where today's method holds about 1.8 times the namespace's payload bytes (8 GiB for 4.4 GiB). The query selects every row of the namespace with its path and tag and compares tags **exactly** (today's `LIKE '%-aes256gcm'` is
 case-insensitive and selects neither plain rows nor the new tags), and the update writes the content **and** the tag. The engine switches to `new_key` only after the commit, as today. It returns the number of entries re-sealed. An unknown tag or any failure aborts and changes nothing.
 
