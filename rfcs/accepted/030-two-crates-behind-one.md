@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| Status | Proposed |
+| Status | Accepted (owner, 2026-11-04), all four decisions as recommended |
 | Feature | *(core)* |
 | Touches | the workspace layout (`Cargo.toml`, two new crates), `crates/localcache/src/{serialization*,key.rs,db/**,error.rs}` (moved or split), `crates/localcache/tests` (relocated where they test an internal), `Makefile.toml` and `.github/workflows/*.yaml` (per-crate gate rows, the release digest guard), `scripts/check_versions.py`, `docs/src/` (architecture, source archives, security), `deny.toml` |
 | Release | **v0.25.0**, after v0.24.0 is released (a minor release: the public API is unchanged, the packaging is not) |
@@ -114,14 +114,15 @@ Checked in review 086: `async_engine`, `pool`, `read_pool` and `watcher` (18% of
 
 No API, feature, MSRV or stored-format change: not breaking, so no announcement release is owed. It is a minor release because every user's dependency graph gains two crates. Rollback: a later release folds the two crates back into `localcache`; the published crates stay on crates.io (they can be yanked) and the facade stops depending on them.
 
-## Decisions requested
+## Decisions
 
-1. **Accept stage 1** (R1 to R6) as scoped, with the stop rules; stage 2 (R7) is a later, separate decision.
-2. **Lockstep versions, exact pins, and the plain wording** of the internal crates' first README line (R3).
-3. **Release as v0.25.0**, after v0.24.0.
-4. **The names** `localcache-format` and `localcache-storage`.
+Accepted by the owner on 2026-11-04 with the recommended answers:
+1. Stage 1 (R1 to R6) as scoped, with the stop rules; stage 2 (R7, the adapters) is a later, separate decision.
+2. Lockstep versions, exact pins, and the plain wording of the internal crates' first README line (R3).
+3. Release as v0.25.0, after v0.24.0.
+4. The names `localcache-format` and `localcache-storage`.
 
-Handoffs: written after acceptance, starting with step 0.
+Handoffs: `../handoffs/030-two-crates-behind-one/` (step 0 first; the slices after the architect's review of step 0).
 
 ## Open questions
 

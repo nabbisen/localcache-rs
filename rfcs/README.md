@@ -80,12 +80,11 @@ The "Background" section is optional in both templates.
 | [027](./accepted/027-release-engineering-on-standard-tools.md) | Release Engineering on Standard Tools (amends RFC 009) | Phase 24 Q9 (Q9a, Q9b, Q9c); Q9c before the v0.22.0 release candidate |
 | [028](./accepted/028-owned-payload-codec.md) | An Owned, Bounds-Checked Codec for the Legacy Payload Format | Phase 24 Q11 (v0.22.1) |
 | [029](./accepted/029-encryption-integrity.md) | Encryption Integrity: Entries Bound to Their Row, a Key That Does Not Leak | v0.23.1 (R4, R5, announcement), then v0.24.0 (R1 to R3) |
+| [030](./accepted/030-two-crates-behind-one.md) | Two Crates Behind One: `localcache-format` and `localcache-storage` | v0.25.0, after v0.24.0 |
 
 ### Proposed
 
-| RFC | Title | Release |
-|-----|-------|---------|
-| [030](./proposed/030-two-crates-behind-one.md) | Two Crates Behind One: `localcache-format` and `localcache-storage` | v0.25.0, after v0.24.0 |
+*(none)*
 
 ### Archive
 
