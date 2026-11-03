@@ -1699,13 +1699,13 @@ authorization. **Done:** Q9a–Q9c, Q3d, Q1c, Q3b, Q3c, Q2f (local commits), Q3e
 ### After v0.22.0 — plan authorized by the owner, 2026-10-31 (updated 2026-11-01)
 
 **v0.22.1** = Q11 (RFC 028), a fix release: **✅ released 2026-11-01**. **v0.22.2** = a documentation-only patch that announces v0.23.0 one release ahead, as the
-v0.21.5 notes promised (RFC 026 decision 2). **v0.23.0** = **RFC 026, accepted by the owner 2026-11-01**: a true use order for eviction (reads and writes, a strict order that
+v0.21.5 notes promised (RFC 026 decision 2): **✅ released 2026-11-03**. **v0.23.0** = **RFC 026, accepted by the owner 2026-11-01**: a true use order for eviction (reads and writes, a strict order that
 does not depend on a clock) and one path index, in one schema v6; Q12 = the migration and the index drop, Q13 = the use order. **Step 0** (the dev team's verification of the design,
 `rfcs/handoffs/026-use-order-and-one-path-index/step0-verification.md`) **is done (request 052, review 073): the design stays simple, A stays in v0.23.0**; its findings are folded into the RFC. Q12 = schema v6 and the use order in `crates/localcache/src` (`q12-schema-v6-and-the-use-order.md`), Q13 = the CLI, the book, the README and the CHANGELOG (`q13-docs-cli-and-the-announcement-made-true.md`).
 Review of scope: `.git-exclude/reviewed/071-…`. **RFC 029** (encryption integrity: payload bound to its row, a strict mode, key zeroization, a paged upgrade; no schema change) is proposed as the
 subject of v0.24.0 and is not yet drafted; the owner decides it after RFC 026. **1.0:** not planned. It requires the owner's explicit confirmation.
 
-Order of the dev team's work: v0.22.2 preparation (done; release candidate `88d80f0` after the lockfile fix, reviews 072 and 074) → step 0 (done) → Q12 (done: committed locally as `6daeb26`, reviews 075 and 076) → Q13 (written, in review: request 056) → v0.23.0 release preparation.
+Order of the dev team's work: v0.22.2 (✅ released 2026-11-03; reviews 072, 074 and 078) → step 0 (done) → Q12 (done: committed locally as `6daeb26`, reviews 075 and 076) → Q13 (written, in review: request 056) → v0.23.0 release preparation.
 
 ### v0.22.1 — released 2026-11-01
 
@@ -1723,6 +1723,22 @@ Order of the dev team's work: v0.22.2 preparation (done; release candidate `88d8
 A fix release under the SemVer policy by the owner's decision on RFC 028: a stored payload can no longer abort or crash a reader (the
 v0.22.0 Known issue and a stack overflow found while fixing it), `bincode` and its advisory exception left the tree, and two inputs
 that v0.22.0 accepted are refused (a count above the remaining bytes, nesting beyond 128 levels). No known issue is open.
+
+### v0.22.2 — released 2026-11-03
+
+| | |
+|---|---|
+| Release candidate | `3374539` (reviews 072 and 074: Go after the lockfile fix `88d80f0`) |
+| Release commit | `c84497f` (`docs: set the v0.22.2 release date`); changes `CHANGELOG.md` only |
+| Tag | `0.22.2`, GPG-signed and annotated (tag object `4521349e…`), on the release commit, pushed |
+| CI on the release commit | run 41587069177 green |
+| `Release` workflow | dry run from the tag, run 41587865118, all jobs green; its digest step printed the two digests that were later published. Real run 41588765214: Gate, Advisories, MSRV fresh, Source archive, Publish, GitHub release all green |
+| Published | `localcache 0.22.2` (checksum `52d3482f8e67b6f4ece144ccd03546b0c0fed98225104a868797935fbe7411ab`) and `localcache-cli 0.22.2` (`db29a76120c5d5310faec4a6e78344279ff66ee29347e24ab44bbaee739e0bb8`) on crates.io, 2026-11-03 06:19 UTC, neither yanked, `rust-version` 1.85; the downloaded `.crate` files hash to the registry checksums |
+| GitHub release | `0.22.2`, asset `localcache-v0.22.2.tar.gz` (880,907 bytes, SHA-256 `8bdebb232517da25c503b0ebaee25244c0df71f7faec05b3a3918659de1017d4`); the notes list both `.crate` digests, equal to crates.io's; `gh attestation verify` passes (signer `release.yaml@refs/tags/0.22.2`, source `c84497f`) |
+| Fresh consumer | `localcache = "=0.22.2"` builds on Rust 1.85.0; no `bincode` in the resolved graph |
+
+A documentation release: it announces schema v6 and the use order one release ahead (RFC 026). One locked transitive dependency
+(`async-executor`) was updated because its locked version had been yanked; CI's dependency gate found it. No known issue is open.
 
 ### Module-size register — after Q2b (2026-09-24)
 
