@@ -11,7 +11,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 *Date set at owner authorization.*
 
-**A documentation release. Not breaking.** No code, schema, wire-format, dependency or MSRV change. It carries the announcement that the v0.21.5
+**A documentation release. Not breaking.** No change to the crate's code, schema, wire format, declared dependencies or MSRV. One locked transitive dependency
+(`async-executor`, used only by the optional `async-std` and `smol` features) was updated in `Cargo.lock` because its locked version had been yanked. It carries the announcement that the v0.21.5
 notes promised "one release ahead" of the change they described.
 
 **Announced: v0.23.0 changes the eviction order and the stored schema (RFC 026).** Nothing changes in this release.
@@ -21,11 +22,12 @@ notes promised "one release ahead" of the change they described.
 - **`last_accessed_at` means last use.** `EntryInfo::last_accessed_at`, `ExportRecord::last_accessed_at` and `SortKey::LastAccessed` keep their types and their
   unit (Unix seconds) but report when the entry was last read **or written**; a stored entry no longer reports `0`.
 - **Schema v6, one way.** The first writable open of a v5 database migrates it in one transaction: the use order replaces `last_accessed_at` and the LRU index,
-  and `idx_files_namespace_path`, which duplicates the index SQLite already builds for `UNIQUE(namespace, path)`, is dropped (in a raw-SQL benchmark on 300,000 synthetic rows the
-  database file was 22% smaller and inserts 11% to 15% faster; the engine's own operations include work this index does not touch). **A migrated database is
+  and `idx_files_namespace_path`, which duplicates the index SQLite already builds for `UNIQUE(namespace, path)`, is dropped (in a raw-SQL benchmark on 300,000 synthetic rows a new
+  database file was 22% smaller and inserts 11% to 15% faster; the engine's own operations include work this index does not touch; a migrated file does not
+  shrink by itself, and `shrink_database()` reclaims its free pages). **A migrated database is
   refused by v0.22.x and earlier.** To keep a way back, export before upgrading (`localcache export`, or `export_entries`). From v0.23.0, a read-only open of a v5
   database reports `SchemaNotCurrent` until a writable open migrates it (in v0.22.x, v5 is the current schema). The migration runs in one transaction and needs
-  free disk space of up to about the size of the database (measured: 0.2 to 0.8 GB of write-ahead log for 1 to 2 million entries).
+  free disk space of up to about the size of the database (measured: about 0.6 of it for 1 million entries, which took 8 seconds).
 - No payload byte changes: payloads, encryption, compression and the wire format are untouched.
 
 ---

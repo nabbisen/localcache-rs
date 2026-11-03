@@ -59,7 +59,8 @@ write, so never assign (as today). `check_status`, `explain` and queries are not
 one (verified, step 0). So the column carries the rule itself:
 `last_used_us INTEGER NOT NULL DEFAULT 0 CHECK (typeof(last_used_us) = 'integer' AND last_used_us < 4611686018427387904)`. A use that would break it fails with
 `SQLITE_CONSTRAINT_CHECK` and changes nothing; the engine maps that error to `DatabaseState` ("use order exhausted"). The fresh v6 table is defined with the
-same column (same position, default and check) as the migrated one, and the classifier compares the table's structure (`PRAGMA table_xinfo`), never its SQL text.
+same column (same position, default and check) as the migrated one. The classifier compares the table's structure (`PRAGMA table_xinfo`) and, because `table_xinfo`
+cannot see a `CHECK`, the one `CHECK` as **tokens** (whatever the whitespace, case, or way the column was added): a v6 file without it would store a float at the limit.
 
 **Where a failed use is reported.** `set`, `batch_set` and `touch` return the error. A `get` or `get_if_fresh` **hit** keeps today's behaviour: the value is
 returned and a failure to record the use is ignored, because a read must not fail for want of bookkeeping (documented on those methods). Only a hostile file can
@@ -83,6 +84,8 @@ one second; an export made by an older version has no finer information to keep.
 1. Compute each row's last-use seconds `s = last_accessed_at` if it is above 0, else `updated_at` (a never-read entry is ordered by when it was written,
    among the others: this is the intended change). Per namespace, in order of `(s, updated_at, id)`, assign `v_1 = s_1 × 10^6` and
    `v_i = max(s_i × 10^6, v_{i-1} + 1)`. No two rows share a value, the order of `s` is preserved, and more than 10^6 rows in one second cannot collide.
+   **The range is the import's range (R2): `0 ≤ s` and `s × 10^6 < 2^62`, so every stored value is in `[0, 2^62)`.** A row outside it (a damaged or hostile file; a negative
+   `updated_at` can only come from a clock set before 1970) fails the migration, which changes nothing; the database is not repaired silently.
 2. The order SQLite forces, all in the one transaction: add the column (with the check of R1); run the backfill as **one SQL statement** (`UPDATE … FROM` over window
    functions: `v_i = i + max_{j≤i}(s_j × 10^6 − j)` is the same recurrence in closed form, verified against an independent implementation, step 0); drop `idx_files_lru` and
    **`idx_files_namespace_path`** (a column cannot be dropped while an index uses it); drop `last_accessed_at`; create `idx_files_use` on `(namespace, last_used_us)`.
@@ -95,7 +98,9 @@ one second; an export made by an older version has no finer information to keep.
 Resources, stated: the transaction writes about as much write-ahead log as a fifth to four fifths of the database (measured: 0.2 to 0.8 GB for 1 to 2 million
 entries) and `DROP COLUMN` rewrites the table, so the migration needs free disk space of up to about the size of the database and takes seconds to tens of
 seconds at a million entries on a good disk; on a full disk it fails and leaves the database as it was. The existing migrations share the property; the
-announcement and the migration page say it.
+announcement and the migration page say it. Measured through the engine (request 054, 1,000,000 entries, a 507 MiB database): 7.6 to 8.7 s, peak footprint 817 MiB
+(about 0.6 of the database beyond its size), 22 MiB of memory. **The file does not shrink by migrating** (507 → 529 MiB: the dropped index and column leave free
+pages); a new database is smaller, and `shrink_database()` reclaims the pages. No text may promise a smaller file after a migration.
 
 Compatibility consequences, stated: **a migrated database is refused by v0.22.x and earlier** (their classifier expects the dropped objects); rollback
 means export, then import into an older version. A read-only open of a v5 database reports `SchemaNotCurrent` until a writable open migrates it, as
@@ -111,8 +116,13 @@ Every statement of "least recently **read**", of `last_accessed_at == 0`, and of
 - **Step 0, done (request 052, 2026-11-01; its findings are folded into R1 to R3 above).** On scratch copies with the bundled SQLite (3.53.2): 4.5 million use values returned
   to eight concurrent connections (separate processes and threads; a real, a stuck and a backwards clock) with no duplicate; the overflow behaviour; the backfill at 1M
   and 2M rows sharing one second, in at most 20 MiB; the 26 real statements on the v5 and v6 shapes (no path or namespace plan changes shape, `path_in_dir` included);
-  every reader of `last_accessed_at`. Its verdict: the design stays simple. **Still to measure, at implementation:** the cost of the `MAX` seek on a warm `get` hit
-  through the engine (0.3 to 5.9 µs of CPU in memory), reported, with a regression above 10% of the hit's time brought to the architect.
+  every reader of `last_accessed_at`. Its verdict: the design stays simple.
+- **The warm hit, measured at implementation (request 054, 2026-11-03).** Through the engine, a hit of one hot entry costs +1% in a one-entry database and +6.6 µs
+  (14 → 20 µs, +48%) in a 100,000-entry database with a 64-byte payload; random hits in the same database show no difference. **Decision (architect, 2026-11-03):
+  accepted, the design stays.** A hit was already a write transaction; the extra is the `MAX` seek and an index entry that now really moves, in exchange for an
+  eviction order that is true and a `set` that is 26% faster per entry. Weakening the guarantee to make the seek disappear (a hit assigning only its own value plus one)
+  would let an entry read just after a clock step backwards rank as old, which is the defect this RFC removes. The same change makes `batch_set` of 100,000 entries 26%
+  faster per entry and the file 24% smaller. The figures are published with their limits (a loaded host, 64-byte payloads) and never as a promise.
 - The observed pathology as a test: the `a`/`g`/`h` sequence now evicts `a`.
 - `touch` protects from eviction even inside one microsecond; a write counts as a use; an overwrite counts; read-only engines write nothing.
 - Migration from **every** historical fixture (v1 to v5) reaches v6 with all entries and payloads intact; the failure-injection points of the
