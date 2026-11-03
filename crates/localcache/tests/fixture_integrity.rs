@@ -23,6 +23,13 @@ const V0_19_INDEX_PATH: &str = concat!(
 );
 const V0_19_INDEX_SHA256: &str = "585ea037ad94ef77696b3bb3c6d13d9778975057e2bdd7bdc5b01b299cfc86df";
 
+const V0_23_ENCRYPTED_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/compat-v0_23-encrypted.sqlite3"
+);
+const V0_23_ENCRYPTED_SHA256: &str =
+    "05dc89a9618a2ca28a6b652055e323418e8371cbe0b21fbe36a2bfcf14f63867";
+
 fn assert_sha256(path: &str, expected: &str) {
     let bytes = fs::read(path).unwrap_or_else(|error| panic!("cannot read {path}: {error}"));
     let actual = format!("{:x}", Sha256::digest(bytes));
@@ -408,4 +415,58 @@ fn public_open_migrates_v0_1_atomically_for_every_runtime_option() {
             assert!(!directory.path().join("compat-v0_1.sqlite3-shm").exists());
         }
     }
+}
+
+#[test]
+fn released_v0_23_encrypted_fixture_has_exact_digest_and_shape() {
+    assert_sha256(V0_23_ENCRYPTED_PATH, V0_23_ENCRYPTED_SHA256);
+    let conn = Connection::open_with_flags(
+        Path::new(V0_23_ENCRYPTED_PATH),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    assert_eq!(
+        conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        6
+    );
+    let tags = conn
+        .prepare(
+            "SELECT f.namespace, p.encoding, count(*) FROM files f \
+             JOIN payloads p ON p.file_id = f.id GROUP BY 1, 2 ORDER BY 1",
+        )
+        .unwrap()
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    let expected = [
+        ("json", "json-aes256gcm"),
+        ("json-zstd", "json-zstd-aes256gcm"),
+        ("plain", "raw"),
+        ("raw", "raw-aes256gcm"),
+        ("zstd", "zstd-aes256gcm"),
+    ];
+    assert_eq!(
+        tags,
+        expected
+            .map(|(n, t)| (n.to_owned(), t.to_owned(), 3))
+            .to_vec()
+    );
+    // the generator ran at /fixture: no developer identity in a stored path
+    let paths = conn
+        .prepare("SELECT path FROM files")
+        .unwrap()
+        .query_map([], |row| row.get::<_, String>(0))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(paths.len(), 15);
+    assert!(paths.iter().all(|p| p.starts_with("/fixture/input-")));
 }
