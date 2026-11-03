@@ -180,8 +180,8 @@ where
 
     /// Return the cached entry for `path`, if one exists.
     ///
-    /// A read-only connection never updates `last_accessed_at` — writing it
-    /// requires read-write access, so the engine's normal LRU timestamp
+    /// A read-only connection never records a use — recording it writes the
+    /// database, which needs read-write access, so the engine's normal LRU
     /// update is skipped on every slot. Use
     /// [`SyncCacheEngine`][crate::SyncCacheEngine] if LRU tracking matters for
     /// your workload.

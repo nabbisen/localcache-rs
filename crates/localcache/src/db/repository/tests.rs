@@ -3,7 +3,10 @@
 
 use rusqlite::Connection;
 
-use super::{build_path_sql, explain_query, keys, path_filter_clauses, range_upper_bound};
+use super::{
+    EVICTION_CANDIDATES_SQL, RECORD_USE_SQL, build_path_sql, explain_query, keys,
+    path_filter_clauses, range_upper_bound,
+};
 use crate::db::schema;
 
 const SEP: char = std::path::MAIN_SEPARATOR;
@@ -179,6 +182,56 @@ fn assert_range_on_path(plan: &str, what: &str) {
         !plan.contains("SCAN"),
         "{what}: expected an index SEARCH, got:\n{plan}"
     );
+    // RFC 026: the duplicate index is gone, and the autoindex of
+    // `UNIQUE(namespace, path)` serves the range (the Q7 plan).
+    assert!(
+        plan.contains("sqlite_autoindex_files_1") && !plan.contains("idx_files_namespace_path"),
+        "{what}: expected the UNIQUE autoindex, got:\n{plan}"
+    );
+}
+
+fn plan_of(conn: &Connection, sql: &str, parameters: &[&dyn rusqlite::ToSql]) -> String {
+    let mut statement = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+    statement
+        .query_map(parameters, |row| row.get::<_, String>(3))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()
+        .join("\n")
+}
+
+#[test]
+fn the_path_listing_is_a_covering_range_on_the_unique_autoindex() {
+    let conn = conn_with(&["/d/a", "/d/b/c"]);
+    let prefix = format!("{SEP}d{SEP}");
+    let plan = explain_query(&conn, "ns", None, Some((&prefix, true)), None).unwrap();
+    assert!(
+        plan.contains(
+            "COVERING INDEX sqlite_autoindex_files_1 (namespace=? AND path>? AND path<?)"
+        ),
+        "{plan}"
+    );
+}
+
+#[test]
+fn the_eviction_scan_uses_the_use_index_and_no_sort() {
+    let conn = conn_with(&["/d/a", "/d/b"]);
+    let plan = plan_of(&conn, EVICTION_CANDIDATES_SQL, &[&"ns", &10_i64]);
+    assert!(plan.contains("idx_files_use (namespace=?)"), "{plan}");
+    assert!(
+        !plan.contains("TEMP B-TREE") && !plan.contains("SCAN"),
+        "{plan}"
+    );
+}
+
+#[test]
+fn recording_a_use_seeks_the_namespace_maximum_in_the_use_index() {
+    let conn = conn_with(&["/d/a"]);
+    let plan = plan_of(&conn, RECORD_USE_SQL, &[&1_i64, &"ns", &1_i64]);
+    assert!(
+        plan.contains("COVERING INDEX idx_files_use (namespace=?)"),
+        "{plan}"
+    );
 }
 
 #[test]
@@ -194,7 +247,7 @@ fn plans_use_a_range_on_path_for_both_forms() {
         // SELECT list differs, its WHERE and ORDER BY do not.
         let (clauses, params) = path_filter_clauses("ns", None, Some((&prefix, recursive)), None);
         let sql = format!(
-            "EXPLAIN QUERY PLAN SELECT id, path, mtime, file_size, hash, last_accessed_at \
+            "EXPLAIN QUERY PLAN SELECT id, path, mtime, file_size, hash, last_used_us \
              FROM main.files WHERE {} ORDER BY path",
             clauses.join(" AND ")
         );
@@ -216,4 +269,190 @@ fn sql_text_does_not_vary_with_the_directory() {
     let (a, _) = build_path_sql("ns", None, Some(("/a/", false)), None);
     let (b, _) = build_path_sql("ns", None, Some(("/b/é%/", false)), None);
     assert_eq!(a, b);
+}
+
+// ---------------------------------------------------------------------------
+// RFC 026: the use order
+// ---------------------------------------------------------------------------
+
+use super::{record_use, test_clock, upsert_in_tx, use_error, use_value_of_record};
+use crate::detection::metadata::FileMetadata;
+use crate::error::LocalFileCacheError;
+
+fn use_value(conn: &Connection, path: &str) -> i64 {
+    conn.query_row(
+        "SELECT last_used_us FROM files WHERE path = ?1",
+        [path],
+        |row| row.get(0),
+    )
+    .unwrap()
+}
+
+fn id_of(conn: &Connection, path: &str) -> i64 {
+    conn.query_row("SELECT id FROM files WHERE path = ?1", [path], |row| {
+        row.get(0)
+    })
+    .unwrap()
+}
+
+fn metadata() -> FileMetadata {
+    FileMetadata {
+        mtime: 1,
+        file_size: 2,
+        hash: None,
+    }
+}
+
+#[test]
+fn a_use_is_strictly_newer_than_everything_in_its_namespace_under_any_clock() {
+    let conn = conn_with(&["/d/a", "/d/b", "/d/c"]);
+    // A clock that never moves, and one that runs backwards.
+    for clock in [0_i64, 1] {
+        let mut tick = 1_000_000_000_000_i64;
+        let _guard = test_clock::set(move || {
+            if clock == 0 {
+                tick
+            } else {
+                tick -= 7;
+                tick
+            }
+        });
+        let mut last = conn
+            .query_row("SELECT max(last_used_us) FROM files", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        for path in ["/d/a", "/d/b", "/d/c", "/d/a", "/d/a", "/d/b"] {
+            record_use(&conn, "ns", id_of(&conn, path)).unwrap();
+            let value = use_value(&conn, path);
+            assert!(value > last, "{path}: {value} should exceed {last}");
+            last = value;
+        }
+    }
+}
+
+#[test]
+fn a_use_in_one_namespace_never_looks_at_another() {
+    let conn = conn_with(&["/d/a"]);
+    conn.execute(
+        "INSERT INTO files (namespace, path, mtime, file_size, updated_at, last_used_us) \
+         VALUES ('other', '/d/z', 0, 0, 0, 4000000000000000000)",
+        [],
+    )
+    .unwrap();
+    let _guard = test_clock::set(|| 5_000_000);
+    record_use(&conn, "ns", id_of(&conn, "/d/a")).unwrap();
+    assert_eq!(use_value(&conn, "/d/a"), 5_000_000);
+}
+
+#[test]
+fn a_write_is_a_use_and_so_is_an_overwrite() {
+    let mut conn = conn_with(&[]);
+    let mut now = 10_000_000_i64;
+    let _guard = test_clock::set(move || {
+        now += 1;
+        now
+    });
+    let write = |conn: &mut Connection, path: &str| {
+        let tx = conn.transaction().unwrap();
+        upsert_in_tx(&tx, "ns", path, &metadata(), b"x", "raw", 0).unwrap();
+        tx.commit().unwrap();
+    };
+    write(&mut conn, "/d/a");
+    write(&mut conn, "/d/b");
+    assert!(use_value(&conn, "/d/b") > use_value(&conn, "/d/a"));
+    // Overwriting `a` makes it the newest, and the row (and its id) is the same.
+    let id = id_of(&conn, "/d/a");
+    write(&mut conn, "/d/a");
+    assert_eq!(id_of(&conn, "/d/a"), id);
+    assert!(use_value(&conn, "/d/a") > use_value(&conn, "/d/b"));
+}
+
+#[test]
+fn a_use_at_the_end_of_the_order_fails_with_a_typed_error_and_changes_nothing() {
+    let mut conn = conn_with(&["/d/a", "/d/b"]);
+    let top = (1_i64 << 62) - 1;
+    conn.execute(
+        "UPDATE files SET last_used_us = ?1 WHERE path = '/d/a'",
+        [top],
+    )
+    .unwrap();
+    conn.execute("UPDATE files SET last_used_us = 5 WHERE path = '/d/b'", [])
+        .unwrap();
+
+    // The next value would be 2^62.
+    let error = record_use(&conn, "ns", id_of(&conn, "/d/b")).unwrap_err();
+    assert!(
+        matches!(&error, LocalFileCacheError::DatabaseState(message) if message.contains("use order exhausted")),
+        "{error:?}"
+    );
+    assert_eq!(use_value(&conn, "/d/a"), top);
+    assert_eq!(use_value(&conn, "/d/b"), 5);
+
+    // A write fails the same way, whether it inserts or overwrites, and the
+    // transaction around it can be dropped (rolled back) without a trace.
+    for path in ["/d/new", "/d/b"] {
+        let tx = conn.transaction().unwrap();
+        let error = upsert_in_tx(&tx, "ns", path, &metadata(), b"x", "raw", 0).unwrap_err();
+        assert!(
+            matches!(&error, LocalFileCacheError::DatabaseState(m) if m.contains("use order exhausted")),
+            "{path}: {error:?}"
+        );
+        drop(tx);
+    }
+    let rows: i64 = conn
+        .query_row("SELECT count(*) FROM files", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(rows, 2);
+    assert_eq!(use_value(&conn, "/d/b"), 5);
+}
+
+#[test]
+fn only_the_use_value_check_is_reported_as_an_exhausted_order() {
+    let failure = |extended_code: i32, message: &str| {
+        rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(extended_code),
+            Some(message.to_owned()),
+        )
+    };
+    // The use value's CHECK.
+    assert!(matches!(
+        use_error(failure(
+            rusqlite::ffi::SQLITE_CONSTRAINT_CHECK,
+            "CHECK constraint failed: typeof(last_used_us) = 'integer' AND last_used_us < 4611686018427387904"
+        )),
+        LocalFileCacheError::DatabaseState(_)
+    ));
+    // Any other CHECK, any other constraint, any other failure.
+    for error in [
+        failure(
+            rusqlite::ffi::SQLITE_CONSTRAINT_CHECK,
+            "CHECK constraint failed: something_else",
+        ),
+        failure(
+            rusqlite::ffi::SQLITE_CONSTRAINT_NOTNULL,
+            "NOT NULL constraint failed: files.last_used_us",
+        ),
+        failure(rusqlite::ffi::SQLITE_BUSY, "database is locked"),
+    ] {
+        assert!(matches!(use_error(error), LocalFileCacheError::Database(_)));
+    }
+}
+
+#[test]
+fn an_imported_recency_is_seconds_times_a_million_and_refuses_what_does_not_fit() {
+    assert_eq!(use_value_of_record(7, 3), Some(7_000_000));
+    // Never read (0): placed by `updated_at`.
+    assert_eq!(use_value_of_record(0, 3), Some(3_000_000));
+    assert_eq!(use_value_of_record(0, 0), Some(0));
+    // The largest second that fits below 2^62.
+    let largest = (1_i64 << 62) / 1_000_000;
+    assert_eq!(use_value_of_record(largest, 0), Some(largest * 1_000_000));
+    assert_eq!(use_value_of_record(largest + 1, 0), None);
+    assert_eq!(use_value_of_record(i64::MAX, 0), None);
+    // Negative, in either field the rule reads.
+    assert_eq!(use_value_of_record(0, -1), None);
+    assert_eq!(use_value_of_record(-5, -5), None);
+    // A negative `last_accessed_at` is "never read": `updated_at` decides.
+    assert_eq!(use_value_of_record(-5, 4), Some(4_000_000));
 }

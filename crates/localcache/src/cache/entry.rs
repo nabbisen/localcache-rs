@@ -46,9 +46,13 @@ pub struct EntryInfo {
     pub encoding: String,
     /// Unix timestamp (seconds) when this entry was last written via `set`.
     pub updated_at: i64,
-    /// Unix timestamp (seconds) of the last **read** (`get`, `get_if_fresh`,
-    /// or `touch`). `0` means the entry has never been read; writes,
-    /// including overwrites, never change this value.
+    /// Unix timestamp (seconds) of the last **use** of this entry: a read
+    /// hit (`get`, `get_if_fresh`), a `touch`, or a write (`set`, `batch_set`,
+    /// an overwrite). It is never `0` for a stored entry. This is the second
+    /// the eviction order is built from; eviction itself is finer than this
+    /// field (RFC 026): two entries used in the same second are still in a
+    /// strict order. Before v0.23.0 it meant the last **read** and was `0` for
+    /// an entry never read.
     pub last_accessed_at: i64,
 }
 
@@ -104,10 +108,12 @@ pub struct ExportRecord {
     /// Unix timestamp (seconds) of the last write.
     pub updated_at: i64,
 
-    /// Unix timestamp (seconds) of the last **read** (`get`, `get_if_fresh`,
-    /// or `touch`). `0` means the entry has never been read; writes,
-    /// including overwrites, never change this value. Importing this
-    /// record keeps this exact value rather than resetting it.
+    /// Unix timestamp (seconds) of the last **use** of the entry: a read hit,
+    /// a `touch`, or a write. Importing this record keeps this recency rather
+    /// than resetting it; an import is a restore, not a use. A record exported
+    /// before v0.23.0 means the last **read** and is `0` for an entry never
+    /// read; importing it uses `updated_at` for such an entry. A negative
+    /// value, or one that does not fit the use order, is refused by an import.
     pub last_accessed_at: i64,
 }
 

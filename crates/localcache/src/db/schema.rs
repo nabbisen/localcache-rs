@@ -14,7 +14,7 @@ use migration::{MigrationPoint, StartingSnapshot};
 
 /// The one place the current schema version is written. The classifier and the
 /// migration code reach it as `super::CURRENT_VERSION`.
-const CURRENT_VERSION: u8 = 5;
+const CURRENT_VERSION: u8 = 6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct InitializationOutcome {
@@ -27,8 +27,8 @@ pub(crate) struct InitializationOutcome {
 
 /// Initialize or migrate a writable database.
 ///
-/// Existing v5 databases use a consistent read transaction. Fresh databases
-/// and versions 1 through 4 use one typed `Immediate` transaction containing
+/// Existing v6 databases use a consistent read transaction. Fresh databases
+/// and versions 1 through 5 use one typed `Immediate` transaction containing
 /// authoritative classification, all schema work, postconditions, and commit.
 pub(crate) fn initialize(
     conn: &mut Connection,
@@ -129,18 +129,25 @@ fn initialize_with_hook(
             migration::migrate_v2_to_v3(&transaction, hook)?;
             migration::migrate_v3_to_v4(&transaction, hook)?;
             migration::migrate_v4_to_v5(&transaction, hook)?;
+            migration::migrate_v5_to_v6(&transaction, hook)?;
         }
         SchemaState::Version { version: 2, .. } => {
             migration::migrate_v2_to_v3(&transaction, hook)?;
             migration::migrate_v3_to_v4(&transaction, hook)?;
             migration::migrate_v4_to_v5(&transaction, hook)?;
+            migration::migrate_v5_to_v6(&transaction, hook)?;
         }
         SchemaState::Version { version: 3, .. } => {
             migration::migrate_v3_to_v4(&transaction, hook)?;
             migration::migrate_v4_to_v5(&transaction, hook)?;
+            migration::migrate_v5_to_v6(&transaction, hook)?;
         }
         SchemaState::Version { version: 4, .. } => {
             migration::migrate_v4_to_v5(&transaction, hook)?;
+            migration::migrate_v5_to_v6(&transaction, hook)?;
+        }
+        SchemaState::Version { version: 5, .. } => {
+            migration::migrate_v5_to_v6(&transaction, hook)?;
         }
         SchemaState::Version { .. } => {
             unreachable!("classifier returned an unsupported migration state")

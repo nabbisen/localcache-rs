@@ -167,7 +167,7 @@ fn released_v4_user_index_and_payload_survive_public_migration() {
         after
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .unwrap(),
-        5
+        6
     );
     assert_eq!(
         after
@@ -325,7 +325,7 @@ fn public_open_migrates_v0_1_atomically_for_every_runtime_option() {
             assert_eq!(
                 conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
                     .unwrap(),
-                5
+                6
             );
             let files = conn
                 .prepare(

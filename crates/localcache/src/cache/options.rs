@@ -219,10 +219,13 @@ pub struct CacheOptions {
     /// Maximum number of entries to keep in the current namespace.
     ///
     /// When exceeded after a `set`, `batch_set`, `import_entries` or
-    /// `import_from`, the least recently **read** entries are evicted until
-    /// the count is within the limit: never-read entries
-    /// (`last_accessed_at == 0`) first, then by oldest `updated_at`, then by
-    /// first insertion. **A write never evicts the entries it just wrote** —
+    /// `import_from`, the least recently **used** entries are evicted until
+    /// the count is within the limit. A use is a read hit (`get`,
+    /// `get_if_fresh`), a `touch`, a `set` or `batch_set`, or an overwrite;
+    /// the order is strict, so two uses never tie, whatever the clock's
+    /// resolution (RFC 026). Before v0.23.0 only a read counted, and an entry
+    /// read once outlived every entry that was only written.
+    /// **A write never evicts the entries it just wrote** —
     /// `set`'s own row, or every row a `batch_set` or import call wrote, is
     /// excluded from that call's own eviction. The write and its eviction are
     /// one transaction.
@@ -244,7 +247,7 @@ pub struct CacheOptions {
     /// than `max_entries` is rejected before anything is written, with
     /// `InvalidArgument { argument: "records" }`; "distinct" is the stored
     /// key, so the same path twice counts once, and exactly `max_entries`
-    /// is accepted. An import that fits evicts the least recently read
+    /// is accepted. An import that fits evicts the least recently used
     /// older entries of the namespace, never a row it wrote.
     pub max_entries: Option<usize>,
 

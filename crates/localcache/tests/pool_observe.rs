@@ -648,37 +648,45 @@ fn explain_no_stored_hash_metadata_only() {
 #[test]
 fn last_accessed_sort_ascending() {
     let dir = TempDir::new().unwrap();
-    let engine: CacheEngine<Vec<f32>> =
-        CacheEngine::builder().database(":memory:").build().unwrap();
+    let database = dir.path().join("laa.sqlite3");
+    let engine: CacheEngine<Vec<f32>> = CacheEngine::builder().database(&database).build().unwrap();
 
     for i in 0..4u32 {
         let p = write_file(&dir, &format!("laa{i}.txt"), b"x");
         engine.set(&p, &vec![i as f32]).unwrap();
     }
 
-    // Touch entries 0 and 2 (in that order) so they have non-zero last_accessed_at.
-    let p0 = dir.path().join("laa0.txt");
-    let p2 = dir.path().join("laa2.txt");
-    engine.get(&p0).unwrap();
-    // Small sleep to ensure distinct timestamps — use std::thread::sleep.
-    std::thread::sleep(std::time::Duration::from_millis(10));
-    engine.get(&p2).unwrap();
-
-    // Ascending: never-accessed (0) → p0 (older access) → p2 (newer access)
-    let results = engine
-        .query()
-        .order_by(SortKey::LastAccessed, SortOrder::Asc)
-        .run()
+    // Last uses, in seconds after the epoch, deliberately not in write order:
+    // laa1 (1 s) < laa3 (2 s) < laa0 (3 s) < laa2 (4 s). Set straight in the
+    // file: the public field is seconds, and a test cannot wait for them.
+    let conn = rusqlite::Connection::open(&database).unwrap();
+    for (name, seconds) in [("laa0", 3), ("laa1", 1), ("laa2", 4), ("laa3", 2)] {
+        conn.execute(
+            "UPDATE files SET last_used_us = ?1 WHERE path LIKE ?2",
+            rusqlite::params![seconds * 1_000_000, format!("%{name}.txt")],
+        )
         .unwrap();
-    assert_eq!(results.len(), 4);
+    }
+    drop(conn);
 
-    // Entries 1 and 3 were never read, so last_accessed_at == 0 (they come first).
-    let first_two_laas: std::collections::HashSet<_> = results[0..2]
-        .iter()
-        .map(|e| e.path.file_name().unwrap().to_str().unwrap().to_owned())
-        .collect();
-    assert!(first_two_laas.contains("laa1.txt"));
-    assert!(first_two_laas.contains("laa3.txt"));
+    let names = |order| -> Vec<String> {
+        engine
+            .query()
+            .order_by(SortKey::LastAccessed, order)
+            .run()
+            .unwrap()
+            .iter()
+            .map(|e| e.path.file_name().unwrap().to_str().unwrap().to_owned())
+            .collect()
+    };
+    assert_eq!(
+        names(SortOrder::Asc),
+        ["laa1.txt", "laa3.txt", "laa0.txt", "laa2.txt"]
+    );
+    assert_eq!(
+        names(SortOrder::Desc),
+        ["laa2.txt", "laa0.txt", "laa3.txt", "laa1.txt"]
+    );
 }
 
 #[cfg(feature = "json")]

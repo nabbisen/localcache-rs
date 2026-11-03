@@ -35,7 +35,7 @@ struct SnapshotFileRow {
     hash: Option<String>,
     updated_at: i64,
     payload_version: i64,
-    last_accessed_at: i64,
+    last_used_us: i64,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -67,7 +67,7 @@ fn semantic_snapshot(conn: &Connection) -> SemanticSnapshot {
     let files = conn
         .prepare(
             "SELECT id, namespace, path, mtime, file_size, hash, updated_at,
-                    payload_version, last_accessed_at FROM main.files ORDER BY id",
+                    payload_version, last_used_us FROM main.files ORDER BY id",
         )
         .unwrap()
         .query_map([], |row| {
@@ -80,7 +80,7 @@ fn semantic_snapshot(conn: &Connection) -> SemanticSnapshot {
                 hash: row.get(5)?,
                 updated_at: row.get(6)?,
                 payload_version: row.get(7)?,
-                last_accessed_at: row.get(8)?,
+                last_used_us: row.get(8)?,
             })
         })
         .unwrap()
@@ -132,7 +132,7 @@ fn install_semantic_fixture(conn: &Connection) {
     conn.execute_batch(
         "INSERT INTO main.files
             (id, namespace, path, mtime, file_size, hash, updated_at,
-             payload_version, last_accessed_at)
+             payload_version, last_used_us)
          VALUES (7, 'default', '/main-row', 11, 12, 'main-hash', 13, 14, 15);
          INSERT INTO main.payloads(file_id, content, encoding)
          VALUES (7, X'0001FEFF', 'fixture');

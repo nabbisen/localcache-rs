@@ -180,8 +180,10 @@ pub enum LocalFileCacheError {
 
     /// The database or the connection is in a state this crate will not work
     /// with, for example a journal mode a migration cannot use, or SQLite not
-    /// honouring a setting. The payload says which, and states whether the
-    /// database was left unchanged.
+    /// honouring a setting, or a use order that has run out of room (a stored
+    /// use value at or above 2^62, which only a damaged or hostile file
+    /// holds). The payload says which, and states whether the database was
+    /// left unchanged.
     #[error("database state: {0}")]
     DatabaseState(String),
 

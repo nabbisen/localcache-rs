@@ -22,6 +22,11 @@ where
 {
     /// Export every entry in the current namespace as a `Vec<ExportRecord>`.
     ///
+    /// The records come **oldest use first** (ties by the order the entries
+    /// were stored), so importing them in order into a fresh database keeps
+    /// the relative recency of entries used within the same second, which the
+    /// public `last_accessed_at` (seconds) cannot express (RFC 026 R2).
+    ///
     /// Each record contains the raw (possibly compressed/encrypted) payload
     /// bytes encoded as Base64, together with all metadata needed to re-import
     /// the entry.  Decryption is **not** performed during export; the bytes
@@ -63,13 +68,21 @@ where
     ///
     /// * [`LocalFileCacheError::ReadOnly`] — engine is in read-only mode.
     /// * [`LocalFileCacheError::InvalidArgument`] — `argument: "records"`: a
-    ///   payload that is not valid Base64, or more distinct paths than
-    ///   `max_entries`.
+    ///   payload that is not valid Base64, more distinct paths than
+    ///   `max_entries`, or a record whose recency is out of range (a negative
+    ///   `last_accessed_at` or `updated_at`, or one so large that its
+    ///   microseconds reach 2^62).
     /// * [`LocalFileCacheError::Database`] — including a busy database after
     ///   the busy timeout.
     ///
     /// The payload bytes are stored verbatim (still compressed/encrypted as
     /// they were when exported); no re-encoding is performed.
+    ///
+    /// An import is a restore, not a use (RFC 026 R2): each entry keeps the
+    /// recency it was exported with, as its `last_accessed_at` seconds (or its
+    /// `updated_at` for a record from before v0.23.0 that was never read, whose
+    /// `last_accessed_at` is 0). Entries that share a second are ordered by
+    /// the order of the records. Every later use ranks above all of them.
     pub fn import_entries(&self, records: &[ExportRecord]) -> Result<usize, LocalFileCacheError> {
         use base64::{Engine as _, engine::general_purpose::STANDARD};
 
@@ -155,6 +168,13 @@ where
     fn import_bounded(&self, rows: &[repository::FullRow]) -> Result<usize, LocalFileCacheError> {
         if rows.is_empty() {
             return Ok(0);
+        }
+        // RFC 026 F2: refuse the whole import, before writing, if any record's
+        // recency cannot be held by the use order.
+        if rows.iter().any(|row| {
+            repository::use_value_of_record(row.last_accessed_at, row.updated_at).is_none()
+        }) {
+            return Err(repository::unrepresentable_recency());
         }
         if let Some(max_entries) = self.max_entries {
             let distinct = rows

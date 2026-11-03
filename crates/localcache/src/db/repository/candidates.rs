@@ -29,7 +29,7 @@ pub(crate) fn query_candidates(
 ) -> Result<Vec<CandidateRow>, LocalFileCacheError> {
     let (clauses, params) = path_filter_clauses(namespace, pattern, path_in_dir, path_glob);
     let sql = format!(
-        "SELECT id, path, mtime, file_size, hash, last_accessed_at FROM main.files \
+        "SELECT id, path, mtime, file_size, hash, last_used_us / 1000000 FROM main.files \
          WHERE {} ORDER BY path",
         clauses.join(" AND ")
     );
@@ -122,7 +122,7 @@ pub(crate) fn query_candidates_json_pushdown(
         "f.mtime".to_owned(),
         "f.file_size".to_owned(),
         "f.hash".to_owned(),
-        "f.last_accessed_at".to_owned(),
+        "f.last_used_us / 1000000 AS last_accessed_at".to_owned(),
     ];
     let mut params: Vec<Value> = Vec::new();
     for (i, field) in distinct_fields.iter().enumerate() {
@@ -233,7 +233,7 @@ pub(crate) fn query_candidates_with_payloads(
 ) -> Result<Vec<FullCandidateRow>, LocalFileCacheError> {
     let (clauses, params) = path_filter_clauses(namespace, pattern, path_in_dir, path_glob);
     let sql = format!(
-        "SELECT f.path, f.mtime, f.file_size, f.hash, f.last_accessed_at, p.content, p.encoding \
+        "SELECT f.path, f.mtime, f.file_size, f.hash, f.last_used_us / 1000000, p.content, p.encoding \
          FROM main.files AS f LEFT JOIN main.payloads p ON p.file_id = f.id WHERE {} ORDER BY f.path",
         clauses.join(" AND ")
     );

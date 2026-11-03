@@ -776,28 +776,49 @@ mod encryption_tests {
 }
 
 // ====================================================================
-// Phase 6 — True LRU eviction (last_accessed_at tracking)
+// Phase 6 — True LRU eviction (last use tracking; RFC 026 made a write a use)
 // ====================================================================
 
+/// Set the stored use value of every entry of the database at `database`, in
+/// microseconds, straight in the file (an old recency, to see a use raise it).
+fn backdate_uses(database: &std::path::Path, micros: i64) {
+    let conn = rusqlite::Connection::open(database).unwrap();
+    conn.execute("UPDATE files SET last_used_us = ?1", [micros])
+        .unwrap();
+}
+
+fn unix_seconds() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64
+}
+
 #[test]
-fn lru_updates_last_accessed_on_get() {
+fn a_write_and_a_read_are_both_uses() {
     let dir = TempDir::new().unwrap();
-    let engine: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
-        database_path: ":memory:".into(),
-        ..CacheOptions::default()
-    })
-    .unwrap();
+    let database = dir.path().join("lru.sqlite3");
+    let engine: CacheEngine<Vec<f32>> = CacheEngine::builder().database(&database).build().unwrap();
 
     let path = write_file(&dir, "lru.txt", b"x");
     engine.set(&path, &vec![1.0_f32]).unwrap();
 
-    let before = engine.list_entries().unwrap()[0].last_accessed_at;
-    assert_eq!(before, 0, "last_accessed_at should be 0 after write");
+    // A write is a use: a stored entry never reports 0 (before v0.23.0 it did).
+    let written = engine.list_entries().unwrap()[0].last_accessed_at;
+    assert!(
+        (unix_seconds() - 5..=unix_seconds()).contains(&written),
+        "a write should stamp the entry with the time of the write, got {written}"
+    );
 
+    // A read is a use: it raises an old recency to now.
+    backdate_uses(&database, 1_000_000);
+    assert_eq!(engine.list_entries().unwrap()[0].last_accessed_at, 1);
     engine.get(&path).unwrap();
-
-    let after = engine.list_entries().unwrap()[0].last_accessed_at;
-    assert!(after > 0, "last_accessed_at should be non-zero after read");
+    let read = engine.list_entries().unwrap()[0].last_accessed_at;
+    assert!(
+        (unix_seconds() - 5..=unix_seconds()).contains(&read),
+        "{read}"
+    );
 }
 
 #[test]
@@ -909,15 +930,13 @@ fn batch_set_within_bound_never_evicts_its_own_rows() {
     );
 }
 
-/// The victim among rows tied on `(last_accessed_at, updated_at)` is fully
-/// determined by `id` (insertion order) -- no `sleep`, no reliance on wall
-/// clock granularity. Without `id ASC` as the final `ORDER BY` key, two
-/// never-read rows written in the same second would have an unspecified
-/// tie-break order.
+/// RFC 026 R1: the victim is the entry whose last **use** is oldest, whatever
+/// the write times say. Here the oldest use (a) has the newest `updated_at` and
+/// the newest use (c) the oldest, and `updated_at` plays no part.
 #[test]
-fn same_second_eviction_is_determined_by_last_accessed_updated_at_id() {
+fn the_victim_is_the_oldest_use_not_the_oldest_write_time() {
     let dir = TempDir::new().unwrap();
-    let db = dir.path().join("same_second.sqlite3");
+    let db = dir.path().join("oldest_use.sqlite3");
     let engine: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
         database_path: db.clone(),
         max_entries: Some(3),
@@ -925,55 +944,67 @@ fn same_second_eviction_is_determined_by_last_accessed_updated_at_id() {
     })
     .unwrap();
 
-    let pa = write_file(&dir, "ss_a.txt", b"a");
-    let pb = write_file(&dir, "ss_b.txt", b"b");
-    let pc = write_file(&dir, "ss_c.txt", b"c");
+    let pa = write_file(&dir, "ou_a.txt", b"a");
+    let pb = write_file(&dir, "ou_b.txt", b"b");
+    let pc = write_file(&dir, "ou_c.txt", b"c");
     engine.set(&pa, &vec![1.0_f32]).unwrap();
     engine.set(&pb, &vec![2.0_f32]).unwrap();
     engine.set(&pc, &vec![3.0_f32]).unwrap();
 
-    // Force a genuine tie between a and b: identical last_accessed_at (0,
-    // never read) and identical updated_at -- only `id` (insertion order,
-    // a before b) can break the tie. c gets a distinct, later updated_at
-    // so it is never a candidate ahead of the tied pair.
-    let stored = engine.keys(None).unwrap();
-    let path_of = |name: &str| -> String {
-        stored
-            .iter()
-            .find(|p| p.to_str().unwrap().contains(name))
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_owned()
-    };
-    let (path_a, path_b, path_c) = (
-        path_of("ss_a.txt"),
-        path_of("ss_b.txt"),
-        path_of("ss_c.txt"),
-    );
-
     let conn = rusqlite::Connection::open(&db).unwrap();
-    conn.execute(
-        "UPDATE files SET updated_at = 1000 WHERE path IN (?1, ?2)",
-        rusqlite::params![path_a, path_b],
-    )
-    .unwrap();
-    conn.execute(
-        "UPDATE files SET updated_at = 2000 WHERE path = ?1",
-        rusqlite::params![path_c],
+    conn.execute_batch(
+        "UPDATE files SET updated_at = 9000 WHERE path LIKE '%ou_a.txt';
+         UPDATE files SET updated_at = 5000 WHERE path LIKE '%ou_b.txt';
+         UPDATE files SET updated_at = 1000 WHERE path LIKE '%ou_c.txt';",
     )
     .unwrap();
     drop(conn);
 
-    // No sleep: `set(d)` triggers exactly one eviction (count would be 4,
-    // max_entries is 3).
-    let pd = write_file(&dir, "ss_d.txt", b"d");
+    let pd = write_file(&dir, "ou_d.txt", b"d");
     engine.set(&pd, &vec![4.0_f32]).unwrap();
 
     assert_eq!(engine.entry_count().unwrap(), 3);
-    // `a` has the smaller id of the tied pair (inserted first), so it is
-    // the deterministic victim; `b`, `c`, and `d` (protected) survive.
-    assert!(engine.get(&pa).unwrap().is_none(), "a must be evicted");
+    assert!(engine.get(&pa).unwrap().is_none(), "a is the oldest use");
+    assert!(engine.get(&pb).unwrap().is_some(), "b must survive");
+    assert!(engine.get(&pc).unwrap().is_some(), "c must survive");
+    assert!(engine.get(&pd).unwrap().is_some(), "d must survive");
+}
+
+/// Two rows can share a use value only through an import (it restores seconds,
+/// not microseconds); then `id` decides, deterministically: the row stored
+/// first is the victim.
+#[test]
+fn rows_that_share_a_use_value_are_evicted_by_id() {
+    let dir = TempDir::new().unwrap();
+    let db = dir.path().join("same_value.sqlite3");
+    let engine: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
+        database_path: db.clone(),
+        max_entries: Some(3),
+        ..CacheOptions::default()
+    })
+    .unwrap();
+
+    let pa = write_file(&dir, "sv_a.txt", b"a");
+    let pb = write_file(&dir, "sv_b.txt", b"b");
+    let pc = write_file(&dir, "sv_c.txt", b"c");
+    engine.set(&pa, &vec![1.0_f32]).unwrap();
+    engine.set(&pb, &vec![2.0_f32]).unwrap();
+    engine.set(&pc, &vec![3.0_f32]).unwrap();
+
+    // A genuine tie between a and b; c is newer than both.
+    let conn = rusqlite::Connection::open(&db).unwrap();
+    conn.execute_batch(
+        "UPDATE files SET last_used_us = 1000000 WHERE path LIKE '%sv_a.txt' OR path LIKE '%sv_b.txt';
+         UPDATE files SET last_used_us = 2000000 WHERE path LIKE '%sv_c.txt';",
+    )
+    .unwrap();
+    drop(conn);
+
+    let pd = write_file(&dir, "sv_d.txt", b"d");
+    engine.set(&pd, &vec![4.0_f32]).unwrap();
+
+    assert_eq!(engine.entry_count().unwrap(), 3);
+    assert!(engine.get(&pa).unwrap().is_none(), "a has the smaller id");
     assert!(engine.get(&pb).unwrap().is_some(), "b must survive");
     assert!(engine.get(&pc).unwrap().is_some(), "c must survive");
     assert!(engine.get(&pd).unwrap().is_some(), "d must survive");
@@ -1224,7 +1255,7 @@ fn list_entries_returns_all_metadata() {
         assert_eq!(e.payload_version, 3);
         assert_eq!(e.encoding, "raw");
         assert!(e.updated_at > 0);
-        assert_eq!(e.last_accessed_at, 0); // never read since write
+        assert!(e.last_accessed_at > 0); // a write is a use
     }
 }
 
@@ -1243,21 +1274,19 @@ fn list_entries_empty_namespace() {
 #[test]
 fn list_entries_last_accessed_at_updated_after_read() {
     let dir = TempDir::new().unwrap();
-    let engine: CacheEngine<Vec<f32>> = CacheEngine::open(CacheOptions {
-        database_path: ":memory:".into(),
-        ..CacheOptions::default()
-    })
-    .unwrap();
+    let database = dir.path().join("le.sqlite3");
+    let engine: CacheEngine<Vec<f32>> = CacheEngine::builder().database(&database).build().unwrap();
 
     let path = write_file(&dir, "le_read.txt", b"content");
     engine.set(&path, &vec![1.0_f32]).unwrap();
 
+    backdate_uses(&database, 5_000_000);
     let before = engine.list_entries().unwrap()[0].last_accessed_at;
     engine.get(&path).unwrap();
     let after = engine.list_entries().unwrap()[0].last_accessed_at;
 
-    assert_eq!(before, 0);
-    assert!(after > 0);
+    assert_eq!(before, 5);
+    assert!(after > before);
 }
 
 // ====================================================================

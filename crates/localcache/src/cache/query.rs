@@ -136,11 +136,10 @@ pub enum SortKey {
     /// The source file's modification time (`mtime`) as recorded when the
     /// entry was stored — not when the entry was written to the cache.
     Mtime,
-    /// The `last_accessed_at` timestamp: the last **read** (`get`,
-    /// `get_if_fresh`, or `touch`). Entries never read since being written
-    /// have `last_accessed_at == 0` and sort as oldest under
-    /// [`SortOrder::Asc`]. This is the same ordering `max_entries` eviction
-    /// uses.
+    /// The `last_accessed_at` timestamp, in seconds: when the entry was last
+    /// **used** (a read hit, a `touch` or a write). Entries used in the same
+    /// second tie here (and fall to the query's secondary order); the
+    /// `max_entries` eviction order is finer, a strict order of uses.
     LastAccessed,
     /// The stored path string.
     Path,
@@ -157,7 +156,7 @@ pub(crate) enum OrderBy {
     Field { path: String, order: SortOrder },
     /// Sort by the source file's `mtime`, as recorded when the entry was stored.
     Mtime(SortOrder),
-    /// Sort by `last_accessed_at` timestamp.
+    /// Sort by the `last_accessed_at` timestamp (last use, in seconds).
     LastAccessed(SortOrder),
     /// Sort by stored path string.
     Path(SortOrder),

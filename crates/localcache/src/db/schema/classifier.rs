@@ -133,6 +133,7 @@ fn validate_object_policy(
         4 | 5 => ["idx_files_lru", "idx_files_namespace_path"]
             .into_iter()
             .collect(),
+        6 => ["idx_files_use"].into_iter().collect(),
         _ => unreachable!(),
     };
     let mut tables = BTreeSet::new();
@@ -219,7 +220,7 @@ fn validate_table(
         .find(|object| object.object_type == "table" && object.name == table_name)
         .and_then(|object| object.sql.as_deref())
         .ok_or_else(|| unrecognized(physical_version, "missing table DDL"))?;
-    validate_table_ddl(sql, table_name, physical_version)?;
+    validate_table_ddl(sql, table_name, physical_version, version)?;
     Ok(())
 }
 
@@ -275,8 +276,11 @@ fn expected_columns(table_name: &str, version: u8) -> Vec<Column> {
         if version >= 3 {
             columns.push(column("payload_version", "INTEGER", true, Some("0"), 0));
         }
-        if version >= 4 {
+        if (4..6).contains(&version) {
             columns.push(column("last_accessed_at", "INTEGER", true, Some("0"), 0));
+        }
+        if version >= 6 {
+            columns.push(column("last_used_us", "INTEGER", true, Some("0"), 0));
         }
         columns
     } else {
@@ -291,10 +295,18 @@ fn expected_columns(table_name: &str, version: u8) -> Vec<Column> {
     }
 }
 
+/// The one constraint a v6 `files` table carries: the use value is an integer
+/// below 2^62 (RFC 026 R1). `table_xinfo` cannot see a `CHECK`, so the table's
+/// DDL is compared **as tokens**, whatever the whitespace or the way the column
+/// was added (`CREATE TABLE` or `ALTER TABLE … ADD COLUMN`).
+const USE_VALUE_CHECK: &str =
+    "check (typeof(last_used_us) = 'integer' and last_used_us < 4611686018427387904)";
+
 fn validate_table_ddl(
     sql: &str,
     table_name: &str,
     physical_version: i64,
+    version: u8,
 ) -> Result<(), LocalFileCacheError> {
     let tokens = tokenize(sql).map_err(|reason| unrecognized(physical_version, reason))?;
     let words: Vec<&str> = tokens
@@ -310,6 +322,21 @@ fn validate_table_ddl(
             "unsupported table DDL prefix",
         ));
     }
+    let expects_use_check = version >= 6 && table_name == "files";
+    if expects_use_check {
+        let expected = tokenize(USE_VALUE_CHECK).map_err(|reason| unrecognized(0, reason))?;
+        let checks = words.iter().filter(|word| **word == "check").count();
+        if checks != 1
+            || !tokens
+                .windows(expected.len())
+                .any(|window| window == expected)
+        {
+            return Err(unrecognized(
+                physical_version,
+                "the use value constraint is missing or different",
+            ));
+        }
+    }
     for forbidden in [
         "as",
         "check",
@@ -322,7 +349,7 @@ fn validate_table_ddl(
         "virtual",
         "without",
     ] {
-        if words.contains(&forbidden) {
+        if words.contains(&forbidden) && !(forbidden == "check" && expects_use_check) {
             return Err(unrecognized(
                 physical_version,
                 "unsupported table DDL grammar",
@@ -439,7 +466,7 @@ fn tokenize(sql: &str) -> Result<Vec<DdlToken>, &'static str> {
                 }
             }
             tokens.push(DdlToken::StringLiteral(value));
-        } else if matches!(ch, '(' | ')' | ',' | ';') || ch.is_ascii_digit() {
+        } else if matches!(ch, '(' | ')' | ',' | ';' | '=' | '<') || ch.is_ascii_digit() {
             tokens.push(DdlToken::Symbol(ch));
             cursor += 1;
         } else {
@@ -518,6 +545,7 @@ fn validate_indexes(
             ),
             ("idx_files_namespace_path", &["namespace", "path"][..]),
         ]),
+        6 => BTreeMap::from([("idx_files_use", &["namespace", "last_used_us"][..])]),
         _ => unreachable!(),
     };
     let unique_columns: &[&str] = if version == 1 {

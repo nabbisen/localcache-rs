@@ -39,7 +39,7 @@ struct FileSnapshot {
     hash: Option<String>,
     updated_at: i64,
     payload_version: i64,
-    last_accessed_at: i64,
+    last_used_us: i64,
 }
 
 fn current_snapshot(path: &Path) -> CurrentSnapshot {
@@ -59,7 +59,7 @@ fn current_snapshot(path: &Path) -> CurrentSnapshot {
     let files = conn
         .prepare(
             "SELECT id, namespace, path, mtime, file_size, hash, updated_at,
-                    payload_version, last_accessed_at
+                    payload_version, last_used_us
              FROM main.files ORDER BY id",
         )
         .unwrap()
@@ -73,7 +73,7 @@ fn current_snapshot(path: &Path) -> CurrentSnapshot {
                 hash: row.get(5)?,
                 updated_at: row.get(6)?,
                 payload_version: row.get(7)?,
-                last_accessed_at: row.get(8)?,
+                last_used_us: row.get(8)?,
             })
         })
         .unwrap()

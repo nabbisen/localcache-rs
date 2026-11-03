@@ -14,7 +14,7 @@ use super::super::{
 };
 use super::helpers::{assert_no_migration_objects, open_v1, snapshot_v1};
 
-const REQUIRED_FAILPOINTS: [MigrationPoint; 19] = [
+const REQUIRED_FAILPOINTS: [MigrationPoint; 24] = [
     MigrationPoint::AfterAuthoritativeClassification,
     MigrationPoint::AfterShadowFilesCreation,
     MigrationPoint::AfterShadowPayloadsCreation,
@@ -31,6 +31,11 @@ const REQUIRED_FAILPOINTS: [MigrationPoint; 19] = [
     MigrationPoint::AfterV3ToV4,
     MigrationPoint::AfterV4NumericSnapshot,
     MigrationPoint::AfterV4ConversionEquivalence,
+    MigrationPoint::AfterV6ColumnAdded,
+    MigrationPoint::AfterV6Backfill,
+    MigrationPoint::AfterV6IndexesDropped,
+    MigrationPoint::AfterV6ColumnDropped,
+    MigrationPoint::AfterV6UseIndexCreated,
     MigrationPoint::AfterFinalUserVersionWrite,
     MigrationPoint::AfterFinalPostconditions,
     MigrationPoint::ImmediatelyBeforeCommit,
@@ -280,7 +285,7 @@ fn temporary_resource_limit_surfaces_as_rollback_error_and_retry_succeeds() {
 }
 
 #[test]
-fn current_v5_reopens_are_idempotent_and_write_nothing() {
+fn current_v6_reopens_are_idempotent_and_write_nothing() {
     let directory = TempDir::new().unwrap();
     let path = directory.path().join("idempotent.sqlite3");
     let mut conn = Connection::open(&path).unwrap();
@@ -292,7 +297,7 @@ fn current_v5_reopens_are_idempotent_and_write_nothing() {
     conn.execute_batch(
         "INSERT INTO files
             (namespace, path, mtime, file_size, hash, updated_at,
-             payload_version, last_accessed_at)
+             payload_version, last_used_us)
          VALUES ('default', '/fixture/current', 11, 12, NULL, 13, 0, 14);
          INSERT INTO payloads(file_id, content, encoding)
          VALUES (1, X'0001FF', 'raw');",

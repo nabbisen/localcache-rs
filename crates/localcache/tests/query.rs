@@ -562,20 +562,25 @@ mod query_ordering_tests {
 #[test]
 fn touch_updates_last_accessed_at() {
     let dir = TempDir::new().unwrap();
-    let engine: CacheEngine<Vec<f32>> =
-        CacheEngine::builder().database(":memory:").build().unwrap();
+    let database = dir.path().join("touch.sqlite3");
+    let engine: CacheEngine<Vec<f32>> = CacheEngine::builder().database(&database).build().unwrap();
 
     let path = write_file(&dir, "touch.txt", b"content");
     engine.set(&path, &vec![1.0_f32]).unwrap();
 
+    // Give the entry an old recency (3 s after the epoch), straight in the file.
+    rusqlite::Connection::open(&database)
+        .unwrap()
+        .execute("UPDATE files SET last_used_us = 3000000", [])
+        .unwrap();
     let before = engine.list_entries().unwrap()[0].last_accessed_at;
-    assert_eq!(before, 0, "should be 0 before any access");
+    assert_eq!(before, 3);
 
     let updated = engine.touch(&path).unwrap();
     assert!(updated, "touch should return true for existing entry");
 
     let after = engine.list_entries().unwrap()[0].last_accessed_at;
-    assert!(after > 0, "last_accessed_at should be set after touch");
+    assert!(after > before, "touch is a use: it raises last_accessed_at");
 }
 
 #[test]
@@ -603,7 +608,8 @@ fn touch_protects_from_lru_eviction() {
     engine.set(&p1, &vec![1.0_f32]).unwrap();
     engine.set(&p2, &vec![2.0_f32]).unwrap();
 
-    // Warm p1 — it should now have a higher last_accessed_at than p2.
+    // Warm p1 — it becomes the newest use, newer than p2 even though both
+    // were written (and p1 touched) within the same microsecond-ish window.
     engine.touch(&p1).unwrap();
 
     // Adding p3 should evict p2 (less recently accessed) not p1.
@@ -834,7 +840,7 @@ fn hostile_index_identifiers_fail_closed_without_mutation() {
         let files = observer
             .prepare(
                 "SELECT id, namespace, path, mtime, file_size, hash, updated_at,
-                        payload_version, last_accessed_at FROM main.files ORDER BY id",
+                        payload_version, last_used_us FROM main.files ORDER BY id",
             )
             .unwrap()
             .query_map([], |row| {

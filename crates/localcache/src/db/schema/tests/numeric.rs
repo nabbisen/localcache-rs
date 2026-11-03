@@ -328,7 +328,7 @@ fn stored_sequence_below_live_id_restores_effective_live_high_water() {
     conn.execute(
         "INSERT INTO files
             (namespace, path, mtime, file_size, hash, updated_at,
-             payload_version, last_accessed_at)
+             payload_version, last_used_us)
          VALUES ('default', '/fixture/next-id', 0, 0, NULL, 0, 0, 0)",
         [],
     )

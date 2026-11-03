@@ -106,8 +106,8 @@ where
         self
     }
 
-    /// Maximum entries in the namespace, evicted in least-recently-**read**
-    /// order. `0` is rejected when the engine is built. See
+    /// Maximum entries in the namespace, evicted in least-recently-**used**
+    /// order (reads and writes alike). `0` is rejected when the engine is built. See
     /// [`CacheOptions::max_entries`] for the full eviction, write-protection
     /// and `batch_set` contract.
     pub fn max_entries(mut self, n: usize) -> Self {

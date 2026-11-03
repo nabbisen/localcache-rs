@@ -52,9 +52,39 @@ const V5_SCHEMA: &str = "
         PRAGMA user_version = 5;
     ";
 
+const V6_SCHEMA: &str = "
+        CREATE TABLE files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            namespace TEXT NOT NULL DEFAULT 'default',
+            path TEXT NOT NULL,
+            mtime INTEGER NOT NULL,
+            file_size INTEGER NOT NULL,
+            hash TEXT,
+            updated_at INTEGER NOT NULL,
+            payload_version INTEGER NOT NULL DEFAULT 0,
+            last_used_us INTEGER NOT NULL DEFAULT 0
+                CHECK (typeof(last_used_us) = 'integer' AND last_used_us < 4611686018427387904),
+            UNIQUE(namespace, path)
+        );
+        CREATE TABLE payloads (
+            file_id INTEGER PRIMARY KEY,
+            content BLOB NOT NULL,
+            encoding TEXT NOT NULL DEFAULT 'raw',
+            FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
+        );
+        CREATE INDEX idx_files_use ON files(namespace, last_used_us);
+        PRAGMA user_version = 6;
+    ";
+
 fn v5() -> Connection {
     let conn = Connection::open_in_memory().unwrap();
     conn.execute_batch(V5_SCHEMA).unwrap();
+    conn
+}
+
+fn v6() -> Connection {
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch(V6_SCHEMA).unwrap();
     conn
 }
 
@@ -71,6 +101,10 @@ fn assert_fixture_sha256(path: &str, expected: &str) {
 }
 
 fn assert_rejected_unchanged(sql: &str) {
+    assert_rejected_unchanged_as(sql, 5);
+}
+
+fn assert_rejected_unchanged_as(sql: &str, version: i64) {
     let conn = Connection::open_in_memory().unwrap();
     conn.execute_batch(sql).unwrap();
     let before: String = conn
@@ -82,7 +116,7 @@ fn assert_rejected_unchanged(sql: &str) {
         )
         .unwrap();
     let before_changes = conn.total_changes();
-    let error = match classify(&conn, 5) {
+    let error = match classify(&conn, version) {
         Err(error) => error.to_string(),
         Ok(state) => panic!("schema unexpectedly accepted as {state:?}:\n{sql}"),
     };
@@ -100,23 +134,113 @@ fn assert_rejected_unchanged(sql: &str) {
 }
 
 #[test]
-fn fresh_and_exact_v5_classify() {
+fn fresh_exact_v5_and_exact_v6_classify() {
     let fresh = Connection::open_in_memory().unwrap();
     assert_eq!(classify(&fresh, 0).unwrap(), SchemaState::Fresh);
     assert_eq!(classify(&v5(), 5).unwrap(), version_state(5, 0));
+    assert_eq!(classify(&v6(), 6).unwrap(), version_state(6, 0));
+}
+
+#[test]
+fn a_version_above_the_current_one_is_unsupported() {
+    let conn = Connection::open_in_memory().unwrap();
+    assert!(classify(&conn, 7).is_err());
+}
+
+/// RFC 026: the v6 contract is structural. `table_xinfo`, the index set and the
+/// one `CHECK` are compared; formatting of the DDL and the way the column was
+/// added (`CREATE TABLE` or `ALTER TABLE … ADD COLUMN`) do not matter.
+#[test]
+fn v6_accepts_the_same_structure_however_it_was_written() {
+    let one_line = V6_SCHEMA.replace(
+        "CHECK (typeof(last_used_us) = 'integer' AND last_used_us < 4611686018427387904)",
+        "check(TYPEOF(last_used_us)='integer'and last_used_us<4611686018427387904)",
+    );
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch(&one_line).unwrap();
+    assert_eq!(classify(&conn, 6).unwrap(), version_state(6, 0));
+
+    // The shape the v5 -> v6 migration leaves: the column added by ALTER, the
+    // old one dropped, `DEFAULT 0` kept where SQLite keeps it.
+    let migrated = Connection::open_in_memory().unwrap();
+    migrated.execute_batch(V5_SCHEMA).unwrap();
+    migrated
+        .execute_batch(
+            "ALTER TABLE files ADD COLUMN last_used_us INTEGER NOT NULL DEFAULT 0
+                 CHECK (typeof(last_used_us) = 'integer' AND last_used_us < 4611686018427387904);
+             DROP INDEX idx_files_lru;
+             DROP INDEX idx_files_namespace_path;
+             ALTER TABLE files DROP COLUMN last_accessed_at;
+             CREATE INDEX idx_files_use ON files(namespace, last_used_us);
+             PRAGMA user_version = 6;",
+        )
+        .unwrap();
+    assert_eq!(classify(&migrated, 6).unwrap(), version_state(6, 0));
+}
+
+#[test]
+fn v6_near_matches_fail_unchanged() {
+    let check = "CHECK (typeof(last_used_us) = 'integer' AND last_used_us < 4611686018427387904)";
+    let variants = [
+        // the constraint is missing, weaker, stronger, or elsewhere
+        V6_SCHEMA.replace(check, ""),
+        V6_SCHEMA.replace("4611686018427387904)", "4611686018427387905)"),
+        V6_SCHEMA.replace("4611686018427387904)", "9223372036854775807)"),
+        V6_SCHEMA.replace("typeof(last_used_us) = 'integer' AND ", ""),
+        V6_SCHEMA.replace("< 4611686018427387904", "<= 4611686018427387904"),
+        V6_SCHEMA.replace(check, "CHECK (last_used_us < 4611686018427387904)"),
+        V6_SCHEMA.replace(check, &format!("{check} CHECK (last_used_us >= 0)")),
+        V6_SCHEMA.replace("hash TEXT,", "hash TEXT CHECK(hash IS NULL),"),
+        // the column contract
+        V6_SCHEMA.replace(
+            "last_used_us INTEGER NOT NULL DEFAULT 0",
+            "last_used_us INTEGER NOT NULL DEFAULT 1",
+        ),
+        V6_SCHEMA.replace(
+            "last_used_us INTEGER NOT NULL DEFAULT 0",
+            "last_used_us INTEGER DEFAULT 0",
+        ),
+        V6_SCHEMA.replace(
+            "last_used_us INTEGER NOT NULL DEFAULT 0",
+            "last_used_us REAL NOT NULL DEFAULT 0",
+        ),
+        V6_SCHEMA.replace(
+            "last_used_us INTEGER NOT NULL DEFAULT 0",
+            "last_accessed_at INTEGER NOT NULL DEFAULT 0, last_used_us INTEGER NOT NULL DEFAULT 0",
+        ),
+        // the index set
+        V6_SCHEMA.to_owned() + "CREATE INDEX idx_files_lru ON files(namespace, updated_at);",
+        V6_SCHEMA.to_owned() + "CREATE INDEX idx_files_namespace_path ON files(namespace, path);",
+        V6_SCHEMA.replace(
+            "CREATE INDEX idx_files_use ON files(namespace, last_used_us);",
+            "CREATE INDEX idx_files_use ON files(namespace, last_used_us DESC);",
+        ),
+        V6_SCHEMA.replace(
+            "CREATE INDEX idx_files_use ON files(namespace, last_used_us);",
+            "CREATE INDEX idx_files_use ON files(last_used_us, namespace);",
+        ),
+        V6_SCHEMA.replace(
+            "CREATE INDEX idx_files_use ON files(namespace, last_used_us);",
+            "",
+        ),
+        V6_SCHEMA.to_owned() + "CREATE UNIQUE INDEX lc_user_unique ON files(namespace, path);",
+    ];
+    for sql in variants {
+        assert_rejected_unchanged_as(&sql, 6);
+    }
 }
 
 #[test]
 fn current_validation_is_query_only_and_has_zero_row_changes() {
-    let mut conn = v5();
+    let mut conn = v6();
     conn.execute_batch(
-            "INSERT INTO files
-                (namespace, path, mtime, file_size, hash, updated_at, payload_version, last_accessed_at)
+        "INSERT INTO files
+                (namespace, path, mtime, file_size, hash, updated_at, payload_version, last_used_us)
              VALUES ('default', '/fixture/current.bin', 123, 7, NULL, 456, 0, 789);
              INSERT INTO payloads (file_id, content, encoding)
              VALUES (1, X'0001FF', 'raw');",
-        )
-        .unwrap();
+    )
+    .unwrap();
     let before_schema: String = conn
         .query_row(
             "SELECT group_concat(type || ':' || name || ':' || coalesce(sql, ''), '|')
@@ -175,15 +299,19 @@ fn current_validation_is_query_only_and_has_zero_row_changes() {
         )
         .unwrap();
     assert_eq!(after_data, before_data);
-    assert_eq!(read_user_version(&conn).unwrap(), 5);
+    assert_eq!(read_user_version(&conn).unwrap(), 6);
 }
 
 #[test]
-fn exact_user_index_is_allowed_only_for_v4_and_v5() {
+fn exact_user_index_is_allowed_for_v4_v5_and_v6() {
     let conn = v5();
     conn.execute_batch("CREATE INDEX lc_user_test ON files(namespace, path);")
         .unwrap();
     assert_eq!(classify(&conn, 5).unwrap(), version_state(5, 0));
+    let conn = v6();
+    conn.execute_batch("CREATE INDEX lc_user_test ON files(namespace, path);")
+        .unwrap();
+    assert_eq!(classify(&conn, 6).unwrap(), version_state(6, 0));
 }
 
 #[test]

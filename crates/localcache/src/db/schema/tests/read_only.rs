@@ -7,7 +7,7 @@ use super::super::{initialize, validate_read_only};
 use super::helpers::{open_v1, snapshot_v1};
 
 #[test]
-fn read_only_validation_enables_connection_guards_and_accepts_current_v5() {
+fn read_only_validation_enables_connection_guards_and_accepts_current_v6() {
     let directory = TempDir::new().unwrap();
     let path = directory.path().join("current.sqlite3");
     {

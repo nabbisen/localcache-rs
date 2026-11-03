@@ -272,8 +272,10 @@ where
     /// missing, only the caller's exact valid UTF-8 stored key is used; no
     /// relative, symlink, basename, or suffix alias is guessed.
     ///
-    /// Updates `last_accessed_at` on a cache hit (LRU tracking).
-    /// No change-detection or version check is performed.
+    /// A hit is a use: the entry becomes the newest of its namespace for
+    /// eviction (recording it never fails the read; see [`touch`](Self::touch)
+    /// for a call that reports it). No change-detection or version check is
+    /// performed.
     ///
     /// # Errors
     ///
@@ -321,7 +323,10 @@ where
         };
         let payload: T = self.decode(&payload_row.content, &payload_row.encoding)?;
         if !self.read_only {
-            let _ = repository::touch_last_accessed(&self.conn, row.id);
+            // A read must not fail for want of bookkeeping: the result of
+            // recording the use is ignored here (RFC 026 F4). `touch`, `set`
+            // and `batch_set` return theirs.
+            let _ = repository::record_use(&self.conn, &self.namespace, row.id);
         }
         #[cfg(feature = "tracing")]
         tracing::debug!("cache hit");
@@ -338,7 +343,7 @@ where
 
     /// Return the cached entry for `path` only if it is still fresh.
     ///
-    /// Updates `last_accessed_at` on a fresh hit (LRU tracking).
+    /// A fresh hit is a use, as for [`get`](Self::get).
     pub fn get_if_fresh<P>(&self, path: P) -> Result<Option<CacheEntry<T>>, LocalFileCacheError>
     where
         P: AsRef<Path>,
@@ -368,7 +373,10 @@ where
         };
         let payload: T = self.decode(&payload_row.content, &payload_row.encoding)?;
         if !self.read_only {
-            let _ = repository::touch_last_accessed(&self.conn, row.id);
+            // A read must not fail for want of bookkeeping: the result of
+            // recording the use is ignored here (RFC 026 F4). `touch`, `set`
+            // and `batch_set` return theirs.
+            let _ = repository::record_use(&self.conn, &self.namespace, row.id);
         }
         Ok(Some(CacheEntry {
             path: PathBuf::from(&row.path),
@@ -439,6 +447,9 @@ where
     ///   not compressed is not checked.
     /// * [`LocalFileCacheError::EncryptionError`] — encrypting the payload
     ///   failed (`encryption` feature).
+    /// * [`LocalFileCacheError::DatabaseState`] — the use order is exhausted
+    ///   (a stored use value is at or above 2^62; only a damaged or hostile
+    ///   database gets there). Nothing was stored.
     /// * [`LocalFileCacheError::Database`] — including a busy database
     ///   after the busy timeout.
     pub fn set<P>(&self, path: P, payload: &T) -> Result<(), LocalFileCacheError>
@@ -518,6 +529,8 @@ where
     /// * [`LocalFileCacheError::InvalidArgument`] with `argument: "items"` —
     ///   the batch holds more distinct paths than `max_entries`. Nothing was
     ///   encoded or written.
+    /// * [`LocalFileCacheError::DatabaseState`] — the use order is exhausted,
+    ///   as for [`set`](Self::set). Nothing was written.
     /// * [`LocalFileCacheError::Database`] — including a busy database
     ///   after the busy timeout. Per-item preparation failures (including
     ///   `PayloadTooLarge`, for an item that would be compressed above
@@ -1219,12 +1232,19 @@ where
     // LRU touch
     // ------------------------------------------------------------------
 
-    /// Update `last_accessed_at` for `path` to the current time.
+    /// Record a use of `path`: it becomes the newest entry of its namespace
+    /// for eviction, ahead of every other entry, however close in time.
     ///
     /// Useful for warming entries that should not be evicted by the LRU
     /// policy.  Returns `true` if the entry existed and was updated.
     /// Returns [`LocalFileCacheError::ReadOnly`] before path validation when
     /// this engine is read-only.
+    ///
+    /// # Errors
+    ///
+    /// * [`LocalFileCacheError::DatabaseState`] — the use order is exhausted
+    ///   (a stored use value is at or above 2^62; only a damaged or hostile
+    ///   database gets there).
     pub fn touch<P: AsRef<Path>>(&self, path: P) -> Result<bool, LocalFileCacheError> {
         self.guard_write()?;
         let resolved = resolve_path_key(path.as_ref())?;
@@ -1235,7 +1255,7 @@ where
         let Some(row) = repository::find_file(&self.conn, &self.namespace, path_str)? else {
             return Ok(false);
         };
-        repository::touch_last_accessed(&self.conn, row.id)?;
+        repository::record_use(&self.conn, &self.namespace, row.id)?;
         Ok(true)
     }
 
@@ -1555,3 +1575,5 @@ fn walk_dir_filtered(
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod use_order_tests;

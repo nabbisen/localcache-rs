@@ -37,7 +37,8 @@ fn bounded_engine(
 }
 
 /// Store `count` real files as entries `e0..` and give them
-/// `last_accessed_at` 100, 200, 300, ... so the eviction order is known.
+/// a last use of 100, 200, 300, ... seconds (stored in microseconds) so the
+/// eviction order is known.
 fn store_aged_entries(
     directory: &TempDir,
     engine: &CacheEngine<Vec<f32>>,
@@ -52,8 +53,11 @@ fn store_aged_entries(
         Connection::open(database)
             .unwrap()
             .execute(
-                "UPDATE files SET last_accessed_at = ?1 WHERE path = ?2",
-                rusqlite::params![100 * (i as i64 + 1), canonical.to_str().unwrap()],
+                "UPDATE files SET last_used_us = ?1 WHERE path = ?2",
+                rusqlite::params![
+                    100 * (i as i64 + 1) * 1_000_000,
+                    canonical.to_str().unwrap()
+                ],
             )
             .unwrap();
         stored.push(canonical);

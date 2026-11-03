@@ -1022,10 +1022,10 @@ mod mtime_ns_regression {
     }
 
     // --------------------------------------------------------------------------
-    // Verify schema version is 5 after opening a fresh database
+    // Verify schema version is 6 after opening a fresh database
     // --------------------------------------------------------------------------
     #[test]
-    fn fresh_database_is_schema_v5() {
+    fn fresh_database_is_schema_v6() {
         let dir = TempDir::new().unwrap();
         let db = dir.path().join("fresh.sqlite3");
         let _engine: CacheEngine<Vec<f32>> = CacheEngine::builder().database(&db).build().unwrap();
@@ -1035,6 +1035,6 @@ mod mtime_ns_regression {
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 5, "new databases must open at schema v5");
+        assert_eq!(version, 6, "new databases must open at schema v6");
     }
 }

@@ -11,6 +11,8 @@ use crate::error::{LocalFileCacheError, SqliteResultExt};
 
 mod candidates;
 #[cfg(test)]
+pub(crate) mod test_clock;
+#[cfg(test)]
 mod tests;
 #[cfg(feature = "json")]
 pub(crate) use candidates::{
@@ -37,8 +39,6 @@ pub(crate) struct FileRow {
     pub metadata: FileMetadata,
     pub updated_at: i64,
     pub payload_version: u32,
-    #[allow(dead_code)]
-    pub last_accessed_at: i64,
 }
 
 pub(crate) struct PayloadRow {
@@ -83,7 +83,7 @@ pub(crate) fn find_file(
 ) -> Result<Option<FileRow>, LocalFileCacheError> {
     let mut stmt = conn
         .prepare_cached(
-            "SELECT id, path, mtime, file_size, hash, updated_at, payload_version, last_accessed_at
+            "SELECT id, path, mtime, file_size, hash, updated_at, payload_version
          FROM main.files
          WHERE namespace = ?1 AND path = ?2",
         )
@@ -100,7 +100,6 @@ pub(crate) fn find_file(
                 },
                 updated_at: r.get(5)?,
                 payload_version: r.get::<_, i64>(6)? as u32,
-                last_accessed_at: r.get::<_, i64>(7)?,
             })
         })
         .optional()
@@ -127,21 +126,102 @@ pub(crate) fn load_payload(
     Ok(row)
 }
 
-/// Update `last_accessed_at` for a file row, recording the current time.
+// The use order (RFC 026 R1). A use of an entry of a namespace assigns it
+//
+//     max(now_us, (SELECT COALESCE(MAX(last_used_us), 0) + 1 FROM files WHERE namespace = ?))
+//
+// in the statement that writes it: the larger of the clock and one more than
+// every value in the namespace. It is strictly greater than all of them, so the
+// order is total and does not depend on the clock's resolution or direction,
+// and SQLite's single writer makes the statement atomic across connections and
+// processes. `RECORD_USE_SQL` and `UPSERT_SQL` both spell it out; they must
+// stay equal.
+
+/// A read hit or a `touch`: `?1` the clock, `?2` the namespace, `?3` the id.
+const RECORD_USE_SQL: &str = "UPDATE files SET last_used_us = max(?1, (SELECT COALESCE(MAX(last_used_us), 0) + 1 FROM files WHERE namespace = ?2)) WHERE id = ?3";
+
+/// A write: a new row and an overwrite alike take the next use value
+/// (`?8` is the clock; `excluded.last_used_us` carries the computed value into
+/// the overwrite branch).
+const UPSERT_SQL: &str = "INSERT INTO files
+         (namespace, path, mtime, file_size, hash, updated_at, payload_version, last_used_us)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7,
+             max(?8, (SELECT COALESCE(MAX(last_used_us), 0) + 1 FROM files WHERE namespace = ?1)))
+     ON CONFLICT(namespace, path) DO UPDATE SET
+         mtime            = excluded.mtime,
+         file_size        = excluded.file_size,
+         hash             = excluded.hash,
+         updated_at       = excluded.updated_at,
+         payload_version  = excluded.payload_version,
+         last_used_us     = excluded.last_used_us";
+
+/// The oldest uses of a namespace, for eviction (`?1` namespace, `?2` count).
+/// `idx_files_use (namespace, last_used_us)` serves it without a sort; the `id`
+/// decides only the ties an import can create.
+const EVICTION_CANDIDATES_SQL: &str = "SELECT id, path FROM files
+     WHERE namespace = ?1
+     ORDER BY last_used_us ASC, id ASC
+     LIMIT ?2";
+
+/// The exclusive upper bound of a use value (2^62), also written in the
+/// column's `CHECK`. Above it `MAX + 1` would leave the integers.
+pub(crate) const USE_VALUE_LIMIT: i64 = 1 << 62;
+
+/// Microseconds in the seconds the public fields report.
+const MICROS_PER_SECOND: i64 = 1_000_000;
+
+/// The use value an imported record stands for (RFC 026 R2): its last-use
+/// second times 10^6, where the last-use second is `last_accessed_at` when
+/// above 0 and `updated_at` otherwise. `None` for a second that is negative or
+/// whose product is not below [`USE_VALUE_LIMIT`]; the arithmetic is checked,
+/// so no float is ever involved.
+pub(crate) fn use_value_of_record(last_accessed_at: i64, updated_at: i64) -> Option<i64> {
+    let seconds = if last_accessed_at > 0 {
+        last_accessed_at
+    } else {
+        updated_at
+    };
+    if seconds < 0 {
+        return None;
+    }
+    seconds
+        .checked_mul(MICROS_PER_SECOND)
+        .filter(|value| *value < USE_VALUE_LIMIT)
+}
+
+/// Map a failure of a statement that assigns a use value. The column's
+/// `CHECK` (an integer below 2^62) is the only way `MAX + 1` can fail, and it
+/// is the one error that means the use order is exhausted; every other failure
+/// is an ordinary database error.
+fn use_error(error: rusqlite::Error) -> LocalFileCacheError {
+    match &error {
+        rusqlite::Error::SqliteFailure(failure, Some(message))
+            if failure.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_CHECK
+                && message.contains("last_used_us") =>
+        {
+            LocalFileCacheError::DatabaseState(
+                "use order exhausted: a use value would reach 2^62; the database was not modified"
+                    .into(),
+            )
+        }
+        _ => LocalFileCacheError::Database(crate::error::DatabaseError::from_sqlite(error)),
+    }
+}
+
+/// Record a use of the entry `file_id` of `namespace` (a read hit or a
+/// `touch`): it becomes the newest entry of its namespace.
 ///
-/// This is called after every successful `get` / `get_if_fresh` read so that
-/// LRU eviction has accurate access-time data.
-pub(crate) fn touch_last_accessed(
+/// A read ignores this result (a read must not fail for want of bookkeeping);
+/// `touch` returns it.
+pub(crate) fn record_use(
     conn: &Connection,
+    namespace: &str,
     file_id: i64,
 ) -> Result<(), LocalFileCacheError> {
-    let now = now_secs();
-    conn.execute(
-        "UPDATE files SET last_accessed_at = ?1 WHERE id = ?2",
-        params![now, file_id],
-    )
-    .db()?;
-    Ok(())
+    conn.prepare_cached(RECORD_USE_SQL)
+        .and_then(|mut statement| statement.execute(params![now_us(), namespace, file_id]))
+        .map(|_| ())
+        .map_err(use_error)
 }
 
 // ---------------------------------------------------------------------------
@@ -161,33 +241,21 @@ pub(crate) fn upsert_in_tx(
 ) -> Result<i64, LocalFileCacheError> {
     let updated_at = now_secs();
 
-    tx.execute(
-        "INSERT INTO files
-             (namespace, path, mtime, file_size, hash, updated_at, payload_version,
-              last_accessed_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-         ON CONFLICT(namespace, path) DO UPDATE SET
-             mtime            = excluded.mtime,
-             file_size        = excluded.file_size,
-             hash             = excluded.hash,
-             updated_at       = excluded.updated_at,
-             payload_version  = excluded.payload_version",
-        params![
-            namespace,
-            path,
-            metadata.mtime,
-            metadata.file_size as i64,
-            metadata.hash,
-            updated_at,
-            payload_version as i64,
-            // `last_accessed_at` on INSERT only: 0 means "never read since
-            // written". The ON CONFLICT branch above deliberately omits
-            // this column, so an overwrite keeps the existing last-read
-            // time rather than resetting it (RFC 022 R6).
-            0i64,
-        ],
-    )
-    .db()?;
+    // A write is a use (RFC 026 R1), a new row and an overwrite alike.
+    tx.prepare_cached(UPSERT_SQL)
+        .and_then(|mut statement| {
+            statement.execute(params![
+                namespace,
+                path,
+                metadata.mtime,
+                metadata.file_size as i64,
+                metadata.hash,
+                updated_at,
+                payload_version as i64,
+                now_us(),
+            ])
+        })
+        .map_err(use_error)?;
 
     let file_id: i64 = tx
         .query_row(
@@ -275,10 +343,10 @@ pub(crate) fn delete_by_other_version(
     Ok(n)
 }
 
-/// RFC 022 R6: evict up to `n` rows of `namespace` in least-recently-read
-/// order (`last_accessed_at` ascending, `updated_at` ascending, `id`
-/// ascending — never-read entries, `last_accessed_at = 0`, sort first),
-/// never touching `protected` ids. Returns the paths of the rows actually
+/// RFC 022 R6, RFC 026 R1: evict up to `n` rows of `namespace` in
+/// least-recently-**used** order (`last_used_us` ascending, then `id`, which
+/// decides only the ties an import can create), never touching `protected`
+/// ids. Returns the paths of the rows actually
 /// deleted; if fewer than `n` unprotected rows exist, that is not an
 /// error — every one of them is deleted.
 ///
@@ -310,14 +378,7 @@ pub(crate) fn evict_lru(
 
     let fetch = n.saturating_add(protected.len());
     let candidates: Vec<(i64, String)> = {
-        let mut stmt = tx
-            .prepare_cached(
-                "SELECT id, path FROM files
-             WHERE namespace = ?1
-             ORDER BY last_accessed_at ASC, updated_at ASC, id ASC
-             LIMIT ?2",
-            )
-            .db()?;
+        let mut stmt = tx.prepare_cached(EVICTION_CANDIDATES_SQL).db()?;
         let rows: Result<Vec<_>, _> = stmt
             .query_map(params![namespace, fetch as i64], |r| {
                 Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
@@ -446,7 +507,7 @@ pub(crate) fn list_entries(
     let mut stmt = conn
         .prepare_cached(
             "SELECT f.path, f.mtime, f.file_size, f.hash,
-                f.updated_at, f.payload_version, f.last_accessed_at,
+                f.updated_at, f.payload_version, f.last_used_us / 1000000,
                 p.encoding
          FROM files f
          JOIN payloads p ON p.file_id = f.id
@@ -477,6 +538,20 @@ pub(crate) fn list_entries(
 // ---------------------------------------------------------------------------
 // Utility
 // ---------------------------------------------------------------------------
+
+/// The wall clock in microseconds since the Unix epoch. It is one input of the
+/// use order, never the whole of it (RFC 026 R1), so a clock that is coarse,
+/// stuck or steps backwards cannot produce a tie or a regression.
+pub(crate) fn now_us() -> i64 {
+    #[cfg(test)]
+    if let Some(value) = test_clock::next() {
+        return value;
+    }
+    UNIX_EPOCH
+        .elapsed()
+        .map(|d| i64::try_from(d.as_micros()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
+}
 
 pub(crate) fn now_secs() -> i64 {
     UNIX_EPOCH
@@ -629,11 +704,11 @@ pub(crate) fn load_all_full(
         .prepare_cached(
             "SELECT f.path, p.content, p.encoding,
                 f.mtime, f.file_size, f.hash,
-                f.payload_version, f.updated_at, f.last_accessed_at
+                f.payload_version, f.updated_at, f.last_used_us / 1000000
          FROM files f
          JOIN payloads p ON p.file_id = f.id
          WHERE f.namespace = ?1
-         ORDER BY f.updated_at DESC",
+         ORDER BY f.last_used_us ASC, f.id ASC",
         )
         .db()?;
     let rows: Result<Vec<_>, _> = stmt
@@ -655,6 +730,14 @@ pub(crate) fn load_all_full(
     rows.db()
 }
 
+/// The error for a record whose recency the use order cannot hold.
+pub(crate) fn unrepresentable_recency() -> LocalFileCacheError {
+    crate::error::invalid_argument(
+        crate::error::ArgumentName::Records,
+        "the recency of a record (last_accessed_at or updated_at) is out of range".to_owned(),
+    )
+}
+
 /// Import a batch of rows into `namespace` inside the caller's transaction.
 ///
 /// Existing entries (matched on `namespace + path`) are replaced. Returns the
@@ -668,10 +751,16 @@ pub(crate) fn import_rows_in_tx(
 ) -> Result<Vec<i64>, LocalFileCacheError> {
     let mut written = Vec::with_capacity(rows.len());
     for row in rows {
+        // An import is a restore, not a use (RFC 026 R2): the row keeps the
+        // recency it was exported with, at the resolution of the exported
+        // seconds. `import_bounded` has already refused a record this cannot
+        // express, before writing anything.
+        let use_value = use_value_of_record(row.last_accessed_at, row.updated_at)
+            .ok_or_else(unrepresentable_recency)?;
         tx.execute(
             "INSERT INTO files
                  (namespace, path, mtime, file_size, hash, updated_at,
-                  payload_version, last_accessed_at)
+                  payload_version, last_used_us)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
              ON CONFLICT(namespace, path) DO UPDATE SET
                  mtime            = excluded.mtime,
@@ -679,7 +768,7 @@ pub(crate) fn import_rows_in_tx(
                  hash             = excluded.hash,
                  updated_at       = excluded.updated_at,
                  payload_version  = excluded.payload_version,
-                 last_accessed_at = excluded.last_accessed_at",
+                 last_used_us     = excluded.last_used_us",
             params![
                 namespace,
                 row.path,
@@ -688,7 +777,7 @@ pub(crate) fn import_rows_in_tx(
                 row.hash,
                 row.updated_at,
                 row.payload_version as i64,
-                row.last_accessed_at,
+                use_value,
             ],
         )
         .db()?;
