@@ -166,7 +166,11 @@ pub struct ScanOptions {
 // ---------------------------------------------------------------------------
 
 /// Configuration for opening a [`crate::CacheEngine`].
-#[derive(Debug, Clone)]
+///
+/// `Debug` never prints the encryption key: it shows `Some("[redacted]")` or
+/// `None` (v0.23.1; before it, the key's bytes were printed, so do not log the
+/// options of an engine that has a key under v0.23.0 or earlier).
+#[derive(Clone)]
 pub struct CacheOptions {
     /// Path to the SQLite database file, or `":memory:"` for an in-memory
     /// database.
@@ -266,6 +270,15 @@ pub struct CacheOptions {
     ///
     /// **Important**: losing the key makes all encrypted entries permanently
     /// unreadable.
+    ///
+    /// The key never prints: the `Debug` output of these options shows
+    /// `Some("[redacted]")`. When the options are consumed by an engine, a pool
+    /// or the builder, the crate erases its copy of this `Vec` and keeps the
+    /// key in a type that erases itself on drop; the crate does not keep its
+    /// own copies of the key after they are dropped. It cannot erase your own
+    /// copy of the key (including this field in an options value you clone or
+    /// keep), the cipher library's per-call key schedule, other code's stack
+    /// frames, or the swap file.
     #[cfg(feature = "encryption")]
     pub encryption_key: Option<Vec<u8>>,
 
@@ -338,6 +351,62 @@ pub struct CacheOptions {
     /// useless.  All engines opened this way within one process share the
     /// same in-memory data; this is primarily a testing convenience.
     pub shared_cache: bool,
+}
+
+/// RFC 029 R4: the same output as the derive printed (same field names, same
+/// order), except that the key is redacted.
+///
+/// The struct is destructured **without** `..`, so a field added later is a
+/// compile error here until it is handled. The compiler's suggested fix for
+/// that error is `..`; a reviewer must refuse it: it would silently drop the
+/// new field from the output, or worse, print it unexamined.
+impl std::fmt::Debug for CacheOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let CacheOptions {
+            database_path,
+            change_detection_mode,
+            codec,
+            journal_mode,
+            synchronous,
+            ttl,
+            namespace,
+            read_only,
+            payload_version,
+            max_entries,
+            #[cfg(feature = "encryption")]
+            encryption_key,
+            #[cfg(feature = "compression")]
+            compress_payloads,
+            #[cfg(feature = "compression")]
+            max_decompressed_bytes,
+            #[cfg(feature = "watching")]
+            watch_dirs,
+            shared_cache,
+        } = self;
+        let mut out = f.debug_struct("CacheOptions");
+        out.field("database_path", database_path)
+            .field("change_detection_mode", change_detection_mode)
+            .field("codec", codec)
+            .field("journal_mode", journal_mode)
+            .field("synchronous", synchronous)
+            .field("ttl", ttl)
+            .field("namespace", namespace)
+            .field("read_only", read_only)
+            .field("payload_version", payload_version)
+            .field("max_entries", max_entries);
+        #[cfg(feature = "encryption")]
+        out.field(
+            "encryption_key",
+            &encryption_key.as_ref().map(|_| "[redacted]"),
+        );
+        #[cfg(feature = "compression")]
+        out.field("compress_payloads", compress_payloads)
+            .field("max_decompressed_bytes", max_decompressed_bytes);
+        #[cfg(feature = "watching")]
+        out.field("watch_dirs", watch_dirs);
+        out.field("shared_cache", shared_cache);
+        out.finish()
+    }
 }
 
 impl Default for CacheOptions {

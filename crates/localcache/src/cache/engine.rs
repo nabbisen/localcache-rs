@@ -136,7 +136,10 @@ pub struct CacheEngine<T> {
     /// Optional callback invoked with the path of each LRU-evicted entry.
     pub(crate) evict_callback: Option<EvictCallback>,
     #[cfg(feature = "encryption")]
-    pub(crate) encryption_key: std::cell::Cell<Option<[u8; 32]>>,
+    /// RFC 029 R5: the crate's only long-lived copy of the key. Borrowed for
+    /// a call, never copied out; erased when replaced or dropped. A borrow is
+    /// never held across a database call.
+    pub(crate) encryption_key: std::cell::RefCell<Option<crate::key::Key>>,
     _phantom: PhantomData<T>,
 }
 
@@ -159,8 +162,17 @@ where
         // Every check that needs only `options` runs before the first side
         // effect below: creating the file, opening a connection, migrating,
         // changing a pragma (RFC 025 Amendment 1).
+        // RFC 029 R5: the key's `Vec` is taken out of the options into a guard
+        // that erases it on every way out of this function; the engine keeps
+        // only a `Key`.
         #[cfg(feature = "encryption")]
-        let encryption_key = check_configuration(&options, is_memory)?;
+        let mut options = options;
+        #[cfg(feature = "encryption")]
+        let key_bytes = crate::key::ErasedOnDrop::new(options.encryption_key.take());
+        #[cfg(feature = "encryption")]
+        let encryption_key = check_configuration(&options, key_bytes.as_deref(), is_memory)?;
+        #[cfg(feature = "encryption")]
+        drop(key_bytes);
         #[cfg(not(feature = "encryption"))]
         check_configuration(&options, is_memory)?;
 
@@ -257,7 +269,7 @@ where
             max_entries: options.max_entries,
             evict_callback: None,
             #[cfg(feature = "encryption")]
-            encryption_key: std::cell::Cell::new(encryption_key),
+            encryption_key: std::cell::RefCell::new(encryption_key),
             _phantom: PhantomData,
         })
     }
@@ -869,12 +881,11 @@ where
     pub fn rotate_encryption_key(&self, new_key: &[u8]) -> Result<usize, LocalFileCacheError> {
         self.guard_write()?;
 
-        let old_key = self
-            .encryption_key
-            .get()
-            .ok_or(LocalFileCacheError::MissingEncryptionKey)?;
+        if self.encryption_key.borrow().is_none() {
+            return Err(LocalFileCacheError::MissingEncryptionKey);
+        }
 
-        let new_key_arr: [u8; 32] = new_key.try_into().map_err(|_| {
+        let new_key_arr = crate::key::Key::from_slice(new_key).ok_or_else(|| {
             crate::error::invalid_argument(
                 crate::error::ArgumentName::NewKey,
                 format!("must be exactly 32 bytes, got {}", new_key.len()),
@@ -899,14 +910,23 @@ where
         #[cfg(test)]
         test_hook(TestPoint::AfterLoad)?;
 
-        // Re-encrypt each row.
+        // Re-encrypt each row. The old key is borrowed for this loop only,
+        // which makes no database call (RFC 029 R5).
         let mut updates: Vec<(i64, Vec<u8>)> = Vec::with_capacity(rows.len());
-        for row in &rows {
-            // Decrypt with old key.
-            let plaintext = crate::serialization::decrypt_for_rotation(&row.content, &old_key)?;
-            // Re-encrypt with new key.
-            let ciphertext = crate::serialization::encrypt_for_rotation(&plaintext, &new_key_arr)?;
-            updates.push((row.file_id, ciphertext));
+        {
+            let guard = self.encryption_key.borrow();
+            let old_key = guard
+                .as_ref()
+                .ok_or(LocalFileCacheError::MissingEncryptionKey)?;
+            for row in &rows {
+                // Decrypt with old key.
+                let plaintext =
+                    crate::serialization::decrypt_for_rotation(&row.content, old_key.as_bytes())?;
+                // Re-encrypt with new key.
+                let ciphertext =
+                    crate::serialization::encrypt_for_rotation(&plaintext, new_key_arr.as_bytes())?;
+                updates.push((row.file_id, ciphertext));
+            }
         }
 
         // Write all updates atomically (a no-op when `updates` is empty:
@@ -924,7 +944,8 @@ where
         // (decrypt/re-encrypt/commit), the cell is untouched and the engine
         // keeps reading/writing with `old_key`, matching the still-old-key
         // database.
-        self.encryption_key.set(Some(new_key_arr));
+        // The replaced `Key` is dropped here, which erases it.
+        self.encryption_key.replace(Some(new_key_arr));
 
         Ok(updates.len())
     }
@@ -1306,7 +1327,7 @@ where
 
     fn encode(&self, payload: &T) -> Result<(Vec<u8>, &'static str), LocalFileCacheError> {
         #[cfg(feature = "encryption")]
-        let key = self.encryption_key.get();
+        let guard = self.encryption_key.borrow();
         encode_payload(
             payload,
             self.compress,
@@ -1314,20 +1335,20 @@ where
             #[cfg(feature = "compression")]
             self.max_decompressed_bytes,
             #[cfg(feature = "encryption")]
-            key.as_ref(),
+            guard.as_ref().map(crate::key::Key::as_bytes),
         )
     }
 
     fn decode(&self, bytes: &[u8], encoding: &str) -> Result<T, LocalFileCacheError> {
         #[cfg(feature = "encryption")]
-        let key = self.encryption_key.get();
+        let guard = self.encryption_key.borrow();
         decode_payload(
             bytes,
             encoding,
             #[cfg(feature = "compression")]
             self.max_decompressed_bytes,
             #[cfg(feature = "encryption")]
-            key.as_ref(),
+            guard.as_ref().map(crate::key::Key::as_bytes),
         )
     }
 
@@ -1359,7 +1380,7 @@ where
 /// (`watching`-gated) are not read by the query path and are intentionally
 /// not part of this type.
 ///
-/// `encryption_key` borrows the `Cell` itself, not a snapshot of its value,
+/// `encryption_key` borrows the `RefCell` itself, not a snapshot of its value,
 /// so a [`QueryBuilder`](crate::cache::query::QueryBuilder) built before a
 /// [`CacheEngine::rotate_encryption_key`] call and run after it decodes
 /// with the key current at decode time (RFC 022 R1).
@@ -1369,7 +1390,7 @@ pub(crate) struct EngineCore<'e> {
     #[cfg(feature = "compression")]
     pub(crate) max_decompressed_bytes: usize,
     #[cfg(feature = "encryption")]
-    pub(crate) encryption_key: &'e std::cell::Cell<Option<[u8; 32]>>,
+    pub(crate) encryption_key: &'e std::cell::RefCell<Option<crate::key::Key>>,
 }
 
 /// Decode `bytes` into `U`, using `core`'s configuration rather than a
@@ -1385,14 +1406,14 @@ where
     U: DeserializeOwned,
 {
     #[cfg(feature = "encryption")]
-    let key = core.encryption_key.get();
+    let guard = core.encryption_key.borrow();
     decode_payload(
         bytes,
         encoding,
         #[cfg(feature = "compression")]
         core.max_decompressed_bytes,
         #[cfg(feature = "encryption")]
-        key.as_ref(),
+        guard.as_ref().map(crate::key::Key::as_bytes),
     )
 }
 
@@ -1432,7 +1453,7 @@ pub(crate) fn is_expired(updated_at: i64, ttl: Option<Duration>) -> bool {
 
 /// What [`check_configuration`] derives from the options and `open` keeps.
 #[cfg(feature = "encryption")]
-type CheckedConfiguration = Option<[u8; 32]>;
+type CheckedConfiguration = Option<crate::key::Key>;
 #[cfg(not(feature = "encryption"))]
 type CheckedConfiguration = ();
 
@@ -1444,6 +1465,7 @@ type CheckedConfiguration = ();
 /// connection, such as read-only schema validation, stay with the connection.
 fn check_configuration(
     options: &CacheOptions,
+    #[cfg(feature = "encryption")] key_bytes: Option<&[u8]>,
     is_memory: bool,
 ) -> Result<CheckedConfiguration, LocalFileCacheError> {
     if options.read_only && is_memory {
@@ -1477,16 +1499,16 @@ fn check_configuration(
 
     #[cfg(feature = "encryption")]
     {
-        match options.encryption_key {
+        match key_bytes {
             None => Ok(None),
-            Some(ref k) => {
-                let arr: [u8; 32] = k.as_slice().try_into().map_err(|_| {
+            Some(k) => {
+                let key = crate::key::Key::from_slice(k).ok_or_else(|| {
                     invalid_configuration(
                         ConfigOption::EncryptionKey,
                         format!("must be exactly 32 bytes, got {}", k.len()),
                     )
                 })?;
-                Ok(Some(arr))
+                Ok(Some(key))
             }
         }
     }

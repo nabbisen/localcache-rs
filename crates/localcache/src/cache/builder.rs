@@ -249,6 +249,8 @@ where
     /// Requires the `encryption` Cargo feature.
     #[cfg(feature = "encryption")]
     pub fn encryption_key(mut self, key: Vec<u8>) -> Self {
+        // RFC 029 R5: a key given earlier is erased, not just dropped.
+        crate::key::erase(&mut self.opts.encryption_key);
         self.opts.encryption_key = Some(key);
         self
     }

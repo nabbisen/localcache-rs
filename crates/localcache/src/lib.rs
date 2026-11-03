@@ -26,6 +26,8 @@ mod cache;
 mod db;
 mod detection;
 mod error;
+#[cfg(feature = "encryption")]
+mod key;
 mod path;
 mod pool;
 mod read_pool;

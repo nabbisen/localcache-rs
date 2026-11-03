@@ -132,11 +132,27 @@ where
             read_only: true,
             ..options
         };
+        #[cfg(feature = "encryption")]
+        let mut base = base;
 
         let mut slots = Vec::with_capacity(size);
+        let mut opened = Ok(());
         for _ in 0..size {
-            slots.push(Mutex::new(CacheEngine::open(base.clone())?));
+            // Each clone of the options is consumed, and its key `Vec` erased,
+            // by its slot's `open` (RFC 029 R5).
+            match CacheEngine::open(base.clone()) {
+                Ok(engine) => slots.push(Mutex::new(engine)),
+                Err(error) => {
+                    opened = Err(error);
+                    break;
+                }
+            }
         }
+        // `base` holds the key `Vec` the clones were made from: erase it on
+        // success and on error alike.
+        #[cfg(feature = "encryption")]
+        crate::key::erase(&mut base.encryption_key);
+        opened?;
         Ok(Self {
             slots: Arc::new(slots),
             next: Arc::new(AtomicUsize::new(0)),

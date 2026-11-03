@@ -36,7 +36,7 @@ compression     = ["dep:zstd"]
 ## field queries in `QueryBuilder`.
 json            = ["dep:serde_json"]
 ## Enables AES-256-GCM encryption of stored payloads.
-encryption      = ["dep:aes-gcm"]
+encryption      = ["dep:aes-gcm", "dep:zeroize"]
 ## Enables `tracing` instrumentation on key cache operations (zero-cost when
 ## disabled — all spans are compiled out).
 tracing         = ["dep:tracing"]
@@ -68,6 +68,7 @@ smol                    = { workspace = true, optional = true }
 zstd                    = { workspace = true, optional = true }
 serde_json              = { workspace = true, optional = true }
 aes-gcm                 = { workspace = true, optional = true }
+zeroize                 = { workspace = true, optional = true }
 tracing                 = { workspace = true, optional = true }
 notify                  = { workspace = true, optional = true }
 notify-debouncer-mini   = { workspace = true, optional = true }
