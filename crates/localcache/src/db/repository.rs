@@ -626,16 +626,16 @@ pub(crate) fn encoding_breakdown(
 // Key rotation support
 // ---------------------------------------------------------------------------
 
-/// A row from `payloads` needed for re-encryption.
+/// A row of `payloads` with its path, needed for re-encryption.
 #[cfg(feature = "encryption")]
 pub(crate) struct EncryptedPayloadRow {
     pub file_id: i64,
+    pub path: String,
     pub content: Vec<u8>,
-    #[allow(dead_code)]
     pub encoding: String,
 }
 
-/// Load all payload rows in `namespace` whose encoding ends with `-aes256gcm`.
+/// Load every payload row in `namespace`, with its path and tag.
 #[cfg(feature = "encryption")]
 pub(crate) fn load_encrypted_payloads(
     conn: &Connection,
@@ -643,19 +643,19 @@ pub(crate) fn load_encrypted_payloads(
 ) -> Result<Vec<EncryptedPayloadRow>, LocalFileCacheError> {
     let mut stmt = conn
         .prepare_cached(
-            "SELECT p.file_id, p.content, p.encoding
+            "SELECT p.file_id, f.path, p.content, p.encoding
          FROM payloads p
          JOIN files f ON f.id = p.file_id
-         WHERE f.namespace = ?1
-           AND p.encoding LIKE '%-aes256gcm'",
+         WHERE f.namespace = ?1",
         )
         .db()?;
     let rows: Result<Vec<_>, _> = stmt
         .query_map(params![namespace], |r| {
             Ok(EncryptedPayloadRow {
                 file_id: r.get(0)?,
-                content: r.get(1)?,
-                encoding: r.get(2)?,
+                path: r.get(1)?,
+                content: r.get(2)?,
+                encoding: r.get(3)?,
             })
         })
         .db()?
@@ -663,16 +663,17 @@ pub(crate) fn load_encrypted_payloads(
     rows.db()
 }
 
-/// Update a payload row with new content (used by key rotation).
+/// Update a payload row's content and tag (used by key rotation).
 #[cfg(feature = "encryption")]
 pub(crate) fn update_payload_content(
     tx: &Transaction,
     file_id: i64,
     new_content: &[u8],
+    new_tag: &str,
 ) -> Result<(), LocalFileCacheError> {
     tx.execute(
-        "UPDATE payloads SET content = ?1 WHERE file_id = ?2",
-        params![new_content, file_id],
+        "UPDATE payloads SET content = ?1, encoding = ?2 WHERE file_id = ?3",
+        params![new_content, new_tag, file_id],
     )
     .db()?;
     Ok(())

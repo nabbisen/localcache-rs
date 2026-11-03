@@ -49,12 +49,13 @@ mod tests;
 /// c.set(0))` before a query under test.
 fn decode_with<U: DeserializeOwned>(
     core: &crate::cache::engine::EngineCore<'_>,
+    path: &str,
     bytes: &[u8],
     encoding: &str,
 ) -> Result<U, LocalFileCacheError> {
     #[cfg(test)]
     DECODE_CALLS.with(|c| c.set(c.get() + 1));
-    crate::cache::engine::decode_with(core, bytes, encoding)
+    crate::cache::engine::decode_with(core, path, bytes, encoding)
 }
 
 #[cfg(test)]

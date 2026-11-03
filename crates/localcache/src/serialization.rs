@@ -17,16 +17,25 @@
 //! requires a schema-version migration (see `src/db/schema.rs`) and a headline
 //! CHANGELOG entry.
 //!
-//! | Tag                     | Codec   | Compress | Encrypt   |
-//! |-------------------------|---------|----------|-----------|
-//! | `"raw"`                 | bincode | —        | —         |
-//! | `"zstd"`                | bincode | zstd     | —         |
-//! | `"json"`                | json    | —        | —         |
-//! | `"json-zstd"`           | json    | zstd     | —         |
-//! | `"raw-aes256gcm"`       | bincode | —        | AES-256   |
-//! | `"zstd-aes256gcm"`      | bincode | zstd     | AES-256   |
-//! | `"json-aes256gcm"`      | json    | —        | AES-256   |
-//! | `"json-zstd-aes256gcm"` | json    | zstd     | AES-256   |
+//! | Tag                           | Codec   | Compress | Encrypt                         |
+//! |-------------------------------|---------|----------|---------------------------------|
+//! | `"raw"`                       | bincode | —        | —                               |
+//! | `"zstd"`                      | bincode | zstd     | —                               |
+//! | `"json"`                      | json    | —        | —                               |
+//! | `"json-zstd"`                 | json    | zstd     | —                               |
+//! | `"raw-aes256gcm"`             | bincode | —        | AES-256-GCM, not bound (≤ v0.23) |
+//! | `"zstd-aes256gcm"`            | bincode | zstd     | AES-256-GCM, not bound (≤ v0.23) |
+//! | `"json-aes256gcm"`            | json    | —        | AES-256-GCM, not bound (≤ v0.23) |
+//! | `"json-zstd-aes256gcm"`       | json    | zstd     | AES-256-GCM, not bound (≤ v0.23) |
+//! | `"raw-aes256gcm-bound"`       | bincode | —        | AES-256-GCM, bound to the path  |
+//! | `"zstd-aes256gcm-bound"`      | bincode | zstd     | AES-256-GCM, bound to the path  |
+//! | `"json-aes256gcm-bound"`      | json    | —        | AES-256-GCM, bound to the path  |
+//! | `"json-zstd-aes256gcm-bound"` | json    | zstd     | AES-256-GCM, bound to the path  |
+//!
+//! A *bound* payload is sealed with associated data
+//! `"localcache/seal/1" 0x00 <the full stored tag> 0x00 <the entry's path>`
+//! (RFC 029 R1), so a ciphertext moved to another path, or read under another
+//! tag, fails to open. The tag is matched exactly and case-sensitively.
 
 #[cfg(feature = "compression")]
 use std::io::Cursor;
@@ -38,11 +47,85 @@ use crate::error::LocalFileCacheError;
 
 mod payload_codec;
 
+#[cfg(all(test, feature = "encryption"))]
+mod seal_tests;
+
 // ---------------------------------------------------------------------------
 // Encryption suffix
 // ---------------------------------------------------------------------------
 
-const ENC_SUFFIX: &str = "-aes256gcm";
+/// The suffix of a payload sealed without binding (v0.23 and earlier).
+const LEGACY_SUFFIX: &str = "-aes256gcm";
+/// The suffix of a payload sealed bound to its path (RFC 029 R1).
+const BOUND_SUFFIX: &str = "-aes256gcm-bound";
+
+/// How a stored payload is sealed, read from its encoding tag.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Sealing {
+    /// Not encrypted.
+    None,
+    /// Encrypted without binding to the path (written by v0.23 and earlier).
+    Legacy,
+    /// Encrypted with the entry's path and tag as associated data.
+    Bound,
+}
+
+/// Split a stored tag into its base tag and how it is sealed.
+///
+/// The match is exact and case-sensitive. The suffixes cannot both match one
+/// tag (one ends in `m`, the other in `d`), so no tag parses two ways.
+pub(crate) fn parse_tag(tag: &str) -> (&str, Sealing) {
+    if let Some(base) = tag.strip_suffix(BOUND_SUFFIX) {
+        (base, Sealing::Bound)
+    } else if let Some(base) = tag.strip_suffix(LEGACY_SUFFIX) {
+        (base, Sealing::Legacy)
+    } else {
+        (tag, Sealing::None)
+    }
+}
+
+/// Whether `base` is one of the base tags this build can decode.
+#[cfg(feature = "encryption")]
+fn is_known_base(base: &str) -> bool {
+    match base {
+        "raw" => true,
+        #[cfg(feature = "compression")]
+        "zstd" => true,
+        #[cfg(feature = "json")]
+        "json" => true,
+        #[cfg(all(feature = "json", feature = "compression"))]
+        "json-zstd" => true,
+        _ => false,
+    }
+}
+
+/// The bound tag for a base tag, if the build has the layers it names.
+#[cfg(feature = "encryption")]
+fn bound_tag(base: &str) -> Option<&'static str> {
+    match base {
+        "raw" => Some("raw-aes256gcm-bound"),
+        #[cfg(feature = "compression")]
+        "zstd" => Some("zstd-aes256gcm-bound"),
+        #[cfg(feature = "json")]
+        "json" => Some("json-aes256gcm-bound"),
+        #[cfg(all(feature = "json", feature = "compression"))]
+        "json-zstd" => Some("json-zstd-aes256gcm-bound"),
+        _ => None,
+    }
+}
+
+/// The associated data of a bound payload (RFC 029 R1): one function, called
+/// by sealing and by opening alike.
+#[cfg(feature = "encryption")]
+fn associated_data(tag: &str, path: &str) -> Vec<u8> {
+    let mut aad = Vec::with_capacity(17 + 1 + tag.len() + 1 + path.len());
+    aad.extend_from_slice(b"localcache/seal/1");
+    aad.push(0);
+    aad.extend_from_slice(tag.as_bytes());
+    aad.push(0);
+    aad.extend_from_slice(path.as_bytes());
+    aad
+}
 
 // ---------------------------------------------------------------------------
 // Public encode / decode
@@ -56,6 +139,7 @@ const ENC_SUFFIX: &str = "-aes256gcm";
 /// is not checked (RFC 025 Amendment 2, D4).
 pub(crate) fn encode_payload<T>(
     payload: &T,
+    path: &str,
     compress: bool,
     codec: Codec,
     #[cfg(feature = "compression")] max_decompressed_bytes: usize,
@@ -64,6 +148,8 @@ pub(crate) fn encode_payload<T>(
 where
     T: Serialize,
 {
+    #[cfg(not(feature = "encryption"))]
+    let _ = path;
     let serialized = serialize_with_codec(payload, codec)?;
 
     // Compression step.
@@ -103,23 +189,17 @@ where
         }
     };
 
-    // Encryption step.
+    // Encryption step: the tag is chosen first, because it is part of the
+    // associated data.
     #[cfg(feature = "encryption")]
     if let Some(key) = encryption_key {
-        bytes = encrypt_bytes(&bytes, key)?;
-        base_tag = match base_tag {
-            "raw" => "raw-aes256gcm",
-            "zstd" => "zstd-aes256gcm",
-            #[cfg(feature = "json")]
-            "json" => "json-aes256gcm",
-            #[cfg(all(feature = "json", feature = "compression"))]
-            "json-zstd" => "json-zstd-aes256gcm",
-            other => {
-                return Err(LocalFileCacheError::Serialization(format!(
-                    "no encrypted tag for base tag '{other}'"
-                )));
-            }
-        };
+        let tag = bound_tag(base_tag).ok_or_else(|| {
+            LocalFileCacheError::Serialization(format!(
+                "no encrypted tag for base tag '{base_tag}'"
+            ))
+        })?;
+        bytes = encrypt_bytes(&bytes, key, &associated_data(tag, path))?;
+        base_tag = tag;
     }
 
     Ok((bytes, base_tag))
@@ -134,27 +214,40 @@ where
 pub(crate) fn decode_payload<T>(
     bytes: &[u8],
     encoding: &str,
+    path: &str,
     #[cfg(feature = "compression")] max_decompressed_bytes: usize,
     #[cfg(feature = "encryption")] encryption_key: Option<&[u8; 32]>,
 ) -> Result<T, LocalFileCacheError>
 where
     T: DeserializeOwned,
 {
-    // Decryption step (if the tag ends with the encryption suffix).
-    let (inner_bytes_cow, inner_tag) = if let Some(base) = encoding.strip_suffix(ENC_SUFFIX) {
-        #[cfg(feature = "encryption")]
-        {
-            let key = encryption_key.ok_or(LocalFileCacheError::MissingEncryptionKey)?;
-            let decrypted = decrypt_bytes(bytes, key)?;
-            (std::borrow::Cow::Owned(decrypted), base)
+    #[cfg(not(feature = "encryption"))]
+    let _ = path;
+    // Decryption step, if the tag says the payload is sealed. A bound payload
+    // is opened with its associated data, a legacy one without (RFC 029 R1).
+    let (base, sealing) = parse_tag(encoding);
+    let (inner_bytes_cow, inner_tag) = match sealing {
+        Sealing::None => (std::borrow::Cow::Borrowed(bytes), encoding),
+        Sealing::Legacy | Sealing::Bound => {
+            #[cfg(feature = "encryption")]
+            {
+                let key = encryption_key.ok_or(LocalFileCacheError::MissingEncryptionKey)?;
+                if !is_known_base(base) {
+                    return Err(LocalFileCacheError::UnknownEncoding(base.to_owned()));
+                }
+                let aad = match sealing {
+                    Sealing::Bound => associated_data(encoding, path),
+                    _ => Vec::new(),
+                };
+                let decrypted = decrypt_bytes(bytes, key, &aad)?;
+                (std::borrow::Cow::Owned(decrypted), base)
+            }
+            #[cfg(not(feature = "encryption"))]
+            {
+                let _ = (bytes, base);
+                return Err(LocalFileCacheError::UnknownEncoding(encoding.to_owned()));
+            }
         }
-        #[cfg(not(feature = "encryption"))]
-        {
-            let _ = (bytes, base);
-            return Err(LocalFileCacheError::UnknownEncoding(encoding.to_owned()));
-        }
-    } else {
-        (std::borrow::Cow::Borrowed(bytes), encoding)
     };
 
     let data: &[u8] = &inner_bytes_cow;
@@ -290,17 +383,27 @@ fn decompress_bytes(data: &[u8], limit: usize) -> Result<Vec<u8>, LocalFileCache
 // ---------------------------------------------------------------------------
 
 #[cfg(feature = "encryption")]
-fn encrypt_bytes(plaintext: &[u8], key: &[u8; 32]) -> Result<Vec<u8>, LocalFileCacheError> {
+fn encrypt_bytes(
+    plaintext: &[u8],
+    key: &[u8; 32],
+    aad: &[u8],
+) -> Result<Vec<u8>, LocalFileCacheError> {
     use aes_gcm::{
         Aes256Gcm, KeyInit,
-        aead::{Aead, AeadCore, OsRng},
+        aead::{Aead, AeadCore, OsRng, Payload},
     };
 
     let cipher = Aes256Gcm::new_from_slice(key)
         .map_err(|e| LocalFileCacheError::EncryptionError(format!("key init failed: {e}")))?;
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
     let ciphertext = cipher
-        .encrypt(&nonce, plaintext)
+        .encrypt(
+            &nonce,
+            Payload {
+                msg: plaintext,
+                aad,
+            },
+        )
         .map_err(|e| LocalFileCacheError::EncryptionError(format!("encryption failed: {e}")))?;
 
     // Store as: nonce (12 bytes) ‖ ciphertext.
@@ -311,8 +414,11 @@ fn encrypt_bytes(plaintext: &[u8], key: &[u8; 32]) -> Result<Vec<u8>, LocalFileC
 }
 
 #[cfg(feature = "encryption")]
-fn decrypt_bytes(data: &[u8], key: &[u8; 32]) -> Result<Vec<u8>, LocalFileCacheError> {
-    use aes_gcm::{Aes256Gcm, KeyInit, Nonce, aead::Aead};
+fn decrypt_bytes(data: &[u8], key: &[u8; 32], aad: &[u8]) -> Result<Vec<u8>, LocalFileCacheError> {
+    use aes_gcm::{
+        Aes256Gcm, KeyInit, Nonce,
+        aead::{Aead, Payload},
+    };
 
     const NONCE_LEN: usize = 12;
     if data.len() < NONCE_LEN {
@@ -325,34 +431,53 @@ fn decrypt_bytes(data: &[u8], key: &[u8; 32]) -> Result<Vec<u8>, LocalFileCacheE
     let cipher = Aes256Gcm::new_from_slice(key)
         .map_err(|e| LocalFileCacheError::EncryptionError(format!("key init failed: {e}")))?;
     let nonce = Nonce::from_slice(nonce_bytes);
-    cipher.decrypt(nonce, ciphertext).map_err(|_| {
-        LocalFileCacheError::EncryptionError(
-            "decryption failed — wrong key or corrupted data".into(),
+    cipher
+        .decrypt(
+            nonce,
+            Payload {
+                msg: ciphertext,
+                aad,
+            },
         )
-    })
+        .map_err(|_| {
+            LocalFileCacheError::EncryptionError(
+                "decryption failed — wrong key or corrupted data".into(),
+            )
+        })
 }
 
 // ---------------------------------------------------------------------------
-// Key-rotation helpers (pub(crate), feature-gated)
+// Key rotation (pub(crate), feature-gated)
 // ---------------------------------------------------------------------------
 
-/// Decrypt `data` that was previously encrypted with `key`.
+/// Re-seal one stored payload under `new`, bound to `path`, whatever state it
+/// is in (RFC 029 R3): plain bytes are sealed as they are, a payload sealed
+/// without binding is opened with `old` and no associated data, a bound one
+/// with `old` and its associated data.
 ///
-/// This is the same as the internal `decrypt_bytes` but exposed at
-/// `pub(crate)` so `CacheEngine::rotate_encryption_key` can use it.
+/// Returns the new content and the new (bound) tag. A tag this build cannot
+/// decode is [`LocalFileCacheError::UnknownEncoding`].
 #[cfg(feature = "encryption")]
-pub(crate) fn decrypt_for_rotation(
-    data: &[u8],
-    key: &[u8; 32],
-) -> Result<Vec<u8>, crate::error::LocalFileCacheError> {
-    decrypt_bytes(data, key)
-}
-
-/// Encrypt `plaintext` with `key` for use in key rotation.
-#[cfg(feature = "encryption")]
-pub(crate) fn encrypt_for_rotation(
-    plaintext: &[u8],
-    key: &[u8; 32],
-) -> Result<Vec<u8>, crate::error::LocalFileCacheError> {
-    encrypt_bytes(plaintext, key)
+pub(crate) fn reseal(
+    content: &[u8],
+    tag: &str,
+    path: &str,
+    old: &[u8; 32],
+    new: &[u8; 32],
+) -> Result<(Vec<u8>, &'static str), LocalFileCacheError> {
+    let (base, sealing) = parse_tag(tag);
+    if !is_known_base(base) {
+        return Err(LocalFileCacheError::UnknownEncoding(tag.to_owned()));
+    }
+    let new_tag =
+        bound_tag(base).ok_or_else(|| LocalFileCacheError::UnknownEncoding(tag.to_owned()))?;
+    let plain = match sealing {
+        Sealing::None => std::borrow::Cow::Borrowed(content),
+        Sealing::Legacy => std::borrow::Cow::Owned(decrypt_bytes(content, old, &[])?),
+        Sealing::Bound => {
+            std::borrow::Cow::Owned(decrypt_bytes(content, old, &associated_data(tag, path))?)
+        }
+    };
+    let sealed = encrypt_bytes(&plain, new, &associated_data(new_tag, path))?;
+    Ok((sealed, new_tag))
 }

@@ -669,8 +669,8 @@ mod encryption_tests {
         let entries = engine.list_entries().unwrap();
         assert_eq!(entries.len(), 1);
         assert!(
-            entries[0].encoding.ends_with("-aes256gcm"),
-            "expected aes256gcm suffix, got: {}",
+            entries[0].encoding.ends_with("-aes256gcm-bound"),
+            "expected the bound aes256gcm suffix, got: {}",
             entries[0].encoding
         );
     }
@@ -771,7 +771,7 @@ mod encryption_tests {
         // Verify tag has both zstd and aes256gcm.
         let entries = engine.list_entries().unwrap();
         assert!(entries[0].encoding.contains("zstd"));
-        assert!(entries[0].encoding.ends_with("-aes256gcm"));
+        assert!(entries[0].encoding.ends_with("-aes256gcm-bound"));
     }
 }
 

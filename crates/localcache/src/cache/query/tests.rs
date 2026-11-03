@@ -226,6 +226,7 @@ fn mixed_encoding_namespace_with_field_predicate_matches_all_decode_path() {
     let value = Scored { score: 7.0 };
     let (bytes, tag) = encode_payload(
         &value,
+        "/p",
         true,
         Codec::Bincode,
         #[cfg(feature = "compression")]
@@ -537,6 +538,7 @@ fn offset_counts_only_successfully_decoded_rows_tier3() {
     // mixed-encoding test.
     let (bytes, tag) = encode_payload(
         &Scored { score: 5.0 },
+        "/p",
         true,
         Codec::Bincode,
         #[cfg(feature = "compression")]

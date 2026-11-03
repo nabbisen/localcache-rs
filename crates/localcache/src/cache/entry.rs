@@ -42,7 +42,7 @@ pub struct EntryInfo {
     pub metadata: FileMetadata,
     /// Payload schema version stored with this entry.
     pub payload_version: u32,
-    /// Encoding tag (e.g. `"raw"`, `"zstd"`, `"json"`, `"raw-aes256gcm"`).
+    /// Encoding tag (e.g. `"raw"`, `"zstd"`, `"json"`, `"raw-aes256gcm-bound"`).
     pub encoding: String,
     /// Unix timestamp (seconds) when this entry was last written via `set`.
     pub updated_at: i64,
@@ -94,7 +94,7 @@ pub struct ExportRecord {
     /// Serialised payload in Base64 encoding.
     pub payload_b64: String,
 
-    /// Encoding tag (e.g. `"raw"`, `"zstd"`, `"json"`, `"raw-aes256gcm"`).
+    /// Encoding tag (e.g. `"raw"`, `"zstd"`, `"json"`, `"raw-aes256gcm-bound"`).
     pub encoding: String,
 
     /// File metadata at the time the entry was last written.

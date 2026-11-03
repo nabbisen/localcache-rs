@@ -333,7 +333,7 @@ where
             .increment(1);
             return Ok(None);
         };
-        let payload: T = self.decode(&payload_row.content, &payload_row.encoding)?;
+        let payload: T = self.decode(path_str, &payload_row.content, &payload_row.encoding)?;
         if !self.read_only {
             // A read must not fail for want of bookkeeping: the result of
             // recording the use is ignored here (RFC 026 F4). `touch`, `set`
@@ -383,7 +383,7 @@ where
         let Some(payload_row) = repository::load_payload(&self.conn, row.id)? else {
             return Ok(None);
         };
-        let payload: T = self.decode(&payload_row.content, &payload_row.encoding)?;
+        let payload: T = self.decode(path_str, &payload_row.content, &payload_row.encoding)?;
         if !self.read_only {
             // A read must not fail for want of bookkeeping: the result of
             // recording the use is ignored here (RFC 026 F4). `touch`, `set`
@@ -477,7 +477,7 @@ where
         let path_str = path_to_str(&canonical)?;
         let mut metadata = collect_metadata(&canonical)?;
         metadata.hash = compute_hash_for_mode(&canonical, self.mode)?;
-        let (bytes, encoding) = self.encode(payload)?;
+        let (bytes, encoding) = self.encode(path_str, payload)?;
 
         // RFC 022 R6 item 3 / Q0c review C1: the write and its eviction
         // share one IMMEDIATE transaction. `Ok` means stored and bounded;
@@ -627,7 +627,7 @@ where
             &'static str,
         )> = Vec::with_capacity(occupying.len());
         for (index, canonical, path_str, metadata) in occupying {
-            match self.encode(&items[index].1) {
+            match self.encode(&path_str, &items[index].1) {
                 Ok((bytes, encoding)) => prepared.push((path_str, metadata, bytes, encoding)),
                 Err(e) => failed.push((index, canonical, e)),
             }
@@ -845,8 +845,9 @@ where
 
     /// Re-encrypt all entries in the current namespace with `new_key`.
     ///
-    /// Every payload whose encoding ends in `"-aes256gcm"` is decrypted with
-    /// the current key and re-encrypted with `new_key`. The rotation holds
+    /// Every sealed payload (encoding ending in `"-aes256gcm"` or
+    /// `"-aes256gcm-bound"`) is decrypted with the current key and sealed
+    /// again under `new_key`, bound to its path (RFC 029 R1). The rotation holds
     /// the database write lock from reading the first entry to commit
     /// (an `IMMEDIATE` transaction), so a concurrent write on this database
     /// waits or fails with a busy error rather than being silently
@@ -910,30 +911,38 @@ where
         #[cfg(test)]
         test_hook(TestPoint::AfterLoad)?;
 
-        // Re-encrypt each row. The old key is borrowed for this loop only,
-        // which makes no database call (RFC 029 R5).
-        let mut updates: Vec<(i64, Vec<u8>)> = Vec::with_capacity(rows.len());
+        // Re-seal each sealed row under the new key, bound to its path
+        // (RFC 029 R1). The old key is borrowed for this loop only, which makes
+        // no database call (RFC 029 R5).
+        let mut updates: Vec<(i64, Vec<u8>, &'static str)> = Vec::with_capacity(rows.len());
         {
             let guard = self.encryption_key.borrow();
             let old_key = guard
                 .as_ref()
                 .ok_or(LocalFileCacheError::MissingEncryptionKey)?;
             for row in &rows {
-                // Decrypt with old key.
-                let plaintext =
-                    crate::serialization::decrypt_for_rotation(&row.content, old_key.as_bytes())?;
-                // Re-encrypt with new key.
-                let ciphertext =
-                    crate::serialization::encrypt_for_rotation(&plaintext, new_key_arr.as_bytes())?;
-                updates.push((row.file_id, ciphertext));
+                // Plain rows are left as they are until RFC 029 R3 (next).
+                if crate::serialization::parse_tag(&row.encoding).1
+                    == crate::serialization::Sealing::None
+                {
+                    continue;
+                }
+                let (content, tag) = crate::serialization::reseal(
+                    &row.content,
+                    &row.encoding,
+                    &row.path,
+                    old_key.as_bytes(),
+                    new_key_arr.as_bytes(),
+                )?;
+                updates.push((row.file_id, content, tag));
             }
         }
 
         // Write all updates atomically (a no-op when `updates` is empty:
         // there is nothing to re-encrypt, but the engine still switches to
         // `new_key` below — see C1).
-        for (file_id, new_content) in &updates {
-            repository::update_payload_content(&tx, *file_id, new_content)?;
+        for (file_id, new_content, new_tag) in &updates {
+            repository::update_payload_content(&tx, *file_id, new_content, new_tag)?;
         }
         tx.commit().db()?;
 
@@ -1325,11 +1334,16 @@ where
         repository::evict_lru(tx, &self.namespace, excess, protected)
     }
 
-    fn encode(&self, payload: &T) -> Result<(Vec<u8>, &'static str), LocalFileCacheError> {
+    fn encode(
+        &self,
+        path: &str,
+        payload: &T,
+    ) -> Result<(Vec<u8>, &'static str), LocalFileCacheError> {
         #[cfg(feature = "encryption")]
         let guard = self.encryption_key.borrow();
         encode_payload(
             payload,
+            path,
             self.compress,
             self.codec,
             #[cfg(feature = "compression")]
@@ -1339,12 +1353,13 @@ where
         )
     }
 
-    fn decode(&self, bytes: &[u8], encoding: &str) -> Result<T, LocalFileCacheError> {
+    fn decode(&self, path: &str, bytes: &[u8], encoding: &str) -> Result<T, LocalFileCacheError> {
         #[cfg(feature = "encryption")]
         let guard = self.encryption_key.borrow();
         decode_payload(
             bytes,
             encoding,
+            path,
             #[cfg(feature = "compression")]
             self.max_decompressed_bytes,
             #[cfg(feature = "encryption")]
@@ -1399,6 +1414,7 @@ pub(crate) struct EngineCore<'e> {
 #[cfg_attr(not(feature = "encryption"), allow(unused_variables))]
 pub(crate) fn decode_with<U>(
     core: &EngineCore<'_>,
+    path: &str,
     bytes: &[u8],
     encoding: &str,
 ) -> Result<U, LocalFileCacheError>
@@ -1410,6 +1426,7 @@ where
     decode_payload(
         bytes,
         encoding,
+        path,
         #[cfg(feature = "compression")]
         core.max_decompressed_bytes,
         #[cfg(feature = "encryption")]

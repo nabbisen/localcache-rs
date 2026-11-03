@@ -190,7 +190,7 @@ where
         let (Some(content), Some(encoding)) = (row.content, row.encoding) else {
             continue;
         };
-        let payload: T = match decode_with(&q.core, &content, &encoding) {
+        let payload: T = match decode_with(&q.core, &row.path, &content, &encoding) {
             Ok(p) => p,
             Err(error) => {
                 skipped.push(SkippedEntry {
@@ -309,7 +309,7 @@ where
             let Some((content, encoding)) = payload_map.remove(&c.id) else {
                 continue;
             };
-            let payload: T = match decode_with(&q.core, &content, &encoding) {
+            let payload: T = match decode_with(&q.core, &c.path, &content, &encoding) {
                 Ok(p) => p,
                 Err(error) => {
                     skipped.push(SkippedEntry {
