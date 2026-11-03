@@ -7,9 +7,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [0.23.0] — Unreleased
+## [0.23.0] — 2026-11-03
 
-*Date set at owner authorization.*
+Authorized by the project owner on 2026-11-03. The source is that of release candidate `1aca632`; the release
+commit changes only this date.
 
 **Breaking: the eviction order, the stored schema (v6, one way), the meaning of `last_accessed_at`, the export order and one CLI column** (RFC 026).
 
