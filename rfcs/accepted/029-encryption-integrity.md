@@ -58,6 +58,8 @@ that fails to open is `EncryptionError`, whose text now reads "wrong key, corrup
 refuses the whole import before writing otherwise (`InvalidArgument { argument: "records" }`, text naming the remedy), the same shape as the recency rule of RFC 026. It checks the tag, not the
 authenticity: a record that is forged or sealed under another key is imported and fails closed on read, as any corrupt entry does.
 
+**A keyed engine never uses the SQL pushdown of field queries (Tier 2).** Step 0 found that Tier 2 filters plain `json` entries in SQL, on unauthenticated text, before any decode; for a keyed engine every query decodes (and so opens) each candidate.
+
 This is a rule, not an option. A `require_encryption` option would leave the defect on for everyone who did not read about it.
 
 ### R3 — `rotate_encryption_key` is the upgrade path, and it is bounded
@@ -65,23 +67,28 @@ This is a rule, not an option. A `require_encryption` option would leave the def
 `rotate_encryption_key(new_key)` re-seals **every entry of the namespace** under `new_key`, bound to its path, whatever its current state: plain (it seals the bytes as they are, adding the suffix),
 sealed without binding (opened with the engine's current key, no associated data), or bound. `new_key` may equal the current key: that is the upgrade of a v0.23.0 database, and
 how encryption is switched on for a plain one (open with the key, rotate to it). Everything happens in **one `IMMEDIATE` transaction** (the all-or-nothing property of today's method, and its guard
-against a concurrent writer, are kept), but rows are read and written in **keyset pages** by `file_id` (the pattern of RFC 020): at most `PAGE_ROWS` rows or `PAGE_BYTES` bytes per page, so memory is
-bounded by the page, not by the namespace. The engine switches to `new_key` only after the commit, as today. It returns the number of entries re-sealed. An unknown tag or any failure aborts and changes nothing.
+against a concurrent writer, are kept), but rows are read and written in **keyset pages by `(namespace, path)`**, served by the `UNIQUE(namespace, path)` index (RFC 020's pattern). Paging by `file_id` was measured and
+rejected: SQLite scans and sorts the namespace for every page (478.6 s for 1,000,000 entries against 1.6 s by path). A page ends at `PAGE_ROWS = 1,000` rows or `PAGE_BYTES = 8 MiB`, whichever comes first, and always holds at least one row;
+memory is then about 21 MiB at 4 KiB entries where today's method holds about 1.8 times the namespace's payload bytes (8 GiB for 4.4 GiB). The query selects every row of the namespace with its path and tag and compares tags **exactly** (today's `LIKE '%-aes256gcm'` is
+case-insensitive and selects neither plain rows nor the new tags), and the update writes the content **and** the tag. The engine switches to `new_key` only after the commit, as today. It returns the number of entries re-sealed. An unknown tag or any failure aborts and changes nothing.
 
-The write-ahead log grows by about the size of the namespace's payloads (the transaction is as large as today's); the book says so.
+The write-ahead log grows by about the size of the namespace's payloads (the same as today's method); the book says so.
 
 ### R4 — The key does not print (v0.23.1)
 
 `CacheOptions` has a hand-written `Debug` that prints `encryption_key: Some("[redacted]")` and destructures the struct **without** `..`, so a field added later does not compile until `Debug` is updated.
-The field keeps its type (`Option<Vec<u8>>`): a public field's type is API. A test asserts that no byte of a configured key appears in the `Debug` output of the options, and (step 0) in any other `Debug`,
-`Display` or `tracing` output the crate produces.
+The field keeps its type (`Option<Vec<u8>>`): a public field's type is API. A test uses a distinctive key (not a repeated byte) and asserts that no run of its bytes appears in the options' `Debug` output, in list or hex form, in `{:?}` or `{:#?}`. The destructure turns a forgotten field into a compile error, but the compiler's
+help offers `..` as the fix: it is a prompt for the reviewer, not a guarantee, and the code comment says so. Step 0 found no other type that can print the key: the builder, the engine, the pools and the async engine have no `Debug`, errors carry only lengths, and the `tracing` fields are paths, namespaces, sizes and tags.
 
 ### R5 — The crate erases the copies it holds (v0.23.1)
 
 The key is held in one type of the crate's own: `Key([u8; 32])` is not `Copy`, erases itself on drop (`zeroize`), prints `[redacted]`, and is passed by reference, never copied out (the cell becomes
-a `RefCell<Option<Key>>`, and the call sites borrow). The `Vec<u8>` the options hold is zeroized when `open` consumes the options. `CacheOptions` does **not** get a `Drop`: a type with `Drop` cannot be
-moved out of, which would forbid `CacheOptions { …, ..Default::default() }`, the form the book teaches. The cipher object built for each call holds the expanded key too; step 0 checks what `aes-gcm`'s `zeroize` feature erases of it, and the book says only what was checked.
-What this is not, and the book says it: it cannot erase the caller's own copy of the key, a register, the stack frames of other code, or the swap file. It is "the crate does not leave the key behind", never "the key cannot leak".
+a `RefCell<Option<Key>>`, and the call sites borrow; `check_configuration` returns a `Key`, not a bare array). The copies step 0 found, and what happens to each: the builder's `Vec<u8>` (erased when `encryption_key()` replaces it, and when `open` consumes it), the options' `Vec<u8>` (erased when `open` consumes the options),
+each `ReadPool` slot's clone (`ReadPool::open` clones the options per slot; each clone is consumed by its slot's `open`, and the base is erased after the loop), the engine's cell, and the per-call `.get()` copies (gone). `CacheOptions` does **not** get a `Drop`: a type with `Drop` cannot be
+moved out of, which would forbid `CacheOptions { …, ..Default::default() }`, the form the book teaches. The dependency is `zeroize` alone (one new package, 1.9.1, Rust 1.85, `cargo deny` clean).
+**Not done, on purpose:** erasing the expanded key schedule inside the cipher object. Step 0 measured that `aes-gcm`'s own `zeroize` feature erases nothing observable of it, and that erasing it takes the `zeroize` feature of five more crates (`aes`, `cipher`, `ctr`, `ghash`, `polyval`) that `aes-gcm` does not forward, as five
+declarations with no use of their own, and still leaves bytes of the object that nobody identified. That is more weight than the gain: the schedule lives for one call on the stack, the cell lived as long as the engine. The book says exactly this.
+What the book may claim, and no more: "the crate does not keep its own copies of the key after they are dropped". It cannot erase the caller's own copy of the key, a register, the stack frames of other code, the cipher library's per-call key schedule, or the swap file.
 
 ### R6 — The book states what is and is not protected
 
@@ -98,6 +105,7 @@ NIST SP 800-38D allows one key at most 2^32 encryptions (about 50 days at 1,000 
 * **The wire-format guarantee** (`docs/src/migration.md`: "Payloads written by any 0.x release are readable by every other 0.x release") is scoped by this RFC and the owner is asked to accept the scoping (Decision 1): it is
   about the payload codec bytes, and it holds for every entry **except a sealed entry that is read with the strict rule**. The guarantee's own text allows "a deliberate, headline CHANGELOG item ... documented with migration tooling, and backed by updated
   compatibility tests"; this is that item, the tooling is `rotate_encryption_key`, and the compatibility test is the fixture of the test plan. The page is amended in place, not annotated.
+* **Do not rotate with an older version once v0.24.0 has written to the database.** Step 0 found that v0.23.0's `rotate_encryption_key` returns `Ok(0)` on a database whose only entry is bound (it selects only the old tag) and switches its in-memory key: a user could believe the key was rotated and discard the old one. The announcement says it; it cannot be fixed in a release already published.
 * The CLI is unchanged: it takes no key, lists and exports sealed entries verbatim, and imports and copies them verbatim, which stays valid because the namespace is not bound.
 
 ## Test plan
@@ -111,20 +119,16 @@ Each behaviour change has a test that **fails on the v0.23.0 tree** first.
 * Rotation: failure injection after a page, in the middle, and at commit leave the database byte-identical and the engine on its old key; a concurrent writer is not overwritten (the existing C2 test); the page limits are tested with a
   hook that shrinks them to one row; plain and legacy rows seal and read.
 * Import: a keyed import of a plain record, and of a legacy-sealed record, fails whole before writing; of bound records succeeds; a keyless import of sealed records succeeds (verbatim).
+* The Tier 2 guard: a keyed engine over a namespace of plain `json` entries runs a field query without any SQL pushdown (the plan is Tier 3) and, under R2, returns `UnsealedEntry`; an unkeyed engine still uses Tier 2.
 * The CLI: `export` then `import` of a sealed namespace into another namespace of the same database, read by a keyed engine: succeeds (the namespace is not bound).
 * Property test: for random path, tag, key and plaintext, `open(seal(x, path, tag), path, tag) = x`, and any change of path, tag, key or one bit of the ciphertext fails.
 
-## Step 0: what the dev team verifies before any code (the stop rule is below)
+## Step 0, done (request 059, 2026-11-03): its findings are folded into R2 to R5 above
 
-1. `aes-gcm 0.10.3` takes associated data (`aead::Payload { msg, aad }`) and what the extra authenticated bytes cost on `set` and `get` with encryption (measured, alternating arms, a loaded host stated).
-2. **An inventory of every reader and writer of `payloads.content` and of the `encoding` tag across the whole workspace, the CLI included**: `serialization.rs`, `repository.rs` (`load_payload`, `load_all_full`, `load_encrypted_payloads`, `update_payload_content`, the upserts, the import),
-   `candidates.rs` (the batch fetch and the JSON pushdown), `portable.rs`, `pool.rs`, the async layer, `ReadPool`, `inspect`, `list`, every test that pins the tags. For each: how it learns the path, and what R2 changes.
-3. Whether the field-query pushdown can ever evaluate an encrypted payload in SQL (it must not).
-4. `zeroize`: whether `aes-gcm`'s `zeroize` feature suffices, the resolved version at MSRV 1.85, `cargo deny`, the lockfile diff; the `Cell` to `RefCell` change at every `.get()`.
-5. Paged rotation at 1,000,000 encrypted entries: peak memory against today's, write-ahead log growth, time; the page limits chosen from the measurement, not guessed.
-6. Every `Debug`, `Display` and `tracing` path that could reach the key (the options, the builder, the engine, the pool, error payloads).
-
-**Stop rule (from the scope review).** If step 0 shows that binding (R1) cannot stay simple, R1 to R3 leave this RFC and v0.23.1 ships R4 and R5 alone; the swap and the downgrade then stay documented limits. If R5 costs more than it is worth, it leaves alone.
+All nine items were verified with logs (`.git-exclude/tmp/rfc029-s0/logs/`). Associated data works in `aes-gcm 0.10.3` and costs 0.19 µs on a 64-byte `get` (+3%) and nothing distinguishable on 1 MiB; only three functions decode, the CLI never decodes (so R1 to R3 do not touch it, and
+`export`, `import` and `copy` of a sealed namespace keep working); the bound path string equals the stored `files.path` at every sealing and opening site, and no SQL changes `files.path`; a v0.23.0 reader meets the new tags as `UnknownEncoding` in every read path; `CacheOptions` is the only type that can print the key.
+It also found four things this RFC had wrong, corrected above: paging rotation by `file_id` (R3), the Tier 2 pushdown of plain entries (R2), the scope of what `zeroize` can erase (R5), and the copies of the key in `ReadPool::open` and the builder (R5). I had written that `file_id` was "RFC 020's pattern"; RFC 020's keyset is `path`.
+**The stop rule did not trigger:** binding stays a path parameter threaded through three call sites and a tag table, about 250 to 330 production lines in nine files, no schema change.
 
 ## Alternatives considered
 
