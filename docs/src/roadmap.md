@@ -65,7 +65,7 @@ decompression of stored payloads bounded. See the migration notes in [Error Hand
 a reader, and the `bincode` dependency left the tree. **v0.22.2 was released on 2026-11-03**, a
 documentation release that announces the next change in detail. **v0.23.0 was released on 2026-11-03**:
 eviction now follows the last use (a read, a write, an overwrite or a `touch`) in a strict order, and the
-stored schema is v6, one way; read [Migration](./migration.md) before you upgrade. See the live
+stored schema is v6, one way; read [Migration](./migration.md) before you upgrade. **v0.23.1 was released on 2026-11-03**: the encryption key no longer prints, and the changes v0.24.0 makes to encrypted databases are announced in [Migration](./migration.md#announced-encryption-integrity-v0240). See the live
 [ROADMAP.md](https://github.com/nabbisen/localcache-rs/blob/main/ROADMAP.md) for the milestone
 table and RFC mapping.
 
