@@ -246,6 +246,18 @@ change in the file, and one in the meaning of a field.
   An import refuses a record whose recency is out of range.
 * Payload bytes, encryption, compression and the wire format do not change.
 
+### Announced: encryption integrity (v0.24.0)
+
+v0.24.0 will change what an engine with an encryption key accepts (RFC 029), and this page is where to find what to do about it. Nothing changes in v0.23.1, which only carries this announcement and the fix described in the CHANGELOG.
+
+- **What v0.24.0 will do.** With a key, an entry will be readable only if it was sealed under that key **and bound to its path**; the namespace is not bound, so use one key per trust domain. A plain entry, or an entry sealed without binding, will be refused with a new error, `UnsealedEntry`, whose text names the remedy. A query on an engine with a key will never use the SQL pushdown. Entries written by a v0.24.0 engine carry new encoding tags (they end in `-aes256gcm-bound`).
+- **Who must act, and how.** Everyone who has an encryption key and an existing database. After upgrading, call `rotate_encryption_key` once with the **same key**: it re-seals every entry of the namespace, in pages, in one atomic transaction. Or purge the entries. Databases without encrypted entries, and engines without a key, are not affected.
+- **It is a one-way door for encrypted entries.** v0.23.x and earlier read the new tags as `UnknownEncoding`. **Do not call `rotate_encryption_key` with an older version once v0.24.0 has written to the database:** v0.23.0 returns `Ok(0)` for such a database and still switches its in-memory key, so a rotation that did nothing can look as if it worked, and the old key could be discarded by mistake. The way back is a purge, or an export made before.
+- **What is not protected, and will not be.** The freshness of an entry (someone who can write the file can restore an older valid ciphertext of the same row, or delete entries); the confidentiality of metadata (paths, namespaces, sizes, times and the tag stay in the clear); isolation between namespaces that share one key; and anything against an attacker who can read the process's memory.
+- **The wire-format guarantee below** ("Payloads written by any 0.x release are readable by every other 0.x release") will be scoped in place at v0.24.0, not annotated: it is about the payload codec bytes, and it will hold for every entry except a sealed entry read by an engine with a key, which needs the one rotation above. The page changes when the behaviour ships, not before.
+
+The measured cost of binding is small: on a loaded host, a 64-byte `get` took about 0.19 µs (3%) longer in step-0 measurements.
+
 ## Wire-format stability guarantee (v0.18.0+)
 
 The `Bincode` codec (the default, and the only non-JSON codec) uses

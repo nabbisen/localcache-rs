@@ -7,6 +7,29 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.23.1] — Unreleased
+
+*Date set at owner authorization.*
+
+**A security fix and an announcement. Not breaking.** No API, schema or stored-byte change. Nothing of RFC 029's binding is implemented here; v0.24.0 will do that, and this release says so one release ahead.
+
+### Security
+
+- **`CacheOptions` no longer prints the encryption key.** `{:?}` and `{:#?}` of the options showed `encryption_key: Some([..32 bytes..])`, so logging the options of an engine that had a key wrote the key to the log. `Debug` is now written by hand: it prints `Some("[redacted]")` or `None`, every other field as before, and is written so that a field added later does not compile until it is handled. No other type of the crate can print the key (checked: the builder, engines and pools have no `Debug`; errors carry lengths only; `tracing` fields are paths, namespaces, sizes and tags). **In v0.23.0 and earlier the options still print the key: do not log them.**
+- **The crate erases the copies of the key it holds.** The key is kept in a type of the crate's own that erases itself when dropped, passed by reference and never copied out on each call; the `Vec<u8>` that the options and the builder hold is erased when the engine, the pool or the builder takes the key (also for each `ReadPool` slot, and when a rejected `open` returns an error). This adds one dependency, `zeroize`, only with the `encryption` feature. What this is not: it cannot erase your own copy of the key, other code's stack frames, the cipher library's per-call key schedule, or the swap file. It is "the crate does not keep its own copies after they are dropped", never "the key cannot leak".
+
+### Announced: v0.24.0 changes what an engine with a key accepts (RFC 029)
+
+Nothing changes in this release. See [Migration](docs/src/migration.md#announced-encryption-integrity-v0240) for the full text.
+
+- **What v0.24.0 will do.** With a key, an entry will be readable only if it is sealed under that key and bound to its path (the namespace is not bound; use one key per trust domain). Plain entries and entries sealed without binding will be refused with a new error, `UnsealedEntry`, that names the remedy. Queries on an engine with a key will never use the SQL pushdown.
+- **Who must act, and how.** Everyone with an encryption key and an existing database: after upgrading, call `rotate_encryption_key` once with the same key (it re-seals every entry of the namespace, in pages, atomically), or purge. Unencrypted databases and engines without a key are not affected.
+- **One way for encrypted entries.** v0.23.x and earlier read the new tags as `UnknownEncoding`. **Do not call `rotate_encryption_key` with an older version once v0.24.0 has written to the database:** v0.23.0 returns `Ok(0)` and still switches its in-memory key, so a rotation that did nothing can look as if it worked.
+- **Not protected, and will not be:** freshness of an entry; the confidentiality of metadata; isolation between namespaces under one key; an attacker who can read the process's memory.
+- **The wire-format guarantee** in `docs/src/migration.md` will be scoped in place at v0.24.0 (it is about the payload codec bytes; sealed entries read by an engine with a key need the one rotation). It is not changed now.
+
+---
+
 ## [0.23.0] — 2026-11-03
 
 Authorized by the project owner on 2026-11-03. The source is that of release candidate `1aca632`; the release

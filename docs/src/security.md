@@ -78,9 +78,12 @@ anything in it. The rest of this page is mostly about what that can and cannot d
   size of the blob, and the decoded value can be larger than the blob (a one-byte `None` becomes
   a whole `Option<T>`). Decoding time is proportional to the blob.
 - **Replace or swap entries.** Without a key, the cache holds whatever the file holds. With a
-  key, an attacker cannot read or forge a payload, but the ciphertext is not bound to its row,
-  so someone with write access can move an encrypted payload from one path to another. Binding
-  ciphertext to its row is not done: it needs a stored-format change, and none is scheduled.
+  key, an attacker cannot read a payload or forge one sealed under your key, but the cache does
+  not yet insist that what it reads was sealed under it: the ciphertext is not bound to its
+  row, so someone with write access can move an encrypted payload from one path to another, and
+  an entry stored without a key is read as plain. v0.24.0 is planned to close both (see
+  [Migration](./migration.md#announced-encryption-integrity-v0240)); until then, treat the file
+  as writable only by you.
 - **Fill the disk or the cache.** `max_entries` bounds the number of entries and
   `max_decompressed_bytes` the size of a decompressed payload; the library does not bound the
   size of an uncompressed payload, which is exactly as large as the blob in the file.
@@ -114,11 +117,17 @@ What it does **not** do:
 - It encrypts **payload content only**. Paths, namespaces, sizes, modification times, hashes
   and timestamps are stored in the clear, and the database file itself is not encrypted. Use
   disk encryption for that.
-- The key lives in your process. The library copies it into engine memory and does not zero it
-  on drop; do not assume it is erased. Losing the key makes every encrypted entry permanently
-  unreadable. There is no recovery.
+- The key lives in your process. From v0.23.1 the crate does not keep its own copies of the key
+  after they are dropped: it holds the key in a type that erases itself on drop, and it erases
+  the `Vec<u8>` it takes from the options and from the builder. That is all it claims. It cannot
+  erase your own copy of the key (the `Vec` you passed in, a clone of the options you keep),
+  other code's stack frames, the cipher library's per-call key schedule, or the swap file, so do
+  not assume the key is gone from the process. Before v0.23.1 the crate erased nothing. Losing
+  the key makes every encrypted entry permanently unreadable. There is no recovery.
 - A missing key is an error (`MissingEncryptionKey`), never a silent read of ciphertext.
-- `CacheOptions` derives `Debug`, so printing it with `{:?}` prints the encryption key (v0.23.0 and earlier). Do not log the options of an engine that has a key.
+- Fixed in v0.23.1: `CacheOptions` printed the encryption key with `{:?}`; it now prints
+  `Some("[redacted]")`. In v0.23.0 and earlier it still does, so do not log the options of an
+  engine that has a key under those versions. No other type of the crate can print the key.
 - Authentication does not bind a payload to its path (see above).
 
 ## Decoding limits at a glance
