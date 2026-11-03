@@ -626,42 +626,61 @@ pub(crate) fn encoding_breakdown(
 // Key rotation support
 // ---------------------------------------------------------------------------
 
-/// A row of `payloads` with its path, needed for re-encryption.
+/// A row of `payloads` with its path and tag, as key rotation reads it.
 #[cfg(feature = "encryption")]
-pub(crate) struct EncryptedPayloadRow {
+pub(crate) struct PayloadPageRow {
     pub file_id: i64,
     pub path: String,
     pub content: Vec<u8>,
     pub encoding: String,
 }
 
-/// Load every payload row in `namespace`, with its path and tag.
+/// One page of the payload rows of `namespace`, in `path` order, strictly
+/// after `after` (RFC 029 R3).
+///
+/// The page holds at most `max_rows` rows and ends as soon as its content
+/// reaches `max_bytes`, but always holds at least one row when any is left.
+/// It pages by `(namespace, path)`, the pattern of RFC 020: served by
+/// `sqlite_autoindex_files_1` with no sort. Pass `""` for the first page
+/// (every stored path is non-empty). Paging by `file_id` instead plans a scan
+/// of the whole namespace and a sort for every page.
 #[cfg(feature = "encryption")]
-pub(crate) fn load_encrypted_payloads(
+pub(crate) fn load_payload_page(
     conn: &Connection,
     namespace: &str,
-) -> Result<Vec<EncryptedPayloadRow>, LocalFileCacheError> {
-    let mut stmt = conn
-        .prepare_cached(
-            "SELECT p.file_id, f.path, p.content, p.encoding
-         FROM payloads p
-         JOIN files f ON f.id = p.file_id
-         WHERE f.namespace = ?1",
-        )
+    after: &str,
+    max_rows: usize,
+    max_bytes: usize,
+) -> Result<Vec<PayloadPageRow>, LocalFileCacheError> {
+    let mut stmt = conn.prepare_cached(PAYLOAD_PAGE_SQL).db()?;
+    let mut rows = stmt
+        .query(params![namespace, after, max_rows as i64])
         .db()?;
-    let rows: Result<Vec<_>, _> = stmt
-        .query_map(params![namespace], |r| {
-            Ok(EncryptedPayloadRow {
-                file_id: r.get(0)?,
-                path: r.get(1)?,
-                content: r.get(2)?,
-                encoding: r.get(3)?,
-            })
-        })
-        .db()?
-        .collect();
-    rows.db()
+    let mut page = Vec::new();
+    let mut bytes = 0_usize;
+    while let Some(r) = rows.next().db()? {
+        let content: Vec<u8> = r.get(3).db()?;
+        bytes = bytes.saturating_add(content.len());
+        page.push(PayloadPageRow {
+            file_id: r.get(0).db()?,
+            path: r.get(1).db()?,
+            encoding: r.get(2).db()?,
+            content,
+        });
+        if bytes >= max_bytes {
+            break;
+        }
+    }
+    Ok(page)
 }
+
+/// The statement behind [`load_payload_page`]; named so a test can ask SQLite
+/// for its plan.
+#[cfg(feature = "encryption")]
+pub(crate) const PAYLOAD_PAGE_SQL: &str = "SELECT p.file_id, f.path, p.encoding, p.content \
+     FROM files f JOIN payloads p ON p.file_id = f.id \
+     WHERE f.namespace = ?1 AND f.path > ?2 \
+     ORDER BY f.path LIMIT ?3";
 
 /// Update a payload row's content and tag (used by key rotation).
 #[cfg(feature = "encryption")]

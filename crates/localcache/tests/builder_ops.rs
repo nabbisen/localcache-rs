@@ -272,28 +272,43 @@ mod rotation_tests {
         assert!(old.get(&p).is_err(), "old key should no longer work");
     }
 
+    /// RFC 029 R3: rotation seals every entry of the namespace, a plain one
+    /// included, so it is also how encryption is switched on for a database
+    /// that was written without a key. (Before v0.24.0 it left plain entries
+    /// alone and returned 0.)
     #[test]
-    fn rotate_returns_zero_when_no_encrypted_entries() {
+    fn rotation_seals_plain_entries_and_switches_encryption_on() {
         let dir = TempDir::new().unwrap();
         let db = dir.path().join("rot3.sqlite3");
 
         // Write unencrypted entries.
+        let p = write_file(&dir, "rot3.txt", b"plain");
         {
             let e: CacheEngine<Vec<f32>> =
                 CacheEngine::builder().database(db.clone()).build().unwrap();
-            let p = write_file(&dir, "rot3.txt", b"plain");
             e.set(&p, &vec![1.0_f32]).unwrap();
         }
 
-        // Rotating with key = Some but no encrypted entries → 0 rotated.
+        // An engine with a key refuses the plain entry until it is rotated.
         let e: CacheEngine<Vec<f32>> = CacheEngine::builder()
-            .database(db)
+            .database(db.clone())
             .encryption_key(key(0x33))
             .build()
             .unwrap();
+        assert!(matches!(
+            e.get(&p),
+            Err(localcache::LocalFileCacheError::UnsealedEntry)
+        ));
 
         let rotated = e.rotate_encryption_key(&key(0x44)).unwrap();
-        assert_eq!(rotated, 0);
+        assert_eq!(rotated, 1);
+        assert_eq!(e.get(&p).unwrap().unwrap().payload, vec![1.0_f32]);
+        let listed = e.list_entries().unwrap();
+        assert!(
+            listed[0].encoding.ends_with("-aes256gcm-bound"),
+            "{}",
+            listed[0].encoding
+        );
     }
 
     // ----------------------------------------------------------------

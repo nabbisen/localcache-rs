@@ -456,3 +456,33 @@ fn an_imported_recency_is_seconds_times_a_million_and_refuses_what_does_not_fit(
     // A negative `last_accessed_at` is "never read": `updated_at` decides.
     assert_eq!(use_value_of_record(-5, 4), Some(4_000_000));
 }
+
+/// RFC 029 R3 (step 0, C1): the rotation's page query pages by
+/// `(namespace, path)`, a range on the UNIQUE autoindex with no sort. Paging
+/// by `file_id` plans a scan of the whole namespace and a temp b-tree for every
+/// page, which took 478 s instead of 1.6 s at 1,000,000 entries.
+#[cfg(feature = "encryption")]
+#[test]
+fn the_rotation_page_is_a_range_on_the_unique_autoindex_with_no_sort() {
+    let conn = conn_with(&["/d/a", "/d/b", "/e/c"]);
+    let mut stmt = conn
+        .prepare(&format!(
+            "EXPLAIN QUERY PLAN {}",
+            crate::db::repository::PAYLOAD_PAGE_SQL
+        ))
+        .unwrap();
+    let plan = stmt
+        .query_map(rusqlite::params!["ns", "", 10_i64], |r| {
+            r.get::<_, String>(3)
+        })
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()
+        .join("\n");
+    assert!(
+        plan.contains("sqlite_autoindex_files_1 (namespace=? AND path>?)"),
+        "{plan}"
+    );
+    assert!(!plan.contains("TEMP B-TREE"), "{plan}");
+    assert!(!plan.contains("SCAN"), "{plan}");
+}

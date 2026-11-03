@@ -50,6 +50,13 @@ mod payload_codec;
 #[cfg(all(test, feature = "encryption"))]
 mod seal_tests;
 
+/// Seal `plain` the way v0.23 and earlier did: no associated data. For tests
+/// that need a database written before binding.
+#[cfg(all(test, feature = "encryption"))]
+pub(crate) fn seal_without_binding_for_tests(plain: &[u8], key: &[u8; 32]) -> Vec<u8> {
+    encrypt_bytes(plain, key, &[]).unwrap()
+}
+
 // ---------------------------------------------------------------------------
 // Encryption suffix
 // ---------------------------------------------------------------------------

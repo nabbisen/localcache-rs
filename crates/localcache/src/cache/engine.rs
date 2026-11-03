@@ -27,6 +27,37 @@ use crate::error::{
 use crate::path::{normalize_path, path_to_str, resolve_path_key};
 use crate::serialization::{decode_payload, encode_payload};
 
+/// The most rows one page of `rotate_encryption_key` holds (RFC 029 R3).
+///
+/// Chosen from step 0 (request 059, § 8): paging by `(namespace, path)` took
+/// the same time at 100 and at 50,000 rows per page at 1,000,000 entries, so
+/// a small page costs nothing, and 1,000 rows keeps memory near 21 MiB for
+/// 4 KiB entries.
+#[cfg(feature = "encryption")]
+const ROTATION_PAGE_ROWS: usize = 1_000;
+
+/// The most payload bytes one page of `rotate_encryption_key` holds before it
+/// ends (RFC 029 R3). A page always holds at least one row, so a payload
+/// larger than this is read alone.
+#[cfg(feature = "encryption")]
+const ROTATION_PAGE_BYTES: usize = 8 * 1024 * 1024;
+
+/// The page size in rows; a test may shrink it to exercise page boundaries.
+#[cfg(feature = "encryption")]
+fn rotation_page_rows() -> usize {
+    #[cfg(test)]
+    if let Some(rows) = ROTATION_PAGE_ROWS_OVERRIDE.with(std::cell::Cell::get) {
+        return rows;
+    }
+    ROTATION_PAGE_ROWS
+}
+
+#[cfg(all(test, feature = "encryption"))]
+thread_local! {
+    static ROTATION_PAGE_ROWS_OVERRIDE: std::cell::Cell<Option<usize>> =
+        const { std::cell::Cell::new(None) };
+}
+
 /// Type alias for the LRU eviction callback stored in [`CacheEngine`].
 pub(crate) type EvictCallback = Arc<dyn Fn(&Path) + Send + Sync>;
 
@@ -44,6 +75,17 @@ enum TestPoint {
     /// still inside the `IMMEDIATE` transaction.
     #[cfg(feature = "encryption")]
     AfterLoad,
+    /// During a rotation, after the first row of a page was written and the
+    /// rest of the page was not: the middle of a page.
+    #[cfg(feature = "encryption")]
+    MidPage,
+    /// During a rotation, after a whole page was written, before the next is
+    /// read.
+    #[cfg(feature = "encryption")]
+    AfterPage,
+    /// During a rotation, after the last page, immediately before the commit.
+    #[cfg(feature = "encryption")]
+    BeforeCommit,
     /// Inside `enforce_max_entries`, after the write it protects and the
     /// count, before eviction selects its victims. Still inside the
     /// write's own `IMMEDIATE` transaction.
@@ -843,16 +885,32 @@ where
     // Key rotation
     // ------------------------------------------------------------------
 
-    /// Re-encrypt all entries in the current namespace with `new_key`.
+    /// Seal every entry of the current namespace under `new_key`, bound to its
+    /// path (RFC 029).
     ///
-    /// Every sealed payload (encoding ending in `"-aes256gcm"` or
-    /// `"-aes256gcm-bound"`) is decrypted with the current key and sealed
-    /// again under `new_key`, bound to its path (RFC 029 R1). The rotation holds
-    /// the database write lock from reading the first entry to commit
-    /// (an `IMMEDIATE` transaction), so a concurrent write on this database
-    /// waits or fails with a busy error rather than being silently
-    /// overwritten with a stale re-encrypted payload. A failure leaves the
-    /// database consistent (still encrypted with the old key).
+    /// **Every** entry is re-sealed, whatever state it is in: a plain entry is
+    /// sealed as it is, an entry sealed without binding (written by v0.23 or
+    /// earlier) is opened with the engine's current key, and a bound entry is
+    /// opened with the current key and its path; each is then sealed under
+    /// `new_key`, with the tag `…-aes256gcm-bound`. `new_key` may equal the
+    /// current key. That is the **upgrade** of a database written by v0.23 or
+    /// earlier (an engine with a key refuses its entries, as
+    /// [`LocalFileCacheError::UnsealedEntry`], until one rotation), and it is
+    /// also how encryption is switched on for a database written without a key
+    /// (open with the key, rotate to it).
+    ///
+    /// Everything happens in **one `IMMEDIATE` transaction**: the rotation
+    /// holds the database write lock from reading the first entry to commit,
+    /// so a concurrent write on this database waits or fails with a busy
+    /// error rather than being silently overwritten with a stale re-sealed
+    /// payload. A failure, including an entry with a tag this build cannot
+    /// decode, leaves the database exactly as it was (still sealed as before)
+    /// and the engine on its old key. Rows are read and written in **pages**
+    /// of at most 1,000 rows or 8 MiB of payload (whichever comes first, and
+    /// at least one row), paged by `(namespace, path)`, so memory is bounded
+    /// by the page, not by the namespace. The write-ahead log still grows by
+    /// about the size of the namespace's payloads, because the transaction is
+    /// that large.
     ///
     /// On `Ok`, this engine uses `new_key` for every later read and write,
     /// including a [`QueryBuilder`](crate::QueryBuilder) built before this
@@ -867,7 +925,8 @@ where
     /// [`watcher`](Self::watcher) needs no action: it never decodes
     /// payloads.
     ///
-    /// Returns the number of entries that were re-encrypted.
+    /// Returns the number of entries that were re-sealed (every entry of the
+    /// namespace).
     ///
     /// # Errors
     ///
@@ -877,7 +936,11 @@ where
     /// * [`LocalFileCacheError::InvalidArgument`] with `argument: "new_key"` —
     ///   `new_key` is not exactly 32 bytes.
     /// * [`LocalFileCacheError::EncryptionError`] — decryption or re-encryption
-    ///   failed. The engine keeps using the old key; nothing was written.
+    ///   failed (the engine's key is not the one the entries were sealed
+    ///   under, or an entry is damaged). The engine keeps using the old key;
+    ///   nothing was written.
+    /// * [`LocalFileCacheError::UnknownEncoding`] — an entry has a tag this
+    ///   build cannot decode. Nothing was written.
     #[cfg(feature = "encryption")]
     pub fn rotate_encryption_key(&self, new_key: &[u8]) -> Result<usize, LocalFileCacheError> {
         self.guard_write()?;
@@ -894,56 +957,81 @@ where
         })?;
 
         // Hold the write lock from the first read to the commit, so a
-        // concurrent write from another connection cannot land between the
-        // load below and the UPDATEs and then be silently overwritten with
-        // a stale re-encrypted payload (RFC 022 R1 Amendment 2 / C2).
+        // concurrent write from another connection cannot land between a
+        // read and the UPDATE of the same row and then be silently
+        // overwritten with a stale re-sealed payload (RFC 022 R1 Amendment 2 /
+        // C2). The rows are read and written in pages, inside this one
+        // transaction, so memory is bounded by the page and not by the
+        // namespace (RFC 029 R3).
         let tx = rusqlite::Transaction::new_unchecked(
             &self.conn,
             rusqlite::TransactionBehavior::Immediate,
         )
         .db()?;
 
-        // Load all encrypted payload rows for this namespace, through the
-        // transaction so the read is covered by the same write lock as the
-        // updates below.
-        let rows = repository::load_encrypted_payloads(&tx, &self.namespace)?;
+        // Every row of the namespace, in `path` order, whatever state it is in:
+        // plain, sealed without binding, or bound. A path is never empty, so
+        // `""` starts before the first one.
+        let mut after = String::new();
+        let mut total = 0_usize;
+        loop {
+            let page = repository::load_payload_page(
+                &tx,
+                &self.namespace,
+                &after,
+                rotation_page_rows(),
+                ROTATION_PAGE_BYTES,
+            )?;
+            let Some(last) = page.last() else {
+                break;
+            };
+            let next_after = last.path.clone();
+
+            // The cursor is empty only before the first page.
+            #[cfg(test)]
+            if after.is_empty() {
+                test_hook(TestPoint::AfterLoad)?;
+            }
+
+            // Re-seal the page. The old key is borrowed for this loop only,
+            // which makes no database call (RFC 029 R5).
+            let mut updates: Vec<(i64, Vec<u8>, &'static str)> = Vec::with_capacity(page.len());
+            {
+                let guard = self.encryption_key.borrow();
+                let old_key = guard
+                    .as_ref()
+                    .ok_or(LocalFileCacheError::MissingEncryptionKey)?;
+                for row in &page {
+                    let (content, tag) = crate::serialization::reseal(
+                        &row.content,
+                        &row.encoding,
+                        &row.path,
+                        old_key.as_bytes(),
+                        new_key_arr.as_bytes(),
+                    )?;
+                    updates.push((row.file_id, content, tag));
+                }
+            }
+
+            // Write the page before the next one is read.
+            let mut rows = updates.iter();
+            if let Some((file_id, new_content, new_tag)) = rows.next() {
+                repository::update_payload_content(&tx, *file_id, new_content, new_tag)?;
+                #[cfg(test)]
+                test_hook(TestPoint::MidPage)?;
+            }
+            for (file_id, new_content, new_tag) in rows {
+                repository::update_payload_content(&tx, *file_id, new_content, new_tag)?;
+            }
+            total += updates.len();
+            after = next_after;
+
+            #[cfg(test)]
+            test_hook(TestPoint::AfterPage)?;
+        }
 
         #[cfg(test)]
-        test_hook(TestPoint::AfterLoad)?;
-
-        // Re-seal each sealed row under the new key, bound to its path
-        // (RFC 029 R1). The old key is borrowed for this loop only, which makes
-        // no database call (RFC 029 R5).
-        let mut updates: Vec<(i64, Vec<u8>, &'static str)> = Vec::with_capacity(rows.len());
-        {
-            let guard = self.encryption_key.borrow();
-            let old_key = guard
-                .as_ref()
-                .ok_or(LocalFileCacheError::MissingEncryptionKey)?;
-            for row in &rows {
-                // Plain rows are left as they are until RFC 029 R3 (next).
-                if crate::serialization::parse_tag(&row.encoding).1
-                    == crate::serialization::Sealing::None
-                {
-                    continue;
-                }
-                let (content, tag) = crate::serialization::reseal(
-                    &row.content,
-                    &row.encoding,
-                    &row.path,
-                    old_key.as_bytes(),
-                    new_key_arr.as_bytes(),
-                )?;
-                updates.push((row.file_id, content, tag));
-            }
-        }
-
-        // Write all updates atomically (a no-op when `updates` is empty:
-        // there is nothing to re-encrypt, but the engine still switches to
-        // `new_key` below — see C1).
-        for (file_id, new_content, new_tag) in &updates {
-            repository::update_payload_content(&tx, *file_id, new_content, new_tag)?;
-        }
+        test_hook(TestPoint::BeforeCommit)?;
         tx.commit().db()?;
 
         // `Ok` from this point on always means this engine now uses
@@ -956,7 +1044,7 @@ where
         // The replaced `Key` is dropped here, which erases it.
         self.encryption_key.replace(Some(new_key_arr));
 
-        Ok(updates.len())
+        Ok(total)
     }
 
     // ------------------------------------------------------------------
@@ -1628,6 +1716,8 @@ fn walk_dir_filtered(
     Ok(files)
 }
 
+#[cfg(all(test, feature = "encryption"))]
+mod rotation_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
