@@ -63,8 +63,9 @@ decompression of stored payloads bounded. See the migration notes in [Error Hand
 [CHANGELOG](https://github.com/nabbisen/localcache-rs/blob/main/CHANGELOG.md) for what changes for you.
 **v0.22.1 was released on 2026-11-01**, a fix release: a stored payload can no longer abort or crash
 a reader, and the `bincode` dependency left the tree. **v0.22.2 was released on 2026-11-03**, a
-documentation release that announces the next change in detail. Planned next: v0.23.0 (a true
-least-recently-used eviction policy on a schema change, [Migration](./migration.md)). See the live
+documentation release that announces the next change in detail. **v0.23.0 was released on 2026-11-03**:
+eviction now follows the last use (a read, a write, an overwrite or a `touch`) in a strict order, and the
+stored schema is v6, one way; read [Migration](./migration.md) before you upgrade. See the live
 [ROADMAP.md](https://github.com/nabbisen/localcache-rs/blob/main/ROADMAP.md) for the milestone
 table and RFC mapping.
 

@@ -1699,13 +1699,13 @@ authorization. **Done:** Q9a–Q9c, Q3d, Q1c, Q3b, Q3c, Q2f (local commits), Q3e
 ### After v0.22.0 — plan authorized by the owner, 2026-10-31 (updated 2026-11-01)
 
 **v0.22.1** = Q11 (RFC 028), a fix release: **✅ released 2026-11-01**. **v0.22.2** = a documentation-only patch that announces v0.23.0 one release ahead, as the
-v0.21.5 notes promised (RFC 026 decision 2): **✅ released 2026-11-03**. **v0.23.0** = **RFC 026, accepted by the owner 2026-11-01**: a true use order for eviction (reads and writes, a strict order that
+v0.21.5 notes promised (RFC 026 decision 2): **✅ released 2026-11-03**. **v0.23.0** (**✅ released 2026-11-03**) = **RFC 026, accepted by the owner 2026-11-01**: a true use order for eviction (reads and writes, a strict order that
 does not depend on a clock) and one path index, in one schema v6; Q12 = the migration and the index drop, Q13 = the use order. **Step 0** (the dev team's verification of the design,
 `rfcs/handoffs/026-use-order-and-one-path-index/step0-verification.md`) **is done (request 052, review 073): the design stays simple, A stays in v0.23.0**; its findings are folded into the RFC. Q12 = schema v6 and the use order in `crates/localcache/src` (`q12-schema-v6-and-the-use-order.md`), Q13 = the CLI, the book, the README and the CHANGELOG (`q13-docs-cli-and-the-announcement-made-true.md`).
 Review of scope: `.git-exclude/reviewed/071-…`. **RFC 029** (encryption integrity: payload bound to its row, a strict mode, key zeroization, a paged upgrade; no schema change) is proposed as the
 subject of v0.24.0 and is not yet drafted; the owner decides it after RFC 026. **1.0:** not planned. It requires the owner's explicit confirmation.
 
-Order of the dev team's work: v0.22.2 (✅ released 2026-11-03; reviews 072, 074 and 078) → step 0 (done) → Q12 (done: committed locally as `6daeb26`, reviews 075 and 076) → Q13 (written, in review: request 056) → v0.23.0 release preparation.
+Order of the dev team's work, all done: v0.22.2 (✅ released 2026-11-03; reviews 072, 074 and 078) → step 0 → Q12 (reviews 075 and 076) → Q13 (review 077) → v0.23.0 release preparation (review 079) → v0.23.0 (✅ released 2026-11-03; review 080).
 
 ### v0.22.1 — released 2026-11-01
 
@@ -1723,6 +1723,21 @@ Order of the dev team's work: v0.22.2 (✅ released 2026-11-03; reviews 072, 074
 A fix release under the SemVer policy by the owner's decision on RFC 028: a stored payload can no longer abort or crash a reader (the
 v0.22.0 Known issue and a stack overflow found while fixing it), `bincode` and its advisory exception left the tree, and two inputs
 that v0.22.0 accepted are refused (a count above the remaining bytes, nesting beyond 128 levels). No known issue is open.
+
+### v0.23.0 — released 2026-11-03
+
+| | |
+|---|---|
+| Release candidate | `1aca632` (review 079: Go) |
+| Release commit | `5a75f9a` (`docs: set the v0.23.0 release date`); changes `CHANGELOG.md` only |
+| Tag | `0.23.0`, GPG-signed and annotated (tag object `20ceccc4…`), on the release commit, pushed |
+| CI on the release commit | run 41595640499 green |
+| `Release` workflow | dry run from the tag, run 41596630055, all jobs green; its digest step printed the two digests that were later published. Real run 41597424677: Gate, Advisories, MSRV fresh, Source archive, Publish, GitHub release all green |
+| Published | `localcache 0.23.0` (checksum `679db1d13cd71cddf1c9b5d42eb2ce3d6ef819ead52645bcbc744d000e4ae679`) and `localcache-cli 0.23.0` (`588620b264afcb5853cff67a74b63d680f84f70c068cf56d38bc5fc917934204`) on crates.io, 2026-11-03 07:44 UTC, neither yanked, `rust-version` 1.85; the downloaded `.crate` files hash to the registry checksums |
+| GitHub release | `0.23.0`, asset `localcache-v0.23.0.tar.gz` (905,761 bytes, SHA-256 `2074b97cfdc75b5d09dec34c9957e3ef428a05ab61fb772f14c7fb04d182d77a`); the notes list both `.crate` digests, equal to crates.io's; `gh attestation verify` passes (signer `release.yaml@refs/tags/0.23.0`, source `5a75f9a`) |
+| Fresh consumer | `localcache = "=0.23.0"` builds on Rust 1.85.0 and, opening the released `compat-v0_18` fixture, migrates it to `user_version` 6 with objects exactly `files`, `idx_files_use`, `payloads` and the autoindex, all three entries kept with their use values; no `bincode` in the graph |
+
+A breaking release under the 0.x policy (RFC 026): eviction follows uses (reads, writes, overwrites and `touch`), in a strict order that does not depend on the clock; `last_accessed_at` means the last use; the export lists entries oldest use first; schema v6 is one way (v0.22.x refuses a migrated file), and the duplicate path index is gone. A migrated file does not shrink by itself. No known issue is open. RFC 029 (encryption integrity) is proposed for a later release and is not drafted; `1.0.0` is not planned.
 
 ### v0.22.2 — released 2026-11-03
 
