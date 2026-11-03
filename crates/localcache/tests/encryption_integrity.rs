@@ -319,3 +319,163 @@ mod pushdown {
         assert_eq!(keyed.query().field_gt("score", 5.0).run().unwrap().len(), 2);
     }
 }
+
+// ---------------------------------------------------------------------------
+// R2, import: a keyed import accepts only bound records
+// ---------------------------------------------------------------------------
+
+/// Records of three kinds, from one database: bound (sealed by the keyed
+/// engine), plain (from a keyless engine), and a bound one with its tag edited
+/// to the old suffix (sealed without binding, as v0.23 sealed them).
+fn records(f: &Fixture) -> (Vec<localcache::ExportRecord>, Vec<localcache::ExportRecord>) {
+    let bound = f.engine().export_entries().unwrap();
+    assert!(
+        bound
+            .iter()
+            .all(|r| r.encoding.ends_with("-aes256gcm-bound"))
+    );
+    let plain_path = write_plain(f, "plain.bin", vec![9, 9, 9]);
+    let plain: Vec<_> = f
+        .engine_namespace_plain_export()
+        .into_iter()
+        .filter(|r| r.path == canonical(&plain_path))
+        .collect();
+    assert_eq!(plain.len(), 1);
+    (bound, plain)
+}
+
+impl Fixture {
+    fn engine_namespace_plain_export(&self) -> Vec<localcache::ExportRecord> {
+        let keyless: CacheEngine<Vec<u8>> =
+            CacheEngine::builder().database(&self.db).build().unwrap();
+        keyless.export_entries().unwrap()
+    }
+
+    fn target(&self, namespace: &str, key: Option<[u8; 32]>) -> CacheEngine<Vec<u8>> {
+        let mut b = CacheEngine::<Vec<u8>>::builder()
+            .database(&self.db)
+            .namespace(namespace);
+        if let Some(key) = key {
+            b = b.encryption_key(key.to_vec());
+        }
+        b.build().unwrap()
+    }
+}
+
+fn records_refusal(result: Result<usize, LocalFileCacheError>) -> String {
+    match result {
+        Err(LocalFileCacheError::InvalidArgument { argument, reason }) => {
+            assert_eq!(argument, "records");
+            reason
+        }
+        other => panic!("expected InvalidArgument records, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_keyed_import_of_a_plain_record_is_refused_whole_before_writing() {
+    let f = Fixture::new();
+    let (bound, plain) = records(&f);
+    let target = f.target("copy", Some(KEY));
+    let mixed: Vec<_> = bound.iter().chain(plain.iter()).cloned().collect();
+    let reason = records_refusal(target.import_entries(&mixed));
+    assert!(reason.contains("1 of 3 records"), "{reason}");
+    assert!(reason.contains("rotate_encryption_key"), "{reason}");
+    // nothing was written, not even the bound records of the same call
+    assert!(target.keys(None).unwrap().is_empty());
+}
+
+#[test]
+fn a_keyed_import_of_a_record_sealed_without_binding_is_refused() {
+    let f = Fixture::new();
+    let (mut bound, _) = records(&f);
+    for r in &mut bound {
+        r.encoding = r.encoding.trim_end_matches("-bound").to_owned();
+    }
+    let target = f.target("copy", Some(KEY));
+    let reason = records_refusal(target.import_entries(&bound));
+    assert!(reason.contains("2 of 2 records"), "{reason}");
+    assert!(target.keys(None).unwrap().is_empty());
+}
+
+#[test]
+fn a_keyed_import_of_bound_records_succeeds_and_reads() {
+    let f = Fixture::new();
+    let (bound, _) = records(&f);
+    let target = f.target("copy", Some(KEY));
+    assert_eq!(target.import_entries(&bound).unwrap(), 2);
+    // the namespace is not bound: the copy reads under the same key
+    assert_eq!(target.get(&f.a).unwrap().unwrap().payload, vec![1_u8, 1, 1]);
+    assert_eq!(target.get(&f.b).unwrap().unwrap().payload, vec![2_u8, 2, 2]);
+    // the authenticity is not checked at import: a record sealed under another
+    // key is imported and fails closed on read
+    let other = f.target("other", Some([0x66; 32]));
+    assert_eq!(other.import_entries(&bound).unwrap(), 2);
+    assert!(matches!(
+        other.get(&f.a),
+        Err(LocalFileCacheError::EncryptionError(_))
+    ));
+}
+
+#[test]
+fn a_keyless_import_stores_sealed_and_plain_records_verbatim() {
+    let f = Fixture::new();
+    let (bound, plain) = records(&f);
+    let target = f.target("copy", None);
+    let all: Vec<_> = bound.iter().chain(plain.iter()).cloned().collect();
+    assert_eq!(target.import_entries(&all).unwrap(), 3);
+    let exported = target.export_entries().unwrap();
+    for original in &all {
+        let copy = exported.iter().find(|r| r.path == original.path).unwrap();
+        assert_eq!(copy.encoding, original.encoding);
+        assert_eq!(copy.payload_b64, original.payload_b64);
+    }
+    // and a keyed engine then reads the bound ones of that namespace
+    let keyed = f.target("copy", Some(KEY));
+    assert_eq!(keyed.get(&f.a).unwrap().unwrap().payload, vec![1_u8, 1, 1]);
+}
+
+#[test]
+fn import_from_follows_the_same_rule() {
+    let f = Fixture::new();
+    let _ = records(&f); // adds the plain entry to the default namespace
+    let source_plain = f.target("src-plain", None);
+    let p = write_plain(&f, "p2.bin", vec![4]);
+    source_plain.set(&p, &vec![4_u8]).unwrap();
+    let keyed_dest = f.target("dest", Some(KEY));
+    // from an engine without a key: refused
+    let reason = records_refusal(keyed_dest.import_from(&source_plain));
+    assert!(reason.contains("1 of 1 records"), "{reason}");
+    assert!(keyed_dest.keys(None).unwrap().is_empty());
+    // from a keyed engine with the same key: copied (bound)
+    let source_bound = f.target("src-bound", Some(KEY));
+    source_bound.set(&f.a, &vec![5_u8]).unwrap();
+    assert_eq!(keyed_dest.import_from(&source_bound).unwrap(), 1);
+    assert_eq!(keyed_dest.get(&f.a).unwrap().unwrap().payload, vec![5_u8]);
+    // an engine without a key can copy from anything
+    let keyless_dest = f.target("dest2", None);
+    assert_eq!(keyless_dest.import_from(&source_plain).unwrap(), 1);
+}
+
+/// The upgrade path the error message names, end to end: records that a keyed
+/// engine refuses are imported into an engine without a key, and one rotation
+/// with the key makes them readable.
+#[test]
+fn the_remedy_the_message_names_works() {
+    let f = Fixture::new();
+    let (_, plain) = records(&f);
+    let keyed = f.target("up", Some(KEY));
+    records_refusal(keyed.import_entries(&plain));
+    let keyless = f.target("up", None);
+    assert_eq!(keyless.import_entries(&plain).unwrap(), 1);
+    assert_eq!(keyed.rotate_encryption_key(&KEY).unwrap(), 1);
+    let source = canonical_from_record(&plain[0]);
+    assert_eq!(
+        keyed.get(&source).unwrap().unwrap().payload,
+        vec![9_u8, 9, 9]
+    );
+}
+
+fn canonical_from_record(r: &localcache::ExportRecord) -> PathBuf {
+    PathBuf::from(&r.path)
+}

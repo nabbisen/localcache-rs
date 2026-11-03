@@ -69,9 +69,18 @@ where
     /// * [`LocalFileCacheError::ReadOnly`] — engine is in read-only mode.
     /// * [`LocalFileCacheError::InvalidArgument`] — `argument: "records"`: a
     ///   payload that is not valid Base64, more distinct paths than
-    ///   `max_entries`, or a record whose recency is out of range (a negative
+    ///   `max_entries`, a record whose recency is out of range (a negative
     ///   `last_accessed_at` or `updated_at`, or one so large that its
-    ///   microseconds reach 2^62).
+    ///   microseconds reach 2^62), or, **on an engine with an encryption key**,
+    ///   a record that is not sealed bound to its path (its tag does not end in
+    ///   `-aes256gcm-bound`: it is plain, or was sealed by v0.23 or earlier).
+    ///   The whole import is refused before anything is written; import such
+    ///   records into an engine without a key, then call
+    ///   [`rotate_encryption_key`](Self::rotate_encryption_key) on the engine
+    ///   with the key. The check is of the tag, not of the authenticity: a
+    ///   record that is forged or sealed under another key is imported, and
+    ///   fails closed when it is read, like any corrupt entry. An engine
+    ///   without a key stores every record verbatim.
     /// * [`LocalFileCacheError::Database`] — including a busy database after
     ///   the busy timeout.
     ///
@@ -124,6 +133,13 @@ where
     /// within the same database. Entries already in the current namespace for
     /// the same path are replaced.
     ///
+    /// On an engine with an encryption key, the rule of
+    /// [`import_entries`](Self::import_entries) applies: every entry of
+    /// `source` must be sealed bound to its path, or the whole copy is refused
+    /// with `InvalidArgument { argument: "records" }` before anything is
+    /// written. Copying between two engines with the same key, or from an
+    /// engine without a key into another, is not affected.
+    ///
     /// `max_entries` applies as for
     /// [`import_entries`](Self::import_entries): a source holding more
     /// distinct entries than the bound is rejected with
@@ -164,10 +180,38 @@ where
     ///   never evicts a row this call wrote;
     /// * the eviction callback runs after the commit.
     ///
+    /// * with an encryption key, a record whose tag is not bound is rejected
+    ///   the same way (RFC 029 R2), so an engine never stores what it would
+    ///   refuse to read.
+    ///
     /// Returns the number of records imported.
     fn import_bounded(&self, rows: &[repository::FullRow]) -> Result<usize, LocalFileCacheError> {
         if rows.is_empty() {
             return Ok(0);
+        }
+        // RFC 029 R2: with a key, only bound records are accepted. The tag is
+        // checked, not the authenticity.
+        #[cfg(feature = "encryption")]
+        if self.encryption_key.borrow().is_some() {
+            let unbound = rows
+                .iter()
+                .filter(|row| {
+                    crate::serialization::parse_tag(&row.encoding).1
+                        != crate::serialization::Sealing::Bound
+                })
+                .count();
+            if unbound > 0 {
+                return Err(invalid_argument(
+                    ArgumentName::Records,
+                    format!(
+                        "{unbound} of {} records are not sealed bound to their path (they are \
+                         plain, or were sealed before v0.24.0), and an engine with an encryption \
+                         key accepts only bound records; import them into an engine without a key \
+                         and call rotate_encryption_key, or purge them",
+                        rows.len()
+                    ),
+                ));
+            }
         }
         // RFC 026 F2: refuse the whole import, before writing, if any record's
         // recency cannot be held by the use order.

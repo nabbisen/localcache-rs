@@ -26,3 +26,6 @@ serde_json      = { workspace = true }
 
 [dev-dependencies]
 tempfile        = { workspace = true }
+# Tests only: a keyed engine writes the sealed namespace the CLI is then run on
+# (RFC 029). The CLI itself takes no key and still builds without the feature.
+localcache      = { workspace = true, features = ["compression", "json", "encryption"] }
