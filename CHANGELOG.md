@@ -7,9 +7,20 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [Unreleased]
+## [0.24.0] — Unreleased
+
+*Date set at owner authorization.*
 
 **Breaking: with an encryption key, an entry is readable only if it is sealed under that key and bound to its path** (RFC 029, announced in v0.23.1). No schema change. Unencrypted databases and engines without a key are not affected.
+
+### Upgrading from 0.23.x, in this order
+
+1. **If you have an encryption key and a database, call `rotate_encryption_key` once per namespace with the same key** (entry "`rotate_encryption_key` seals every entry of the namespace, and is the upgrade", below); until then an engine with the key refuses every entry (entry "A keyed engine reads only bound entries").
+2. **Do not rotate with an older version afterwards** (entry "One way for encrypted entries").
+3. **One key per trust domain**: the namespace is not bound (entry "Payloads are bound to their path").
+4. **Code that matches on `LocalFileCacheError`**: there is a new variant, `UnsealedEntry`, and the enum is `#[non_exhaustive]` (entry "A new error variant and a changed message").
+5. **A keyed import accepts only bound records** (entry "A keyed import accepts only bound records").
+6. **Queries on an engine with a key never use the SQL pushdown** (entry "A keyed engine never uses the SQL pushdown for field queries").
 
 ### Breaking
 
@@ -1825,7 +1836,8 @@ Namespaces, batch ops, TTL, PRAGMAs, schema migration.
 ## [0.1.0] — 2026-05-03
 Initial release.
 
-[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/0.23.1...HEAD
+[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/0.24.0...HEAD
+[0.24.0]: https://github.com/nabbisen/localcache-rs/compare/0.23.1...0.24.0
 [0.23.1]: https://github.com/nabbisen/localcache-rs/compare/0.23.0...0.23.1
 [0.23.0]: https://github.com/nabbisen/localcache-rs/compare/0.22.2...0.23.0
 [0.22.2]: https://github.com/nabbisen/localcache-rs/compare/0.22.1...0.22.2
