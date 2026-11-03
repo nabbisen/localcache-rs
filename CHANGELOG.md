@@ -1802,7 +1802,8 @@ Namespaces, batch ops, TTL, PRAGMAs, schema migration.
 ## [0.1.0] — 2026-05-03
 Initial release.
 
-[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/0.23.0...HEAD
+[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/0.23.1...HEAD
+[0.23.1]: https://github.com/nabbisen/localcache-rs/compare/0.23.0...0.23.1
 [0.23.0]: https://github.com/nabbisen/localcache-rs/compare/0.22.2...0.23.0
 [0.22.2]: https://github.com/nabbisen/localcache-rs/compare/0.22.1...0.22.2
 [0.22.1]: https://github.com/nabbisen/localcache-rs/compare/0.22.0...0.22.1

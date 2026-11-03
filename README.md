@@ -50,7 +50,7 @@ Add to `Cargo.toml`:
 
 ```toml
 [dependencies]
-localcache = "0.23.0"
+localcache = "0.23.1"
 serde = { version = "1", features = ["derive"] }
 ```
 
