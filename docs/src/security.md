@@ -118,6 +118,7 @@ What it does **not** do:
   on drop; do not assume it is erased. Losing the key makes every encrypted entry permanently
   unreadable. There is no recovery.
 - A missing key is an error (`MissingEncryptionKey`), never a silent read of ciphertext.
+- `CacheOptions` derives `Debug`, so printing it with `{:?}` prints the encryption key (v0.23.0 and earlier). Do not log the options of an engine that has a key.
 - Authentication does not bind a payload to its path (see above).
 
 ## Decoding limits at a glance
