@@ -479,3 +479,105 @@ fn the_remedy_the_message_names_works() {
 fn canonical_from_record(r: &localcache::ExportRecord) -> PathBuf {
     PathBuf::from(&r.path)
 }
+
+// ---------------------------------------------------------------------------
+// Recovery: a rotation that fails because one entry cannot be opened
+// ---------------------------------------------------------------------------
+
+/// `rotate_encryption_key` is all-or-nothing, and its error names no entry (a
+/// stored path is never echoed into an error). The book's recovery: run
+/// `query().run_report()`, `remove` the entries it lists with an
+/// `EncryptionError`, rotate again. This is that sequence, end to end.
+#[test]
+fn a_rotation_that_fails_on_one_entry_is_recovered_with_run_report_and_remove() {
+    let f = Fixture::new();
+    // a third, plain entry, which the rotation has to seal as well
+    let plain = write_plain(&f, "plain.bin", vec![9, 9, 9]);
+    // swap: b's row now holds a's ciphertext, which does not open at b's path
+    let (pa, pb) = (canonical(&f.a), canonical(&f.b));
+    f.sql(&format!(
+        "UPDATE payloads SET \
+           content  = (SELECT p.content  FROM payloads p JOIN files f ON f.id = p.file_id WHERE f.path = '{pa}'), \
+           encoding = (SELECT p.encoding FROM payloads p JOIN files f ON f.id = p.file_id WHERE f.path = '{pa}') \
+         WHERE file_id = (SELECT id FROM files WHERE path = '{pb}')"
+    ));
+    let engine = f.engine();
+    let before = rows_of(&f);
+
+    // the rotation fails, whole, and changes nothing; the error names no path
+    let error = engine.rotate_encryption_key(&KEY).unwrap_err();
+    assert!(
+        matches!(error, LocalFileCacheError::EncryptionError(_)),
+        "{error:?}"
+    );
+    assert!(!error.to_string().contains("b.bin"), "{error}");
+    assert_eq!(
+        rows_of(&f),
+        before,
+        "a failed rotation changed the database"
+    );
+    assert!(matches!(
+        engine.get(&plain),
+        Err(LocalFileCacheError::UnsealedEntry)
+    ));
+
+    // run_report lists the entry, with its path and an EncryptionError; the
+    // unsealed entry is listed too, with UnsealedEntry, which needs nothing
+    let report = engine.query().run_report().unwrap();
+    assert_eq!(report.entries.len(), 1, "only a still reads");
+    let mut seen: Vec<(PathBuf, String)> = report
+        .skipped
+        .iter()
+        .map(|s| {
+            let kind = match s.error {
+                LocalFileCacheError::EncryptionError(_) => "EncryptionError",
+                LocalFileCacheError::UnsealedEntry => "UnsealedEntry",
+                _ => "other",
+            };
+            (s.path.clone(), kind.to_owned())
+        })
+        .collect();
+    seen.sort();
+    let mut expected = vec![
+        (PathBuf::from(&pb), "EncryptionError".to_owned()),
+        (PathBuf::from(canonical(&plain)), "UnsealedEntry".to_owned()),
+    ];
+    expected.sort();
+    assert_eq!(seen, expected);
+
+    // remove the entries listed with an EncryptionError, then rotate again
+    for (path, kind) in &seen {
+        if kind == "EncryptionError" {
+            assert!(engine.remove(path).unwrap());
+        }
+    }
+    assert_eq!(engine.rotate_encryption_key(&KEY).unwrap(), 2);
+    assert_eq!(engine.get(&f.a).unwrap().unwrap().payload, vec![1_u8, 1, 1]);
+    assert_eq!(
+        engine.get(&plain).unwrap().unwrap().payload,
+        vec![9_u8, 9, 9]
+    );
+    assert!(engine.get(&f.b).unwrap().is_none());
+
+    // and an engine without a key now gets MissingEncryptionKey for EVERY entry
+    // of the namespace, the formerly plain one included
+    let keyless: CacheEngine<Vec<u8>> = CacheEngine::builder().database(&f.db).build().unwrap();
+    for path in [&f.a, &plain] {
+        assert!(matches!(
+            keyless.get(path),
+            Err(LocalFileCacheError::MissingEncryptionKey)
+        ));
+    }
+}
+
+/// Every row of `payloads` as `(file_id, tag, content)`.
+fn rows_of(f: &Fixture) -> Vec<(i64, String, Vec<u8>)> {
+    let conn = Connection::open(&f.db).unwrap();
+    let mut stmt = conn
+        .prepare("SELECT file_id, encoding, content FROM payloads ORDER BY file_id")
+        .unwrap();
+    stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()
+}

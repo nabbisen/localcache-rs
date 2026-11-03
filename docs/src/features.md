@@ -130,7 +130,11 @@ page (1,000 rows or 8 MiB), not by the namespace. `new_key` may equal the curren
 the **upgrade** of a database written by v0.23 or earlier (call it once with the same key), and
 how encryption is switched on for a database written without a key (open with the key, rotate
 to it). It returns the number of entries sealed. The write-ahead log grows by about the size of
-the namespace's payloads while it runs, and a failure changes nothing.
+the namespace's payloads while it runs, and a failure changes nothing. Afterwards an engine without a key
+gets `MissingEncryptionKey` for every entry of the namespace, a formerly plain one included. If a rotation
+fails with `EncryptionError`, one entry could not be opened and the error does not name it: list it with
+`query().run_report()`, `remove` the entries listed with an `EncryptionError`, and rotate again (see
+[Migration](./migration.md#encryption-integrity-v0240)).
 
 > **Warning**: losing the encryption key makes all encrypted entries
 > permanently unreadable.

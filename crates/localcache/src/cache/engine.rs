@@ -943,8 +943,13 @@ where
     ///   `new_key` is not exactly 32 bytes.
     /// * [`LocalFileCacheError::EncryptionError`] — decryption or re-encryption
     ///   failed (the engine's key is not the one the entries were sealed
-    ///   under, or an entry is damaged). The engine keeps using the old key;
-    ///   nothing was written.
+    ///   under, or an entry is damaged, or was moved from another path). The
+    ///   engine keeps using the old key; nothing was written. The error does
+    ///   not name the entry (a stored path is never echoed into an error): run
+    ///   `query().run_report()` on this engine, whose `skipped` lists each
+    ///   entry it cannot read with its path and error, `remove` the ones
+    ///   listed with an `EncryptionError`, and rotate again. Entries listed
+    ///   with `UnsealedEntry` need nothing; the rotation seals them.
     /// * [`LocalFileCacheError::UnknownEncoding`] — an entry has a tag this
     ///   build cannot decode. Nothing was written.
     #[cfg(feature = "encryption")]
