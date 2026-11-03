@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| Status | Proposed |
+| Status | Accepted (owner, 2026-11-03), all three decisions as recommended |
 | Feature | `encryption` |
 | Touches | `serialization.rs` (seal and open, the tags), `cache/engine.rs` (`rotate_encryption_key`, the key cell), `cache/engine/portable.rs` (import), `db/repository.rs` and `db/repository/candidates.rs` (every reader of `payloads.content`), `cache/options.rs` and `cache/builder.rs` (the key's `Debug` and ownership), `error.rs` (one variant), `Cargo.toml` (`zeroize`), `docs/src/` (security, migration, architecture, cookbook), the compat fixtures |
 | Release | **v0.23.1** (a patch: R4, R5 and the announcement) then **v0.24.0** (a minor release: R1 to R3, breaking). No schema change |
@@ -152,13 +152,14 @@ Each behaviour change has a test that **fails on the v0.23.0 tree** first.
 
 v0.23.1: none needed. v0.24.0: for encrypted entries, a purge or an export from before; a revert of the code leaves bound entries unreadable to older versions (`UnknownEncoding`). The CHANGELOG says so.
 
-## Decisions requested
+## Decisions
 
-1. **Scope the wire-format guarantee** as in Compatibility, and amend `migration.md` in place.
-2. **Deliver in two releases:** v0.23.1 (R4, R5 and the announcement), then v0.24.0 (R1 to R3). Not one release, because of the announcement rule and because two independent risks verified separately are easier to trust.
-3. **The namespace is not bound** (R1), with "one key per trust domain" in the book.
+Accepted by the owner on 2026-11-03 with the recommended answers:
+1. The wire-format guarantee is scoped as in Compatibility, and `docs/src/migration.md` is amended in place (at v0.24.0, when the behaviour ships; v0.23.1 announces it).
+2. Delivery in two releases: v0.23.1 (R4, R5 and the announcement), then v0.24.0 (R1 to R3).
+3. The namespace is not bound (R1), with "one key per trust domain" in the book.
 
-Handoffs: written after acceptance, starting with step 0.
+Handoffs: `../handoffs/029-encryption-integrity/` (step 0 first; the slices after the architect's review of step 0).
 
 ## Open questions
 

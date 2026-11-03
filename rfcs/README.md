@@ -79,12 +79,11 @@ The "Background" section is optional in both templates.
 | [026](./accepted/026-use-order-and-one-path-index.md) | A True Use Order for Eviction, and One Path Index (Schema v6) | v0.23.0 (Q12 = the index and migration, Q13 = the use order); announced by v0.22.2 |
 | [027](./accepted/027-release-engineering-on-standard-tools.md) | Release Engineering on Standard Tools (amends RFC 009) | Phase 24 Q9 (Q9a, Q9b, Q9c); Q9c before the v0.22.0 release candidate |
 | [028](./accepted/028-owned-payload-codec.md) | An Owned, Bounds-Checked Codec for the Legacy Payload Format | Phase 24 Q11 (v0.22.1) |
+| [029](./accepted/029-encryption-integrity.md) | Encryption Integrity: Entries Bound to Their Row, a Key That Does Not Leak | v0.23.1 (R4, R5, announcement), then v0.24.0 (R1 to R3) |
 
 ### Proposed
 
-| RFC | Title | Release |
-|-----|-------|---------|
-| [029](./proposed/029-encryption-integrity.md) | Encryption Integrity: Entries Bound to Their Row, a Key That Does Not Leak | v0.23.1 (R4, R5, announcement), then v0.24.0 (R1 to R3) |
+*(none)*
 
 ### Archive
 
