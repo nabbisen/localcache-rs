@@ -3,7 +3,7 @@
 The bytes the legacy payload format (RFC 008: the `bincode` 1 wire format, as
 `bincode` 2 writes it with `config::legacy()`) produces for a fixed set of
 values. They pin the owned codec in
-`src/serialization/payload_codec` to the format that every stored payload in
+`src/payload_codec` of `localcache-format` to the format that every stored payload in
 every released version already has.
 
 | File | What it is |
@@ -53,14 +53,14 @@ publish = false
 bincode = { version = "=2.0.1", features = ["serde"] }
 serde   = { version = "1", features = ["derive"] }
 TOML
-cp <repository>/crates/localcache/tests/fixtures/payload_codec/zoo.rs      src/zoo.rs
-cp <repository>/crates/localcache/tests/fixtures/payload_codec/generate.rs src/main.rs
+cp <repository>/crates/localcache-format/tests/fixtures/payload_codec/zoo.rs      src/zoo.rs
+cp <repository>/crates/localcache-format/tests/fixtures/payload_codec/generate.rs src/main.rs
 cargo run --release > vectors.txt
 ```
 
 ## How the test uses them
 
-`src/serialization/payload_codec/tests.rs` compiles `zoo.rs` against the owned
+`src/payload_codec/tests.rs` compiles `zoo.rs` against the owned
 codec and, for every case, asserts that
 
 1. the value encodes to exactly the vector's bytes;

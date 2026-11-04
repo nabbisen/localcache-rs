@@ -151,7 +151,7 @@ where
         // `base` holds the key `Vec` the clones were made from: erase it on
         // success and on error alike.
         #[cfg(feature = "encryption")]
-        crate::key::erase(&mut base.encryption_key);
+        localcache_format::erase(&mut base.encryption_key);
         opened?;
         Ok(Self {
             slots: Arc::new(slots),

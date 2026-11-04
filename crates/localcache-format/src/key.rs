@@ -1,4 +1,4 @@
-//! The crate's own type for the encryption key (RFC 029 R5, v0.23.1).
+//! The type for the encryption key (RFC 029 R5, v0.23.1).
 //!
 //! `Key` is the only form in which the crate holds a key for the life of an
 //! engine. It is not `Copy` and not `Clone`, erases its bytes when it is
@@ -15,11 +15,11 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 ///
 /// Not `Clone`: no use in the crate needs a second copy (the engine borrows
 /// it for each call, and a rotation moves the new key into the engine).
-pub(crate) struct Key([u8; 32]);
+pub struct Key([u8; 32]);
 
 impl Key {
     /// Copy `bytes` into a new key, or `None` when they are not exactly 32.
-    pub(crate) fn from_slice(bytes: &[u8]) -> Option<Self> {
+    pub fn from_slice(bytes: &[u8]) -> Option<Self> {
         if bytes.len() != 32 {
             return None;
         }
@@ -56,19 +56,21 @@ impl std::fmt::Debug for Key {
 
 /// Owns a key `Vec<u8>` taken out of the options and erases it, whole buffer
 /// and length, when it is dropped: on every way out of `open`, success or error.
-pub(crate) struct ErasedOnDrop(Option<Vec<u8>>);
+pub struct ErasedVec(Option<Vec<u8>>);
 
-impl ErasedOnDrop {
-    pub(crate) fn new(bytes: Option<Vec<u8>>) -> Self {
+impl ErasedVec {
+    /// Take ownership of `bytes`; they are erased when this value is dropped.
+    pub fn new(bytes: Option<Vec<u8>>) -> Self {
         Self(bytes)
     }
 
-    pub(crate) fn as_deref(&self) -> Option<&[u8]> {
+    /// The bytes, by reference.
+    pub fn as_deref(&self) -> Option<&[u8]> {
         self.0.as_deref()
     }
 }
 
-impl Drop for ErasedOnDrop {
+impl Drop for ErasedVec {
     fn drop(&mut self) {
         erase(&mut self.0);
     }
@@ -78,7 +80,7 @@ impl Drop for ErasedOnDrop {
 ///
 /// `Vec<u8>::zeroize` overwrites the elements and the spare capacity, then
 /// clears the vector (documented behaviour of the `zeroize` crate).
-pub(crate) fn erase(bytes: &mut Option<Vec<u8>>) {
+pub fn erase(bytes: &mut Option<Vec<u8>>) {
     if let Some(mut vec) = bytes.take() {
         vec.zeroize();
     }
@@ -141,9 +143,9 @@ mod tests {
     /// `unsafe`, so freed memory is not read back).
     #[test]
     fn the_guard_hands_out_the_bytes() {
-        let guard = ErasedOnDrop::new(Some(BYTES.to_vec()));
+        let guard = ErasedVec::new(Some(BYTES.to_vec()));
         assert_eq!(guard.as_deref(), Some(&BYTES[..]));
         drop(guard);
-        assert!(ErasedOnDrop::new(None).as_deref().is_none());
+        assert!(ErasedVec::new(None).as_deref().is_none());
     }
 }

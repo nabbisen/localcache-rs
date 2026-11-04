@@ -196,8 +196,8 @@ where
             let unbound = rows
                 .iter()
                 .filter(|row| {
-                    crate::serialization::parse_tag(&row.encoding).1
-                        != crate::serialization::Sealing::Bound
+                    localcache_format::seal_state(&row.encoding)
+                        != localcache_format::SealState::Bound
                 })
                 .count();
             if unbound > 0 {

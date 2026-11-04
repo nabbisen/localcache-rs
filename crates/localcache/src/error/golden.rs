@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use crate::LocalFileCacheError as E;
 use crate::db::{DatabaseError, StorageError};
 use crate::error::Lift;
-use crate::serialization::FormatError;
+use localcache_format::FormatError;
 
 /// variant, feature gate (`-` for none; `a|b` is any of), `Display`.
 const GOLDEN: &str = "\

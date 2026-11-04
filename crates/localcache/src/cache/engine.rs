@@ -24,7 +24,7 @@ use crate::error::{
     ArgumentName, ConfigOption, LocalFileCacheError, invalid_argument, invalid_configuration,
 };
 use crate::path::{normalize_path, path_to_str, resolve_path_key};
-use crate::serialization::{decode_payload, encode_payload};
+use localcache_format::PayloadFormat;
 
 /// The most rows one page of `rotate_encryption_key` holds (RFC 029 R3).
 ///
@@ -168,6 +168,7 @@ pub struct CacheEngine<T> {
     pub(crate) ttl: Option<Duration>,
     pub(crate) read_only: bool,
     pub(crate) payload_version: u32,
+    #[cfg(feature = "compression")]
     pub(crate) compress: bool,
     /// RFC 025 Amendment 2: the bound on a compressed payload's decompressed
     /// size, enforced on read and on write.
@@ -180,7 +181,7 @@ pub struct CacheEngine<T> {
     /// RFC 029 R5: the crate's only long-lived copy of the key. Borrowed for
     /// a call, never copied out; erased when replaced or dropped. A borrow is
     /// never held across a database call.
-    pub(crate) encryption_key: std::cell::RefCell<Option<crate::key::Key>>,
+    pub(crate) encryption_key: std::cell::RefCell<Option<localcache_format::Key>>,
     _phantom: PhantomData<T>,
 }
 
@@ -209,7 +210,7 @@ where
         #[cfg(feature = "encryption")]
         let mut options = options;
         #[cfg(feature = "encryption")]
-        let key_bytes = crate::key::ErasedOnDrop::new(options.encryption_key.take());
+        let key_bytes = localcache_format::ErasedVec::new(options.encryption_key.take());
         #[cfg(feature = "encryption")]
         let encryption_key = check_configuration(&options, key_bytes.as_deref(), is_memory)?;
         #[cfg(feature = "encryption")]
@@ -250,17 +251,6 @@ where
         })
         .lift()?;
 
-        let compress = {
-            #[cfg(feature = "compression")]
-            {
-                options.compress_payloads
-            }
-            #[cfg(not(feature = "compression"))]
-            {
-                false
-            }
-        };
-
         Ok(Self {
             store,
             #[cfg(feature = "watching")]
@@ -277,7 +267,8 @@ where
             ttl: options.ttl,
             read_only,
             payload_version: options.payload_version,
-            compress,
+            #[cfg(feature = "compression")]
+            compress: options.compress_payloads,
             #[cfg(feature = "compression")]
             max_decompressed_bytes: options.max_decompressed_bytes,
             max_entries: options.max_entries,
@@ -904,7 +895,7 @@ where
             return Err(LocalFileCacheError::MissingEncryptionKey);
         }
 
-        let new_key_arr = crate::key::Key::from_slice(new_key).ok_or_else(|| {
+        let new_key_arr = localcache_format::Key::from_slice(new_key).ok_or_else(|| {
             crate::error::invalid_argument(
                 crate::error::ArgumentName::NewKey,
                 format!("must be exactly 32 bytes, got {}", new_key.len()),
@@ -949,15 +940,15 @@ where
                     .as_ref()
                     .ok_or(LocalFileCacheError::MissingEncryptionKey)?;
                 for row in &page {
-                    let (content, tag) = crate::serialization::reseal(
+                    let resealed = localcache_format::reseal(
                         &row.content,
                         &row.encoding,
                         &row.path,
-                        old_key.as_bytes(),
-                        new_key_arr.as_bytes(),
+                        old_key,
+                        &new_key_arr,
                     )
                     .lift()?;
-                    updates.push((row.file_id, content, tag));
+                    updates.push((row.file_id, resealed.content, resealed.tag));
                 }
             }
 
@@ -1379,32 +1370,39 @@ where
     ) -> Result<(Vec<u8>, &'static str), LocalFileCacheError> {
         #[cfg(feature = "encryption")]
         let guard = self.encryption_key.borrow();
-        encode_payload(
-            payload,
-            path,
-            self.compress,
-            self.codec,
-            #[cfg(feature = "compression")]
-            self.max_decompressed_bytes,
-            #[cfg(feature = "encryption")]
-            guard.as_ref().map(crate::key::Key::as_bytes),
-        )
-        .lift()
+        self.payload_format()
+            .encode(
+                payload,
+                path,
+                #[cfg(feature = "encryption")]
+                guard.as_ref(),
+            )
+            .map(|encoded| (encoded.bytes, encoded.tag))
+            .lift()
+    }
+
+    /// The payload format this engine writes and reads with.
+    fn payload_format(&self) -> PayloadFormat {
+        let format = PayloadFormat::new(self.codec);
+        #[cfg(feature = "compression")]
+        let format = format
+            .compressed(self.compress)
+            .max_decompressed_bytes(self.max_decompressed_bytes);
+        format
     }
 
     fn decode(&self, path: &str, bytes: &[u8], encoding: &str) -> Result<T, LocalFileCacheError> {
         #[cfg(feature = "encryption")]
         let guard = self.encryption_key.borrow();
-        decode_payload(
-            bytes,
-            encoding,
-            path,
-            #[cfg(feature = "compression")]
-            self.max_decompressed_bytes,
-            #[cfg(feature = "encryption")]
-            guard.as_ref().map(crate::key::Key::as_bytes),
-        )
-        .lift()
+        self.payload_format()
+            .decode(
+                bytes,
+                encoding,
+                path,
+                #[cfg(feature = "encryption")]
+                guard.as_ref(),
+            )
+            .lift()
     }
 
     /// Borrow the payload-type-independent parts of this engine.
@@ -1443,7 +1441,7 @@ pub(crate) struct EngineCore<'e> {
     #[cfg(feature = "compression")]
     pub(crate) max_decompressed_bytes: usize,
     #[cfg(feature = "encryption")]
-    pub(crate) encryption_key: &'e std::cell::RefCell<Option<crate::key::Key>>,
+    pub(crate) encryption_key: &'e std::cell::RefCell<Option<localcache_format::Key>>,
 }
 
 impl EngineCore<'_> {
@@ -1477,16 +1475,19 @@ where
 {
     #[cfg(feature = "encryption")]
     let guard = core.encryption_key.borrow();
-    decode_payload(
-        bytes,
-        encoding,
-        path,
-        #[cfg(feature = "compression")]
-        core.max_decompressed_bytes,
-        #[cfg(feature = "encryption")]
-        guard.as_ref().map(crate::key::Key::as_bytes),
-    )
-    .lift()
+    // Only the bound and the tag matter on a read; the codec is read from the tag.
+    let format = PayloadFormat::new(localcache_format::Codec::Bincode);
+    #[cfg(feature = "compression")]
+    let format = format.max_decompressed_bytes(core.max_decompressed_bytes);
+    format
+        .decode(
+            bytes,
+            encoding,
+            path,
+            #[cfg(feature = "encryption")]
+            guard.as_ref(),
+        )
+        .lift()
 }
 
 // ---------------------------------------------------------------------------
@@ -1525,7 +1526,7 @@ pub(crate) fn is_expired(updated_at: i64, ttl: Option<Duration>) -> bool {
 
 /// What [`check_configuration`] derives from the options and `open` keeps.
 #[cfg(feature = "encryption")]
-type CheckedConfiguration = Option<crate::key::Key>;
+type CheckedConfiguration = Option<localcache_format::Key>;
 #[cfg(not(feature = "encryption"))]
 type CheckedConfiguration = ();
 
@@ -1574,7 +1575,7 @@ fn check_configuration(
         match key_bytes {
             None => Ok(None),
             Some(k) => {
-                let key = crate::key::Key::from_slice(k).ok_or_else(|| {
+                let key = localcache_format::Key::from_slice(k).ok_or_else(|| {
                     invalid_configuration(
                         ConfigOption::EncryptionKey,
                         format!("must be exactly 32 bytes, got {}", k.len()),

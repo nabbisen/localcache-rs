@@ -10,7 +10,7 @@ use tempfile::TempDir;
 
 use super::*;
 use crate::CacheEngine;
-use crate::serialization::serialize_bincode;
+use localcache_format::{Codec, PayloadFormat};
 
 /// The key of the committed v0.23.1 fixture (`tests/fixtures/README.md`): its
 /// public bytes are `0x40 + i`, and the rows it sealed carry no path binding.
@@ -253,7 +253,12 @@ fn the_real_page_size_has_no_boundary_error() {
         let records: Vec<ExportRecord> = (0..n)
             .map(|i| ExportRecord {
                 path: format!("/imported/{i:05}"),
-                payload_b64: STANDARD.encode(serialize_bincode(&payload(i)).unwrap()),
+                payload_b64: STANDARD.encode(
+                    PayloadFormat::new(Codec::Bincode)
+                        .encode(&payload(i), "", None)
+                        .unwrap()
+                        .bytes,
+                ),
                 encoding: "raw".to_owned(),
                 mtime: 1,
                 file_size: 1,

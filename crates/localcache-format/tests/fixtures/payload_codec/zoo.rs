@@ -6,7 +6,7 @@
 //!
 //! * `generate.rs` runs it against `bincode` 2.0.1 once, offline, to write
 //!   `vectors.txt` (see `README.md`);
-//! * `src/serialization/payload_codec/tests.rs` runs it against the owned codec
+//! * `src/payload_codec/tests.rs` runs it against the owned codec
 //!   and compares with those vectors.
 //!
 //! It depends on `serde` (with `derive`) and `std` only. A value's identity is

@@ -5,9 +5,11 @@ use std::time::Duration;
 
 pub use crate::db::{JournalMode, SynchronousMode};
 pub use crate::detection::ChangeDetectionMode;
-pub use crate::serialization::Codec;
+#[doc(inline)]
+pub use localcache_format::Codec;
 #[cfg(feature = "compression")]
-pub use crate::serialization::DEFAULT_MAX_DECOMPRESSED_BYTES;
+#[doc(inline)]
+pub use localcache_format::DEFAULT_MAX_DECOMPRESSED_BYTES;
 
 // ---------------------------------------------------------------------------
 // ScanOptions

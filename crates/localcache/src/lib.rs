@@ -26,12 +26,9 @@ mod cache;
 mod db;
 mod detection;
 mod error;
-#[cfg(feature = "encryption")]
-mod key;
 mod path;
 mod pool;
 mod read_pool;
-mod serialization;
 
 #[cfg(any(feature = "async", feature = "async-std", feature = "smol"))]
 pub use cache::async_engine::AsyncCacheEngine;

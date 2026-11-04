@@ -7,10 +7,8 @@
 //!
 //! | layer | may use |
 //! |---|---|
-//! | `key` | nothing of the crate |
 //! | `db` (schema, repository, indexes, the values it stores, its `StorageError`) | nothing of the crate |
-//! | `serialization` (codec, compression, sealing, its `FormatError`) | `key` |
-//! | `error` (the public `LocalFileCacheError` and the crate-private lift from the two layer errors) | `db`, `serialization` |
+//! | `error` (the public `LocalFileCacheError` and the crate-private lift from `StorageError` and `FormatError`) | `db` |
 //! | `path` | `error` |
 //! | `detection` (freshness) | `error`, `db` (it compares a stored `FileMetadata`) |
 //! | `cache` (engine, query, options, builder, entry, glob) | everything above |
@@ -32,9 +30,13 @@
 //! generic parameter. Those need the compiler, which is what the cuts of
 //! RFC 030 would add.
 //!
-//! The cuts of RFC 030 turn the rows `db` and `serialization` into crates; this
-//! test is what makes that cut a move and not a redesign. It reads the source
-//! text, so it needs no feature and runs in every row.
+//! The payload format (the codec, compression, sealing, `Key`, `Codec` and
+//! `FormatError`) is the crate `localcache-format` since RFC 030 slice 4: the
+//! compiler enforces that it names nothing of this crate, so the rows
+//! `serialization` and `key` of the earlier table are gone from this test. What
+//! remains is what the compiler cannot see inside one crate. The cut of `db`
+//! (decision point 2) would turn that row into a crate the same way. The test
+//! reads the source text, so it needs no feature and runs in every row.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -45,28 +47,12 @@ const CORE: &str = "cache";
 
 /// layer -> layers it may name (a layer may always name itself).
 const ALLOWED: &[(&str, &[&str])] = &[
-    ("key", &[]),
     ("db", &[]),
-    ("serialization", &["key"]),
-    ("error", &["db", "serialization"]),
+    ("error", &["db"]),
     ("path", &["error"]),
     ("detection", &["error", "db"]),
-    (
-        CORE,
-        &["error", "key", "path", "db", "serialization", "detection"],
-    ),
-    (
-        ADAPTER,
-        &[
-            "error",
-            "key",
-            "path",
-            "db",
-            "serialization",
-            "detection",
-            CORE,
-        ],
-    ),
+    (CORE, &["error", "path", "db", "detection"]),
+    (ADAPTER, &["error", "path", "db", "detection", CORE]),
 ];
 
 /// Upward references that exist today and are named, with the reason, instead
@@ -113,10 +99,8 @@ fn layer_of_path(relative: &Path) -> Option<&'static str> {
     Some(match first {
         "lib" => return None,
         "error" => "error",
-        "key" => "key",
         "path" => "path",
         "db" => "db",
-        "serialization" => "serialization",
         "detection" => "detection",
         "pool" | "read_pool" => ADAPTER,
         "cache" => match parts.get(1).map(|p| p.trim_end_matches(".rs")) {
@@ -133,10 +117,8 @@ fn layer_of_reference(path: &str, root_names: &BTreeMap<String, String>) -> Opti
     let first = segments.next()?;
     match first {
         "error" => Some("error"),
-        "key" => Some("key"),
         "path" => Some("path"),
         "db" => Some("db"),
-        "serialization" => Some("serialization"),
         "detection" => Some("detection"),
         "pool" | "read_pool" => Some(ADAPTER),
         "cache" => match segments.next() {
@@ -391,10 +373,8 @@ fn lower_layers_do_not_escape_by_relative_paths() {
     let roots = root_reexports();
     let root_modules = [
         "error",
-        "key",
         "path",
         "db",
-        "serialization",
         "detection",
         "cache",
         "pool",

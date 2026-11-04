@@ -301,7 +301,7 @@ impl<T> Lift<T> for Result<T, crate::db::StorageError> {
     }
 }
 
-impl<T> Lift<T> for Result<T, crate::serialization::FormatError> {
+impl<T> Lift<T> for Result<T, localcache_format::FormatError> {
     fn lift(self) -> Result<T, LocalFileCacheError> {
         self.map_err(LocalFileCacheError::from_format)
     }
@@ -319,8 +319,8 @@ impl LocalFileCacheError {
         }
     }
 
-    pub(crate) fn from_format(error: crate::serialization::FormatError) -> Self {
-        use crate::serialization::FormatError as F;
+    pub(crate) fn from_format(error: localcache_format::FormatError) -> Self {
+        use localcache_format::FormatError as F;
         match error {
             F::Io(e) => Self::Io(e),
             F::Serialization(m) => Self::Serialization(m),

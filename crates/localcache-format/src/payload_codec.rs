@@ -90,49 +90,70 @@ pub(super) const DEPTH_LIMIT: usize = 128;
 const MESSAGE_LIMIT: usize = 200;
 
 /// Why a payload could not be written or read.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub(super) enum Error {
     /// A message from a `Serialize` or `Deserialize` implementation.
-    #[error("{0}")]
     Message(String),
     /// The input ended inside a value, or a length claims more than remains.
-    #[error("unexpected end of input: {needed} byte(s) needed, {remaining} left")]
     UnexpectedEnd { needed: usize, remaining: usize },
     /// A sequence or map claims more elements than there are bytes left, or the
     /// counts claimed in this decode together exceed the input's length.
-    #[error("a count of {claimed} elements exceeds the {remaining} byte(s) left")]
     CountExceedsInput { claimed: u64, remaining: usize },
     /// A length that does not fit this platform's `usize`.
-    #[error("a length of {0} does not fit in usize")]
     LengthOverflow(u64),
     /// A `bool` byte that is neither `0` nor `1`.
-    #[error("invalid bool value {0}")]
     InvalidBool(u8),
     /// An `Option` tag that is neither `0` nor `1`.
-    #[error("invalid Option tag {0}")]
     InvalidOptionTag(u8),
     /// Bytes that are not one UTF-8 encoded `char`.
-    #[error("invalid char encoding")]
     InvalidChar,
     /// A string whose bytes are not UTF-8.
-    #[error("invalid UTF-8 in a string")]
     InvalidUtf8,
     /// More than [`DEPTH_LIMIT`] nested values.
-    #[error("nesting is deeper than {DEPTH_LIMIT} levels")]
     TooDeep,
     /// A call that needs a self-describing format.
-    #[error("{0} is not supported: the payload format is not self-describing")]
     Unsupported(&'static str),
     /// A sequence or map whose length is not known when it starts.
-    #[error("a sequence or map must have a known length")]
     UnknownLength,
     /// A sequence or map that wrote a different number of elements than declared.
-    #[error("a sequence or map declared {declared} element(s) but wrote {written}")]
     LengthMismatch { declared: usize, written: usize },
     /// A length that does not fit in 64 bits.
-    #[error("a length does not fit in 64 bits")]
     LengthTooLarge,
 }
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Message(message) => f.write_str(message),
+            Self::UnexpectedEnd { needed, remaining } => write!(
+                f,
+                "unexpected end of input: {needed} byte(s) needed, {remaining} left"
+            ),
+            Self::CountExceedsInput { claimed, remaining } => write!(
+                f,
+                "a count of {claimed} elements exceeds the {remaining} byte(s) left"
+            ),
+            Self::LengthOverflow(length) => write!(f, "a length of {length} does not fit in usize"),
+            Self::InvalidBool(value) => write!(f, "invalid bool value {value}"),
+            Self::InvalidOptionTag(value) => write!(f, "invalid Option tag {value}"),
+            Self::InvalidChar => f.write_str("invalid char encoding"),
+            Self::InvalidUtf8 => f.write_str("invalid UTF-8 in a string"),
+            Self::TooDeep => write!(f, "nesting is deeper than {DEPTH_LIMIT} levels"),
+            Self::Unsupported(what) => write!(
+                f,
+                "{what} is not supported: the payload format is not self-describing"
+            ),
+            Self::UnknownLength => f.write_str("a sequence or map must have a known length"),
+            Self::LengthMismatch { declared, written } => write!(
+                f,
+                "a sequence or map declared {declared} element(s) but wrote {written}"
+            ),
+            Self::LengthTooLarge => f.write_str("a length does not fit in 64 bits"),
+        }
+    }
+}
+
+impl std::error::Error for Error {}
 
 /// Keep at most [`MESSAGE_LIMIT`] bytes of `text`, on a character boundary.
 fn bounded(mut text: String) -> String {

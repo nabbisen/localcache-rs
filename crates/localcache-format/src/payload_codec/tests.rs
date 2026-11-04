@@ -9,10 +9,10 @@ use serde::{Deserialize, Serialize};
 
 use super::{DEPTH_LIMIT, Error, from_slice, to_vec};
 
-#[path = "../../../tests/fixtures/payload_codec/zoo.rs"]
+#[path = "../../tests/fixtures/payload_codec/zoo.rs"]
 mod zoo;
 
-const VECTORS: &str = include_str!("../../../tests/fixtures/payload_codec/vectors.txt");
+const VECTORS: &str = include_str!("../../tests/fixtures/payload_codec/vectors.txt");
 
 struct Owned;
 

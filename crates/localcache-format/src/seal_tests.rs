@@ -41,18 +41,18 @@ impl Rng {
 #[test]
 fn every_tag_of_the_table_parses_one_way() {
     let table = [
-        ("raw", Sealing::None, "raw"),
-        ("zstd", Sealing::None, "zstd"),
-        ("json", Sealing::None, "json"),
-        ("json-zstd", Sealing::None, "json-zstd"),
-        ("raw-aes256gcm", Sealing::Legacy, "raw"),
-        ("zstd-aes256gcm", Sealing::Legacy, "zstd"),
-        ("json-aes256gcm", Sealing::Legacy, "json"),
-        ("json-zstd-aes256gcm", Sealing::Legacy, "json-zstd"),
-        ("raw-aes256gcm-bound", Sealing::Bound, "raw"),
-        ("zstd-aes256gcm-bound", Sealing::Bound, "zstd"),
-        ("json-aes256gcm-bound", Sealing::Bound, "json"),
-        ("json-zstd-aes256gcm-bound", Sealing::Bound, "json-zstd"),
+        ("raw", SealState::Plain, "raw"),
+        ("zstd", SealState::Plain, "zstd"),
+        ("json", SealState::Plain, "json"),
+        ("json-zstd", SealState::Plain, "json-zstd"),
+        ("raw-aes256gcm", SealState::Unbound, "raw"),
+        ("zstd-aes256gcm", SealState::Unbound, "zstd"),
+        ("json-aes256gcm", SealState::Unbound, "json"),
+        ("json-zstd-aes256gcm", SealState::Unbound, "json-zstd"),
+        ("raw-aes256gcm-bound", SealState::Bound, "raw"),
+        ("zstd-aes256gcm-bound", SealState::Bound, "zstd"),
+        ("json-aes256gcm-bound", SealState::Bound, "json"),
+        ("json-zstd-aes256gcm-bound", SealState::Bound, "json-zstd"),
     ];
     for (tag, sealing, base) in table {
         assert_eq!(parse_tag(tag), (base, sealing), "{tag}");
@@ -77,17 +77,17 @@ fn tags_are_matched_exactly_and_case_sensitively() {
         "raw-aes256gcmbound",
         "-bound",
     ] {
-        assert_eq!(parse_tag(tag), (tag, Sealing::None), "{tag:?}");
+        assert_eq!(parse_tag(tag), (tag, SealState::Plain), "{tag:?}");
     }
     // A tag that nests the suffixes is the outer one, with an unknown base.
     assert_eq!(
         parse_tag("raw-aes256gcm-bound-aes256gcm"),
-        ("raw-aes256gcm-bound", Sealing::Legacy)
+        ("raw-aes256gcm-bound", SealState::Unbound)
     );
     assert!(!is_known_base("raw-aes256gcm-bound"));
     assert_eq!(
         parse_tag("raw-aes256gcm-aes256gcm-bound"),
-        ("raw-aes256gcm", Sealing::Bound)
+        ("raw-aes256gcm", SealState::Bound)
     );
     assert!(!is_known_base("raw-aes256gcm"));
 }
@@ -299,6 +299,10 @@ fn reseal_takes_a_payload_from_any_state_to_bound_under_the_new_key() {
     let old = [0x11_u8; 32];
     let new = [0x22_u8; 32];
     let path = "/data/a.txt";
+    let (old_key, new_key) = (
+        Key::from_slice(&old).unwrap(),
+        Key::from_slice(&new).unwrap(),
+    );
     let plain = serialize_bincode(&vec![1_u8, 2, 3]).unwrap();
 
     let legacy = encrypt_bytes(&plain, &old, &[]).unwrap();
@@ -308,7 +312,8 @@ fn reseal_takes_a_payload_from_any_state_to_bound_under_the_new_key() {
         (legacy, "raw-aes256gcm"),
         (bound, "raw-aes256gcm-bound"),
     ] {
-        let (sealed, new_tag) = reseal(&content, tag, path, &old, &new).unwrap();
+        let resealed = reseal(&content, tag, path, &old_key, &new_key).unwrap();
+        let (sealed, new_tag) = (resealed.content, resealed.tag);
         assert_eq!(new_tag, "raw-aes256gcm-bound", "from {tag}");
         let back = decrypt_bytes(&sealed, &new, &associated_data(new_tag, path)).unwrap();
         assert_eq!(back, plain, "from {tag}");
@@ -316,14 +321,23 @@ fn reseal_takes_a_payload_from_any_state_to_bound_under_the_new_key() {
 
     // a bound payload resealed for another path is refused
     let bound = encrypt_bytes(&plain, &old, &associated_data("raw-aes256gcm-bound", path)).unwrap();
-    assert!(reseal(&bound, "raw-aes256gcm-bound", "/data/b.txt", &old, &new).is_err());
+    assert!(
+        reseal(
+            &bound,
+            "raw-aes256gcm-bound",
+            "/data/b.txt",
+            &old_key,
+            &new_key
+        )
+        .is_err()
+    );
     // a tag this build cannot decode
     assert!(matches!(
-        reseal(&plain, "bogus", path, &old, &new),
+        reseal(&plain, "bogus", path, &old_key, &new_key),
         Err(FormatError::UnknownEncoding(_))
     ));
     assert!(matches!(
-        reseal(&plain, "bogus-aes256gcm-bound", path, &old, &new),
+        reseal(&plain, "bogus-aes256gcm-bound", path, &old_key, &new_key),
         Err(FormatError::UnknownEncoding(_))
     ));
 }

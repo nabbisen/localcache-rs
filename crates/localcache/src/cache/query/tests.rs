@@ -17,7 +17,7 @@ use super::DECODE_CALLS;
 use crate::cache::engine::CacheEngine;
 use crate::cache::options::Codec;
 use crate::cache::query::{SortKey, SortOrder};
-use crate::serialization::encode_payload;
+use localcache_format::PayloadFormat;
 
 fn engine() -> CacheEngine<Value> {
     CacheEngine::builder()
@@ -226,17 +226,7 @@ fn mixed_encoding_namespace_with_field_predicate_matches_all_decode_path() {
     // uniform-`json` precondition must see this and fall through to tier 3
     // rather than silently dropping the row SQL cannot evaluate.
     let value = Scored { score: 7.0 };
-    let (bytes, tag) = encode_payload(
-        &value,
-        "/p",
-        true,
-        Codec::Bincode,
-        #[cfg(feature = "compression")]
-        crate::DEFAULT_MAX_DECOMPRESSED_BYTES,
-        #[cfg(feature = "encryption")]
-        None,
-    )
-    .unwrap();
+    let (bytes, tag) = bincode_row(&value);
     assert_ne!(tag, "json", "the whole point is a non-json row");
     let id = file_id(&engine, &p_other_high);
     engine
@@ -544,17 +534,7 @@ fn offset_counts_only_successfully_decoded_rows_tier3() {
 
     // Force tier 3: re-encode one good row as bincode, same as the
     // mixed-encoding test.
-    let (bytes, tag) = encode_payload(
-        &Scored { score: 5.0 },
-        "/p",
-        true,
-        Codec::Bincode,
-        #[cfg(feature = "compression")]
-        crate::DEFAULT_MAX_DECOMPRESSED_BYTES,
-        #[cfg(feature = "encryption")]
-        None,
-    )
-    .unwrap();
+    let (bytes, tag) = bincode_row(&Scored { score: 5.0 });
     assert_ne!(tag, "json", "the whole point is a non-json row");
     let c_id = file_id(&engine, &p_c);
     engine
@@ -1041,4 +1021,21 @@ fn a_files_table_in_temp_or_an_attached_database_is_never_queried() {
         "query read a non-main collision row"
     );
     engine.query().dry_run().unwrap();
+}
+
+/// A payload encoded as bincode (compressed when the `compression` feature is
+/// on), the way a namespace written with another setting would hold it.
+fn bincode_row<T: Serialize>(value: &T) -> (Vec<u8>, &'static str) {
+    let format = PayloadFormat::new(Codec::Bincode);
+    #[cfg(feature = "compression")]
+    let format = format.compressed(true);
+    let encoded = format
+        .encode(
+            value,
+            "/p",
+            #[cfg(feature = "encryption")]
+            None,
+        )
+        .unwrap();
+    (encoded.bytes, encoded.tag)
 }

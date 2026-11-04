@@ -31,12 +31,12 @@ async-std       = ["dep:async-std"]
 ## See `async-std` for the priority note.
 smol            = ["dep:smol"]
 ## Enables transparent zstd compression of stored payloads.
-compression     = ["dep:zstd"]
+compression     = ["localcache-format/compression"]
 ## Enables the `Json` codec variant (serde_json serialization) and payload
 ## field queries in `QueryBuilder`.
-json            = ["dep:serde_json"]
+json            = ["dep:serde_json", "localcache-format/json"]
 ## Enables AES-256-GCM encryption of stored payloads.
-encryption      = ["dep:aes-gcm", "dep:zeroize"]
+encryption      = ["localcache-format/encryption"]
 ## Enables `tracing` instrumentation on key cache operations (zero-cost when
 ## disabled — all spans are compiled out).
 tracing         = ["dep:tracing"]
@@ -57,6 +57,7 @@ metrics         = ["dep:metrics"]
 opentelemetry   = ["tracing", "dep:opentelemetry", "dep:tracing-opentelemetry"]
 
 [dependencies]
+localcache-format       = { workspace = true }
 rusqlite                = { workspace = true }
 serde                   = { workspace = true }
 blake3                  = { workspace = true }
@@ -65,10 +66,7 @@ base64                  = { workspace = true }
 tokio                   = { workspace = true, optional = true }
 async-std               = { workspace = true, optional = true }
 smol                    = { workspace = true, optional = true }
-zstd                    = { workspace = true, optional = true }
 serde_json              = { workspace = true, optional = true }
-aes-gcm                 = { workspace = true, optional = true }
-zeroize                 = { workspace = true, optional = true }
 tracing                 = { workspace = true, optional = true }
 notify                  = { workspace = true, optional = true }
 notify-debouncer-mini   = { workspace = true, optional = true }

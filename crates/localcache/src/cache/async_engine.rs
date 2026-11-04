@@ -329,7 +329,7 @@ where
         spawn(move || {
             // RFC 029 R5: this call took ownership of the key `Vec`; it is
             // erased when the task ends, whatever the outcome.
-            let new_key = crate::key::ErasedOnDrop::new(Some(new_key));
+            let new_key = localcache_format::ErasedVec::new(Some(new_key));
             Self::lock(&inner)?.rotate_encryption_key(new_key.as_deref().unwrap_or_default())
         })
         .await
