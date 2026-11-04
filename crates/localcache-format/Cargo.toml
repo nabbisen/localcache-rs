@@ -1,0 +1,31 @@
+[package]
+name                    = "localcache-format"
+description             = "Implementation crate of localcache (the payload format). Depend on localcache; this crate's API is not a separate stability promise."
+readme                  = "README.md"
+version.workspace       = true
+edition.workspace       = true
+rust-version.workspace  = true
+license.workspace       = true
+authors.workspace       = true
+repository.workspace    = true
+categories              = ["caching", "encoding"]
+keywords                = ["cache", "localcache", "serialization"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+## zstd compression of payloads (the `zstd` and `json-zstd` tags).
+compression     = ["dep:zstd"]
+## The `Json` codec (`serde_json`).
+json            = ["dep:serde_json"]
+## AES-256-GCM sealing bound to the entry's path (the `*-aes256gcm-bound` tags).
+encryption      = ["dep:aes-gcm", "dep:zeroize"]
+
+[dependencies]
+serde                   = { workspace = true }
+zstd                    = { workspace = true, optional = true }
+serde_json              = { workspace = true, optional = true }
+aes-gcm                 = { workspace = true, optional = true }
+zeroize                 = { workspace = true, optional = true }

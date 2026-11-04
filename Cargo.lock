@@ -1072,6 +1072,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "localcache-format"
+version = "0.24.0"
+dependencies = [
+ "aes-gcm",
+ "serde",
+ "serde_json",
+ "zeroize",
+ "zstd",
+]
+
+[[package]]
 name = "log"
 version = "0.4.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
