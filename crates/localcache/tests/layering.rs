@@ -22,6 +22,16 @@
 //! `db::schema` or `db::indexes`. The one door is `db::Store`. (Test files may
 //! use `rusqlite` to set up and inspect rows; they are not a layer.)
 //!
+//! **What this test is not.** It reads text, so it is weaker than the compiler
+//! and does not pretend otherwise. `no_layer_names_a_higher_one` sees `crate::`
+//! paths only; `lower_layers_do_not_escape_by_relative_paths` closes the
+//! relative spellings (`super::super::…`, a `super::` that reaches the crate
+//! root from a top-level file, `localcache::…`, `use crate::*`). It does **not**
+//! see: a path built by a macro, a `#[path]` attribute, a name reached through
+//! a glob of another module, or an item smuggled through a trait object or a
+//! generic parameter. Those need the compiler, which is what the cuts of
+//! RFC 030 would add.
+//!
 //! The cuts of RFC 030 turn the rows `db` and `serialization` into crates; this
 //! test is what makes that cut a move and not a redesign. It reads the source
 //! text, so it needs no feature and runs in every row.
@@ -359,6 +369,113 @@ fn above_db_nothing_names_rusqlite_or_the_inside_of_db() {
     assert!(
         found.is_empty(),
         "the storage boundary of RFC 030 is broken ({} place(s)):\n{}",
+        found.len(),
+        found.join("\n")
+    );
+}
+
+/// The relative spellings of an upward reference (review 091, § 3). A lower
+/// layer (everything below `cache`) may not contain:
+/// * `super::super` (the review's rule, applied as text);
+/// * a chain of `super::` as long as the file's depth under `src/`, which
+///   reaches the crate root, followed by a module or item of the crate root
+///   (`detection.rs` naming `super::cache::…`); an inline `mod tests { use
+///   super::*; }` is the file's own module and is not flagged;
+/// * `localcache::` as a path (the crate naming itself from outside);
+/// * `crate::*`, a glob that would import every layer without naming one.
+#[test]
+fn lower_layers_do_not_escape_by_relative_paths() {
+    let mut files = Vec::new();
+    rust_files(&src(), &mut files);
+    files.sort();
+    let roots = root_reexports();
+    let root_modules = [
+        "error",
+        "key",
+        "path",
+        "db",
+        "serialization",
+        "detection",
+        "cache",
+        "pool",
+        "read_pool",
+    ];
+    let mut found = Vec::new();
+    for file in files {
+        let relative = file.strip_prefix(src()).unwrap();
+        let Some(layer) = layer_of_path(relative) else {
+            continue;
+        };
+        if layer == CORE || layer == ADAPTER {
+            continue;
+        }
+        // `a.rs` is module depth 1, `a/b.rs` depth 2: that many `super` hops
+        // reach the crate root.
+        let depth = relative.components().count();
+        let text = fs::read_to_string(&file).unwrap();
+        let mut in_block_comment = false;
+        for (number, line) in text.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if in_block_comment {
+                in_block_comment = !trimmed.contains("*/");
+                continue;
+            }
+            if trimmed.starts_with("/*") && !trimmed.contains("*/") {
+                in_block_comment = true;
+                continue;
+            }
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            let code = line.split("//").next().unwrap_or("");
+            let mut problems = Vec::new();
+            if code.contains("super::super") {
+                problems.push("`super::super`".to_owned());
+            }
+            let mut rest = code;
+            while let Some(at) = rest.find("super::") {
+                let mut hops = 0;
+                let mut tail = &rest[at..];
+                while let Some(next) = tail.strip_prefix("super::") {
+                    hops += 1;
+                    tail = next;
+                }
+                let next_name: String = tail
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_')
+                    .collect();
+                let names_root_item =
+                    root_modules.contains(&next_name.as_str()) || roots.contains_key(&next_name);
+                if hops >= depth && names_root_item {
+                    problems.push(format!(
+                        "{hops} `super::` hops from a module at depth {depth} (the crate root) to `{next_name}`"
+                    ));
+                }
+                rest = &rest[at + "super::".len()..];
+            }
+            let mut rest = code;
+            while let Some(at) = rest.find("localcache::") {
+                let before = rest[..at].chars().next_back();
+                if !before.is_some_and(|c| c.is_alphanumeric() || c == '_') {
+                    problems.push("a `localcache::` path".to_owned());
+                }
+                rest = &rest[at + "localcache::".len()..];
+            }
+            if code.contains("crate::*") {
+                problems.push("the glob `crate::*`".to_owned());
+            }
+            for problem in problems {
+                found.push(format!(
+                    "src/{}:{}: layer `{layer}` uses {problem}, which can name a higher layer without a `crate::` path",
+                    relative.display(),
+                    number + 1
+                ));
+            }
+        }
+    }
+    assert!(
+        found.is_empty(),
+        "a lower layer escapes the layering test ({} place(s)):\n{}\n\nName the layer with a `crate::` path so the table can check it.",
         found.len(),
         found.join("\n")
     );
