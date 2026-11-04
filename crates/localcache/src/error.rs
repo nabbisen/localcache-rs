@@ -354,4 +354,6 @@ impl LocalFileCacheError {
 }
 
 #[cfg(test)]
+mod golden;
+#[cfg(test)]
 mod tests;
