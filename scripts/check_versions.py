@@ -7,7 +7,9 @@ RFC 009 R10 and R11, kept by RFC 027. Two checks, standard library only:
   names the version (a *declaration line* is a line that starts, after
   optional indentation, with `localcache =` and a plain `"X"` or a
   `{ ... version = "X" ... }` table; prose mentions mid-line are not);
-* `CHANGELOG.md` has a non-empty section for that version.
+* `CHANGELOG.md` has a non-empty section for that version;
+* the pin of `localcache-format` in the root `[workspace.dependencies]` is
+  exactly that version (`=X.Y.Z`; RFC 030), and no crate pins it on its own.
 
 The version is the workspace version in the root `Cargo.toml`, or the one
 given with `--expect` (the release workflow passes the tag's version).
@@ -102,6 +104,43 @@ def verify_changelog_has_coming_version_section(root: Path, expected_version: st
         raise VersionError(f"CHANGELOG.md section for {expected_version!r} is empty")
 
 
+FORMAT_CRATE = "localcache-format"
+
+
+def verify_format_pin(root: Path, expected_version: str) -> None:
+    """The `localcache-format` entry of the root `[workspace.dependencies]` is
+    an exact pin (`=X.Y.Z`) of the expected version, and every crate that uses
+    it takes it from there (`workspace = true`). The crates are published
+    together at one version; a loose or stale pin would publish a facade that
+    asks for another release of its implementation crate."""
+    with (root / "Cargo.toml").open("rb") as file:
+        manifest = tomllib.load(file)
+    dependencies = manifest.get("workspace", {}).get("dependencies", {})
+    entry = dependencies.get(FORMAT_CRATE)
+    if entry is None:
+        raise VersionError(f"Cargo.toml: [workspace.dependencies] has no {FORMAT_CRATE} entry")
+    pin = entry.get("version") if isinstance(entry, dict) else entry
+    if not isinstance(pin, str) or not pin.startswith("="):
+        raise VersionError(
+            f"Cargo.toml: the {FORMAT_CRATE} pin must be exact ('=X.Y.Z'), found {pin!r}"
+        )
+    if pin[1:] != expected_version:
+        raise VersionError(
+            f"Cargo.toml: the {FORMAT_CRATE} pin is {pin!r}, expected '={expected_version}' "
+            "(the pin moves with the workspace version)"
+        )
+    for path in sorted((root / "crates").glob("*/Cargo.toml")):
+        with path.open("rb") as file:
+            member = tomllib.load(file)
+        for table in ("dependencies", "dev-dependencies", "build-dependencies"):
+            use = member.get(table, {}).get(FORMAT_CRATE)
+            if use is not None and not (isinstance(use, dict) and use.get("workspace") is True):
+                raise VersionError(
+                    f"{path.relative_to(root)}: [{table}] names {FORMAT_CRATE} without "
+                    "`workspace = true`; the pin lives in the root Cargo.toml only"
+                )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--expect", metavar="VERSION", help="default: the workspace version")
@@ -110,6 +149,7 @@ def main(argv: list[str] | None = None) -> int:
         version = args.expect or workspace_version(ROOT)
         verify_version_references(ROOT, version)
         verify_changelog_has_coming_version_section(ROOT, version)
+        verify_format_pin(ROOT, version)
     except (VersionError, OSError, KeyError, tomllib.TOMLDecodeError) as error:
         print(f"check_versions: FAILED: {error}", file=sys.stderr)
         return 1

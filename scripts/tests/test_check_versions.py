@@ -182,6 +182,63 @@ class CheckVersionsTests(unittest.TestCase):
             with self.assertRaisesRegex(CV.VersionError, "is empty"):
                 CV.verify_changelog_has_coming_version_section(root, "0.20.1")
 
+    def _manifest(self, root: Path, pin: str | None, version: str = "0.25.0") -> None:
+        text = f'[workspace.package]\nversion = "{version}"\n\n[workspace.dependencies]\n'
+        if pin is not None:
+            text += f'localcache-format = {{ version = "{pin}", path = "crates/localcache-format" }}\n'
+        (root / "Cargo.toml").write_text(text, encoding="utf-8")
+
+    def _member(self, root: Path, name: str, body: str) -> None:
+        path = root / "crates" / name / "Cargo.toml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f'[package]\nname = "{name}"\n\n{body}', encoding="utf-8")
+
+    def test_the_format_pin_passes_when_it_is_exact_and_equals_the_version(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._manifest(root, "=0.25.0")
+            self._member(root, "localcache", "[dependencies]\nlocalcache-format = { workspace = true }\n")
+            CV.verify_format_pin(root, "0.25.0")  # must not raise
+
+    def test_the_format_pin_fails_when_the_workspace_version_moved_and_the_pin_did_not(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._manifest(root, "=0.24.0", version="0.25.0")
+            with self.assertRaisesRegex(CV.VersionError, "pin is '=0.24.0', expected '=0.25.0'"):
+                CV.verify_format_pin(root, "0.25.0")
+
+    def test_the_format_pin_must_be_exact(self) -> None:
+        for loose in ("0.25.0", "^0.25.0", ">=0.25.0", "~0.25.0"):
+            with self.subTest(pin=loose), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self._manifest(root, loose)
+                with self.assertRaisesRegex(CV.VersionError, "must be exact"):
+                    CV.verify_format_pin(root, "0.25.0")
+
+    def test_the_format_pin_must_exist(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._manifest(root, None)
+            with self.assertRaisesRegex(CV.VersionError, "has no localcache-format entry"):
+                CV.verify_format_pin(root, "0.25.0")
+
+    def test_a_crate_may_not_pin_the_format_crate_on_its_own(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._manifest(root, "=0.25.0")
+            self._member(root, "localcache", '[dependencies]\nlocalcache-format = "=0.25.0"\n')
+            with self.assertRaisesRegex(CV.VersionError, "without `workspace = true`"):
+                CV.verify_format_pin(root, "0.25.0")
+
+    def test_main_fails_on_a_stale_format_pin(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._consistent_repository(root, "0.20.1")
+            self._manifest(root, "=0.20.0", version="0.20.1")
+            status, error = self._run_main(root)
+            self.assertEqual(status, 1)
+            self.assertIn("pin is '=0.20.0'", error)
+
     def test_real_repo_version_references_and_changelog_match_workspace(self) -> None:
         # Demonstrates the fixed defect directly: before M6d this failed
         # because README.md/docs said 0.20.1 while Cargo.toml said 0.20.0.
@@ -197,6 +254,7 @@ class CheckVersionsTests(unittest.TestCase):
         version = CV.workspace_version(root)
         CV.verify_version_references(root, version)
         CV.verify_changelog_has_coming_version_section(root, version)
+        CV.verify_format_pin(root, version)
 
     def test_workspace_version_reads_the_root_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -227,7 +285,9 @@ class CheckVersionsTests(unittest.TestCase):
     def _consistent_repository(self, root: Path, version: str) -> None:
         self._version_reference_fixture(root, version=version)
         (root / "Cargo.toml").write_text(
-            f'[workspace.package]\nversion = "{version}"\n', encoding="utf-8"
+            f'[workspace.package]\nversion = "{version}"\n\n[workspace.dependencies]\n'
+            f'localcache-format = {{ version = "={version}", path = "crates/localcache-format" }}\n',
+            encoding="utf-8",
         )
         (root / "CHANGELOG.md").write_text(
             f"# Changelog\n\n## [{version}] — Unreleased\n\n- Something.\n", encoding="utf-8"
