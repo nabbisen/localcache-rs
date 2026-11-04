@@ -197,9 +197,11 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run }}
           VERSION: ${{ needs.gate.outputs.version }}
         run: |
-          # Fails closed: it succeeds only after recording exactly two digests,
-          # each 64 hexadecimal characters, for `localcache` and `localcache-cli`
-          # at this version; anything else is an error.
+          # Fails closed: it succeeds only after recording exactly three digests,
+          # each 64 hexadecimal characters, for `localcache-format`, `localcache`
+          # and `localcache-cli` at this version, in that order (the order
+          # `cargo publish --workspace` publishes them in: a crate after the
+          # crates it depends on); anything else is an error.
           #
           # The two sources differ on purpose. A dry run hashes the packages
           # `cargo package` leaves in target/package (`cargo publish --dry-run`
@@ -215,7 +217,7 @@ jobs:
           if [ "$DRY_RUN" = "true" ]; then
               cargo package --workspace --locked --no-verify
           fi
-          for name in localcache localcache-cli; do
+          for name in localcache-format localcache localcache-cli; do
               file="${name}-${VERSION}.crate"
               if [ "$DRY_RUN" = "true" ]; then
                   path="target/package/$file"
@@ -244,8 +246,8 @@ jobs:
               fi
               printf '%s  %s\n' "$digest" "$file" >> "$OUT"
           done
-          if [ "$(wc -l < "$OUT")" -ne 2 ]; then
-              echo "Expected exactly two digests." >&2
+          if [ "$(wc -l < "$OUT")" -ne 3 ]; then
+              echo "Expected exactly three digests." >&2
               exit 1
           fi
           cat "$OUT"
@@ -280,21 +282,24 @@ jobs:
           VERSION: ${{ needs.gate.outputs.version }}
         run: |
           DIR="$RUNNER_TEMP/release"
-          # Refuse to publish notes without both .crate digests: exactly two
-          # lines, one per crate, each a 64-hex digest and the file name. (The
-          # name is compared as a string, not matched, because a version may
-          # contain characters that are special in a pattern.)
-          if [ "$(wc -l < "$DIR/crate-digests.txt")" -ne 2 ]; then
-              echo "crate-digests.txt must have exactly two lines." >&2
+          # Refuse to publish notes without all three .crate digests: exactly
+          # three lines, one per crate in the fixed order `localcache-format`,
+          # `localcache`, `localcache-cli`, each a 64-hex digest and the file
+          # name. (The name is compared as a string, not matched, because a
+          # version may contain characters that are special in a pattern.)
+          if [ "$(wc -l < "$DIR/crate-digests.txt")" -ne 3 ]; then
+              echo "crate-digests.txt must have exactly three lines." >&2
               exit 1
           fi
-          for name in localcache localcache-cli; do
-              found=$(awk -v want="${name}-${VERSION}.crate" '
-                  NF == 2 && length($1) == 64 && $1 ~ /^[0-9a-f]+$/ && $2 == want { n++ }
+          position=0
+          for name in localcache-format localcache localcache-cli; do
+              position=$((position + 1))
+              found=$(awk -v want="${name}-${VERSION}.crate" -v line="$position" '
+                  NR == line && NF == 2 && length($1) == 64 && $1 ~ /^[0-9a-f]+$/ && $2 == want { n++ }
                   END { print n + 0 }
               ' "$DIR/crate-digests.txt")
               if [ "$found" -ne 1 ]; then
-                  echo "crate-digests.txt has no valid digest line for ${name}-${VERSION}.crate." >&2
+                  echo "crate-digests.txt has no valid digest line $position for ${name}-${VERSION}.crate." >&2
                   exit 1
               fi
           done
