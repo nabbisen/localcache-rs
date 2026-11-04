@@ -142,6 +142,8 @@ Accepted by the owner on 2026-11-04 with the recommended answers:
 
 Handoffs: `../handoffs/030-two-crates-behind-one/` (step 0 first; the slices after the architect's review of step 0). Step 0 is done (request 066); the slices are handed off in `q17-…`.
 
+**Decision point 1, 2026-11-04 (review 091):** the owner answered **yes to slice 4, the format crate**, on the architect's recommendation; storage (slice 5) is left to decision point 2 and is expected to stay a module. Slice 4 and the gates, pipeline and book (slice 6) are handed off in `q18-the-format-crate.md`; the release is v0.25.0 with three published crates (`localcache-format`, `localcache`, `localcache-cli`) and one new name to publish by hand (R6).
+
 ## Open questions
 
 None for the owner. The eight items of step 0 are verifications with stop rules, not design questions.
