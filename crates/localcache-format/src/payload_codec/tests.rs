@@ -121,8 +121,15 @@ fn a_mutated_golden_vector_never_panics_or_aborts() {
     let vectors = vectors();
     zoo::each::<Owned>(&mut |case| {
         let bytes = &vectors[case.name];
-        for at in 0..bytes.len() {
-            for replacement in [0x00, 0x01, 0x7f, 0x80, 0xff] {
+        // Under Miri (about a hundred times slower) every seventh position and
+        // the two extreme bytes: the same property, a sample of the same cases.
+        let (step, replacements): (usize, &[u8]) = if cfg!(miri) {
+            (7, &[0x00, 0xff])
+        } else {
+            (1, &[0x00, 0x01, 0x7f, 0x80, 0xff])
+        };
+        for at in (0..bytes.len()).step_by(step) {
+            for &replacement in replacements {
                 let mut mutated = bytes.clone();
                 mutated[at] = replacement;
                 let _ = (case.decode)(&mutated);
@@ -495,7 +502,13 @@ fn nesting_is_limited_to_the_depth_limit() {
 fn a_ten_megabyte_chain_of_variant_indices_is_an_error_not_a_stack_overflow() {
     // `bincode` recursed once per four bytes here and overflowed every stack
     // that was measured (RFC 028 step 1).
-    let bytes = list_chain(10 * 1024 * 1024 / 4);
+    // Under Miri 64 KiB: 16,384 levels are still more than 128 times the limit.
+    let size = if cfg!(miri) {
+        64 * 1024
+    } else {
+        10 * 1024 * 1024
+    };
+    let bytes = list_chain(size / 4);
     assert!(matches!(
         from_slice::<zoo::List>(&bytes),
         Err(Error::TooDeep)
@@ -703,13 +716,18 @@ fn counts_are_budgeted_across_the_whole_decode() {
         bytes
     };
     let started = std::time::Instant::now();
-    let refused = from_slice::<Vec<Vec<()>>>(&nested(16_000));
+    let n = if cfg!(miri) { 2_000 } else { 16_000 };
+    let refused = from_slice::<Vec<Vec<()>>>(&nested(n));
     let took = started.elapsed();
     assert!(
         matches!(refused, Err(Error::CountExceedsInput { .. })),
         "{refused:?}"
     );
-    assert!(took.as_secs() < 1, "refusing 128 KB took {took:?}");
+    // A wall-clock bound means nothing under an interpreter; the refusal above is
+    // the property, and the quadratic cost it prevents is measured natively.
+    if !cfg!(miri) {
+        assert!(took.as_secs() < 1, "refusing 128 KB took {took:?}");
+    }
     // Honest nested payloads stay inside the budget: a count is at least one
     // byte per element, and each header is bytes of its own.
     let honest: Vec<Vec<u8>> = (0..50).map(|n| vec![n; n as usize]).collect();
@@ -841,7 +859,8 @@ impl Random {
 #[test]
 fn generated_values_round_trip_and_every_prefix_of_their_encoding_is_an_error() {
     let mut random = Random(0x9e37_79b9_7f4a_7c15);
-    for case in 0..3000 {
+    let cases = if cfg!(miri) { 40 } else { 3000 };
+    for case in 0..cases {
         let value = random.value(6);
         let bytes = to_vec(&value).unwrap_or_else(|e| panic!("case {case}: {e}"));
         let decoded = from_slice::<Value>(&bytes).unwrap_or_else(|e| panic!("case {case}: {e}"));

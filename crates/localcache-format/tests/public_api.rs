@@ -9,15 +9,17 @@ fn sample() -> Vec<String> {
     vec!["alpha".to_owned(), "βeta".to_owned(), String::new()]
 }
 
-/// `(codec, compressed, the tag an unsealed payload gets)`.
+/// `(codec, compressed, the tag an unsealed payload gets)`. Under Miri the
+/// compressed rows are left out: zstd is C code, and Miri cannot call foreign
+/// functions (the compressed paths are covered natively by the same tests).
 fn rows() -> Vec<(Codec, bool, &'static str)> {
     vec![
         (Codec::Bincode, false, "raw"),
-        #[cfg(feature = "compression")]
+        #[cfg(all(feature = "compression", not(miri)))]
         (Codec::Bincode, true, "zstd"),
         #[cfg(feature = "json")]
         (Codec::Json, false, "json"),
-        #[cfg(all(feature = "json", feature = "compression"))]
+        #[cfg(all(feature = "json", feature = "compression", not(miri)))]
         (Codec::Json, true, "json-zstd"),
     ]
 }
@@ -84,6 +86,7 @@ fn the_suffixes_are_matched_exactly_and_case_sensitively() {
 
 #[cfg(feature = "compression")]
 #[test]
+#[cfg_attr(miri, ignore = "zstd is C code; Miri cannot call foreign functions")]
 fn the_bound_is_enforced_on_write_and_on_read() {
     let big = vec![0_u8; 4096];
     let format = PayloadFormat::new(Codec::Bincode)

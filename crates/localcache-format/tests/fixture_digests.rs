@@ -16,6 +16,10 @@ fn digest(path: &str) -> String {
 }
 
 #[test]
+#[cfg_attr(
+    miri,
+    ignore = "reads files, which Miri's isolation refuses; checked natively"
+)]
 fn the_vectors_and_their_generator_are_the_ones_the_readme_records() {
     assert_eq!(
         digest("vectors.txt"),

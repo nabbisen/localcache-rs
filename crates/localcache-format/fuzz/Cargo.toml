@@ -1,0 +1,30 @@
+# The fuzz targets of localcache-format. Not part of the workspace (so
+# `cargo build --workspace` never needs nightly), not published, not run in CI.
+[package]
+name = "localcache-format-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+localcache-format = { path = "..", features = ["compression", "json", "encryption"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[[bin]]
+name = "from_slice"
+path = "fuzz_targets/from_slice.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "open"
+path = "fuzz_targets/open.rs"
+test = false
+doc = false
+
+[workspace]

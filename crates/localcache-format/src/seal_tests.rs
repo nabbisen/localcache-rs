@@ -142,7 +142,8 @@ fn property_seal_then_open_round_trips_and_any_change_fails() {
         .filter(|t| is_known_base(parse_tag(t).0))
         .collect();
     assert!(!tags.is_empty());
-    for case in 0..200 {
+    let cases = if cfg!(miri) { 6 } else { 200 };
+    for case in 0..cases {
         let path = rng.path();
         let tag = tags[rng.below(tags.len())];
         let mut key = [0_u8; 32];
