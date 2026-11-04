@@ -153,7 +153,8 @@ where
         q.path_like.as_deref(),
         prepared.path_in_dir(),
         prepared.path_glob(),
-    )?;
+    )
+    .lift()?;
     let mut order: Vec<usize> = (0..candidates.len()).collect();
     if !q.order_by.is_empty() {
         order.sort_by(|&ia, &ib| {
