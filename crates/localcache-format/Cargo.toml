@@ -29,3 +29,6 @@ zstd                    = { workspace = true, optional = true }
 serde_json              = { workspace = true, optional = true }
 aes-gcm                 = { workspace = true, optional = true }
 zeroize                 = { workspace = true, optional = true }
+
+[dev-dependencies]
+sha2                    = { workspace = true }

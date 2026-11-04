@@ -60,6 +60,8 @@ cargo run --release > vectors.txt
 
 ## How the test uses them
 
+`tests/fixture_digests.rs` pins the digests of `vectors.txt`, `generate.rs` and `zoo.rs` recorded above, so a change to any of them fails there first. The comment in `zoo.rs` still names the former place of the test (`src/serialization/payload_codec/tests.rs`); the file was left byte for byte as it was when it generated the vectors.
+
 `src/payload_codec/tests.rs` compiles `zoo.rs` against the owned
 codec and, for every case, asserts that
 
