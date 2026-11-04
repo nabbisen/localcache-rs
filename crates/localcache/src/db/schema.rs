@@ -1,10 +1,10 @@
 //! Database schema initialization and RFC 010 migration coordination.
 
-use crate::error::SqliteResultExt;
+use crate::db::error::SqliteResultExt;
 use rusqlite::{Connection, TransactionBehavior};
 
+use crate::db::error::StorageError;
 use crate::db::{JournalMode, SynchronousMode};
-use crate::error::LocalFileCacheError;
 
 mod classifier;
 mod configuration;
@@ -34,19 +34,19 @@ pub(crate) struct InitializationOutcome {
 pub(crate) fn initialize(
     conn: &mut Connection,
     is_memory: bool,
-) -> Result<InitializationOutcome, LocalFileCacheError> {
+) -> Result<InitializationOutcome, StorageError> {
     initialize_with_hook(conn, is_memory, &mut |_| Ok(()))
 }
 
 /// Configure and validate a read-only connection without initializing or
 /// migrating its schema.
-pub(crate) fn validate_read_only(conn: &mut Connection) -> Result<(), LocalFileCacheError> {
+pub(crate) fn validate_read_only(conn: &mut Connection) -> Result<(), StorageError> {
     conn.execute_batch("PRAGMA query_only = ON;").db()?;
     let query_only: i64 = conn
         .query_row("PRAGMA query_only", [], |row| row.get(0))
         .db()?;
     if query_only != 1 {
-        return Err(LocalFileCacheError::DatabaseState(
+        return Err(StorageError::DatabaseState(
             "SQLite query-only enforcement could not be enabled".into(),
         ));
     }
@@ -63,7 +63,7 @@ pub(crate) fn validate_read_only(conn: &mut Connection) -> Result<(), LocalFileC
             ..
         } => transaction.commit().db()?,
         SchemaState::Fresh | SchemaState::Version { .. } => {
-            return Err(LocalFileCacheError::SchemaNotCurrent);
+            return Err(StorageError::SchemaNotCurrent);
         }
     }
     Ok(())
@@ -72,8 +72,8 @@ pub(crate) fn validate_read_only(conn: &mut Connection) -> Result<(), LocalFileC
 fn initialize_with_hook(
     conn: &mut Connection,
     is_memory: bool,
-    hook: &mut dyn FnMut(MigrationPoint) -> Result<(), LocalFileCacheError>,
-) -> Result<InitializationOutcome, LocalFileCacheError> {
+    hook: &mut dyn FnMut(MigrationPoint) -> Result<(), StorageError>,
+) -> Result<InitializationOutcome, StorageError> {
     enable_foreign_keys(conn)?;
 
     let preliminary_version = classifier::read_user_version(conn)?;
@@ -172,7 +172,7 @@ fn initialize_with_hook(
     })
 }
 
-fn validate_current_read_snapshot(conn: &mut Connection) -> Result<(), LocalFileCacheError> {
+fn validate_current_read_snapshot(conn: &mut Connection) -> Result<(), StorageError> {
     let transaction = conn
         .transaction_with_behavior(TransactionBehavior::Deferred)
         .db()?;
@@ -183,7 +183,7 @@ fn validate_current_read_snapshot(conn: &mut Connection) -> Result<(), LocalFile
             ..
         } => transaction.commit().db()?,
         _ => {
-            return Err(LocalFileCacheError::DatabaseState(
+            return Err(StorageError::DatabaseState(
                 "changed while the current schema was being validated; database was not modified"
                     .into(),
             ));
@@ -197,17 +197,17 @@ pub(crate) fn apply_runtime_configuration(
     journal_mode: JournalMode,
     synchronous: SynchronousMode,
     outcome: &InitializationOutcome,
-) -> Result<(), LocalFileCacheError> {
+) -> Result<(), StorageError> {
     configuration::apply_runtime_configuration(conn, journal_mode, synchronous, outcome)
 }
 
-pub(crate) fn enable_foreign_keys(conn: &Connection) -> Result<(), LocalFileCacheError> {
+pub(crate) fn enable_foreign_keys(conn: &Connection) -> Result<(), StorageError> {
     conn.execute_batch("PRAGMA foreign_keys = ON;").db()?;
     let enabled: i64 = conn
         .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
         .db()?;
     if enabled != 1 {
-        return Err(LocalFileCacheError::DatabaseState(
+        return Err(StorageError::DatabaseState(
             "SQLite foreign-key enforcement could not be enabled".into(),
         ));
     }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::db::DatabaseError;
 
 fn busy() -> rusqlite::Error {
     rusqlite::Error::SqliteFailure(

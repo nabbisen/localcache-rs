@@ -3,8 +3,8 @@ use std::{panic::AssertUnwindSafe, time::Duration};
 use rusqlite::{Connection, ErrorCode, limits::Limit};
 use tempfile::TempDir;
 
-use crate::LocalFileCacheError;
-use crate::error::SqliteResultExt;
+use crate::db::StorageError;
+use crate::db::error::SqliteResultExt;
 
 use super::super::{
     CURRENT_VERSION,
@@ -51,7 +51,7 @@ fn every_required_failpoint_rolls_back_and_retry_succeeds() {
 
         let error = initialize_with_hook(&mut conn, false, &mut |point| {
             if point == failpoint {
-                Err(LocalFileCacheError::DatabaseState(format!(
+                Err(StorageError::DatabaseState(format!(
                     "synthetic RFC 010 failure at {point:?}"
                 )))
             } else {
@@ -136,7 +136,7 @@ fn competing_immediate_writer_returns_busy_without_retry_or_mutation() {
     blocker.execute_batch("BEGIN IMMEDIATE;").unwrap();
     let error = initialize(&mut opener, false).unwrap_err();
     match error {
-        LocalFileCacheError::Database(database_error) => {
+        StorageError::Database(database_error) => {
             // The public view: the primary result code is `code & 0xff`.
             assert_eq!(
                 database_error
@@ -334,7 +334,7 @@ fn fresh_creation_is_atomic_when_failure_occurs_before_commit() {
     let mut conn = Connection::open(&path).unwrap();
     let error = initialize_with_hook(&mut conn, false, &mut |point| {
         if point == MigrationPoint::ImmediatelyBeforeCommit {
-            Err(LocalFileCacheError::DatabaseState(
+            Err(StorageError::DatabaseState(
                 "synthetic fresh failure".into(),
             ))
         } else {

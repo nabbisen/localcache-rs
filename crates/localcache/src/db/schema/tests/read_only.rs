@@ -1,7 +1,7 @@
 use rusqlite::{Connection, OpenFlags};
 use tempfile::TempDir;
 
-use crate::LocalFileCacheError;
+use crate::db::StorageError;
 
 use super::super::{initialize, validate_read_only};
 use super::helpers::{open_v1, snapshot_v1};
@@ -43,10 +43,7 @@ fn read_only_validation_rejects_historical_schema_unchanged() {
 
     let mut reader = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
     let error = validate_read_only(&mut reader).unwrap_err();
-    assert!(
-        matches!(error, LocalFileCacheError::SchemaNotCurrent),
-        "{error:?}"
-    );
+    assert!(matches!(error, StorageError::SchemaNotCurrent), "{error:?}");
     // The load-bearing clause is part of the fixed text.
     assert_eq!(
         error.to_string(),

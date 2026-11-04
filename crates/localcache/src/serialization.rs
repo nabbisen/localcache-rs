@@ -42,8 +42,6 @@ use std::io::Cursor;
 
 use serde::{Serialize, de::DeserializeOwned};
 
-use crate::error::LocalFileCacheError;
-
 /// Selects the serialization codec used to encode payload values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Codec {
@@ -86,6 +84,8 @@ pub enum Codec {
 #[cfg(feature = "compression")]
 pub const DEFAULT_MAX_DECOMPRESSED_BYTES: usize = 64 * 1024 * 1024;
 
+mod error;
+pub(crate) use error::FormatError;
 mod payload_codec;
 
 #[cfg(all(test, feature = "encryption"))]
@@ -192,7 +192,7 @@ pub(crate) fn encode_payload<T>(
     codec: Codec,
     #[cfg(feature = "compression")] max_decompressed_bytes: usize,
     #[cfg(feature = "encryption")] encryption_key: Option<&[u8; 32]>,
-) -> Result<(Vec<u8>, &'static str), LocalFileCacheError>
+) -> Result<(Vec<u8>, &'static str), FormatError>
 where
     T: Serialize,
 {
@@ -206,7 +206,7 @@ where
         #[cfg(feature = "compression")]
         if compress {
             if serialized.len() > max_decompressed_bytes {
-                return Err(LocalFileCacheError::PayloadTooLarge {
+                return Err(FormatError::PayloadTooLarge {
                     limit: max_decompressed_bytes,
                 });
             }
@@ -242,9 +242,7 @@ where
     #[cfg(feature = "encryption")]
     if let Some(key) = encryption_key {
         let tag = bound_tag(base_tag).ok_or_else(|| {
-            LocalFileCacheError::Serialization(format!(
-                "no encrypted tag for base tag '{base_tag}'"
-            ))
+            FormatError::Serialization(format!("no encrypted tag for base tag '{base_tag}'"))
         })?;
         bytes = encrypt_bytes(&bytes, key, &associated_data(tag, path))?;
         base_tag = tag;
@@ -257,7 +255,7 @@ where
 ///
 /// A compressed payload that would decompress to more than
 /// `max_decompressed_bytes` is refused with
-/// [`LocalFileCacheError::PayloadTooLarge`] (RFC 025 Amendment 2, D3);
+/// [`FormatError::PayloadTooLarge`] (RFC 025 Amendment 2, D3);
 /// uncompressed payloads are not limited.
 pub(crate) fn decode_payload<T>(
     bytes: &[u8],
@@ -265,7 +263,7 @@ pub(crate) fn decode_payload<T>(
     path: &str,
     #[cfg(feature = "compression")] max_decompressed_bytes: usize,
     #[cfg(feature = "encryption")] encryption_key: Option<&[u8; 32]>,
-) -> Result<T, LocalFileCacheError>
+) -> Result<T, FormatError>
 where
     T: DeserializeOwned,
 {
@@ -280,19 +278,19 @@ where
         Sealing::None => {
             #[cfg(feature = "encryption")]
             if encryption_key.is_some() && is_known_base(base) {
-                return Err(LocalFileCacheError::UnsealedEntry);
+                return Err(FormatError::UnsealedEntry);
             }
             (std::borrow::Cow::Borrowed(bytes), encoding)
         }
         Sealing::Legacy | Sealing::Bound => {
             #[cfg(feature = "encryption")]
             {
-                let key = encryption_key.ok_or(LocalFileCacheError::MissingEncryptionKey)?;
+                let key = encryption_key.ok_or(FormatError::MissingEncryptionKey)?;
                 if !is_known_base(base) {
-                    return Err(LocalFileCacheError::UnknownEncoding(base.to_owned()));
+                    return Err(FormatError::UnknownEncoding(base.to_owned()));
                 }
                 if sealing == Sealing::Legacy {
-                    return Err(LocalFileCacheError::UnsealedEntry);
+                    return Err(FormatError::UnsealedEntry);
                 }
                 let decrypted = decrypt_bytes(bytes, key, &associated_data(encoding, path))?;
                 (std::borrow::Cow::Owned(decrypted), base)
@@ -300,7 +298,7 @@ where
             #[cfg(not(feature = "encryption"))]
             {
                 let _ = (bytes, base);
-                return Err(LocalFileCacheError::UnknownEncoding(encoding.to_owned()));
+                return Err(FormatError::UnknownEncoding(encoding.to_owned()));
             }
         }
     };
@@ -326,7 +324,7 @@ where
             deserialize_json(&d)
         }
 
-        other => Err(LocalFileCacheError::UnknownEncoding(other.to_owned())),
+        other => Err(FormatError::UnknownEncoding(other.to_owned())),
     }
 }
 
@@ -334,10 +332,7 @@ where
 // Codec helpers
 // ---------------------------------------------------------------------------
 
-fn serialize_with_codec<T: Serialize>(
-    payload: &T,
-    codec: Codec,
-) -> Result<Vec<u8>, LocalFileCacheError> {
+fn serialize_with_codec<T: Serialize>(payload: &T, codec: Codec) -> Result<Vec<u8>, FormatError> {
     match codec {
         Codec::Bincode => serialize_bincode(payload),
         #[cfg(feature = "json")]
@@ -345,27 +340,25 @@ fn serialize_with_codec<T: Serialize>(
     }
 }
 
-pub(crate) fn serialize_bincode<T: Serialize>(payload: &T) -> Result<Vec<u8>, LocalFileCacheError> {
-    payload_codec::to_vec(payload).map_err(|e| LocalFileCacheError::Serialization(e.to_string()))
+pub(crate) fn serialize_bincode<T: Serialize>(payload: &T) -> Result<Vec<u8>, FormatError> {
+    payload_codec::to_vec(payload).map_err(|e| FormatError::Serialization(e.to_string()))
 }
 
 /// Decode a legacy-format payload. Bytes after the value are ignored (RFC 028 R2.5).
-pub(crate) fn deserialize_bincode<T: DeserializeOwned>(
-    bytes: &[u8],
-) -> Result<T, LocalFileCacheError> {
-    payload_codec::from_slice(bytes).map_err(|e| LocalFileCacheError::Serialization(e.to_string()))
+pub(crate) fn deserialize_bincode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, FormatError> {
+    payload_codec::from_slice(bytes).map_err(|e| FormatError::Serialization(e.to_string()))
 }
 
 #[cfg(feature = "json")]
-fn serialize_json<T: Serialize>(payload: &T) -> Result<Vec<u8>, LocalFileCacheError> {
+fn serialize_json<T: Serialize>(payload: &T) -> Result<Vec<u8>, FormatError> {
     serde_json::to_vec(payload)
-        .map_err(|e| LocalFileCacheError::Serialization(format!("json serialization error: {e}")))
+        .map_err(|e| FormatError::Serialization(format!("json serialization error: {e}")))
 }
 
 #[cfg(feature = "json")]
-fn deserialize_json<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, LocalFileCacheError> {
+fn deserialize_json<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, FormatError> {
     serde_json::from_slice(bytes)
-        .map_err(|e| LocalFileCacheError::Serialization(format!("json deserialization error: {e}")))
+        .map_err(|e| FormatError::Serialization(format!("json deserialization error: {e}")))
 }
 
 // ---------------------------------------------------------------------------
@@ -373,8 +366,8 @@ fn deserialize_json<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, LocalFileCac
 // ---------------------------------------------------------------------------
 
 #[cfg(feature = "compression")]
-fn compress_bytes(data: &[u8]) -> Result<Vec<u8>, LocalFileCacheError> {
-    zstd::encode_all(Cursor::new(data), 3).map_err(LocalFileCacheError::Io)
+fn compress_bytes(data: &[u8]) -> Result<Vec<u8>, FormatError> {
+    zstd::encode_all(Cursor::new(data), 3).map_err(FormatError::Io)
 }
 
 /// Decompress a zstd frame into at most `limit` bytes (RFC 025 Amendment 2).
@@ -388,13 +381,13 @@ fn compress_bytes(data: &[u8]) -> Result<Vec<u8>, LocalFileCacheError> {
 ///    grows past `limit`, and a stream that yields more than `limit` bytes is
 ///    refused as soon as the byte after the limit appears.
 ///
-/// A malformed frame is an [`Io`](LocalFileCacheError::Io) error, as before.
+/// A malformed frame is an [`Io`](FormatError::Io) error, as before.
 /// This is the only place a zstd frame is decoded.
 #[cfg(feature = "compression")]
-fn decompress_bytes(data: &[u8], limit: usize) -> Result<Vec<u8>, LocalFileCacheError> {
+fn decompress_bytes(data: &[u8], limit: usize) -> Result<Vec<u8>, FormatError> {
     use std::io::{ErrorKind, Read};
 
-    let too_large = || LocalFileCacheError::PayloadTooLarge { limit };
+    let too_large = || FormatError::PayloadTooLarge { limit };
 
     // A header that cannot be parsed is left to the decoder, which reports it
     // as a malformed frame.
@@ -405,14 +398,14 @@ fn decompress_bytes(data: &[u8], limit: usize) -> Result<Vec<u8>, LocalFileCache
 
     // `declared <= limit`, so this pre-size is at most the limit.
     let mut out: Vec<u8> = Vec::with_capacity(declared.map_or(0, |size| size as usize));
-    let mut decoder = zstd::stream::read::Decoder::new(data).map_err(LocalFileCacheError::Io)?;
+    let mut decoder = zstd::stream::read::Decoder::new(data).map_err(FormatError::Io)?;
     let mut chunk = [0_u8; 16 * 1024];
     loop {
         let n = match decoder.read(&mut chunk) {
             Ok(0) => break,
             Ok(n) => n,
             Err(error) if error.kind() == ErrorKind::Interrupted => continue,
-            Err(error) => return Err(LocalFileCacheError::Io(error)),
+            Err(error) => return Err(FormatError::Io(error)),
         };
         if n > limit - out.len() {
             return Err(too_large());
@@ -438,18 +431,14 @@ fn decompress_bytes(data: &[u8], limit: usize) -> Result<Vec<u8>, LocalFileCache
 // ---------------------------------------------------------------------------
 
 #[cfg(feature = "encryption")]
-fn encrypt_bytes(
-    plaintext: &[u8],
-    key: &[u8; 32],
-    aad: &[u8],
-) -> Result<Vec<u8>, LocalFileCacheError> {
+fn encrypt_bytes(plaintext: &[u8], key: &[u8; 32], aad: &[u8]) -> Result<Vec<u8>, FormatError> {
     use aes_gcm::{
         Aes256Gcm, KeyInit,
         aead::{Aead, AeadCore, OsRng, Payload},
     };
 
     let cipher = Aes256Gcm::new_from_slice(key)
-        .map_err(|e| LocalFileCacheError::EncryptionError(format!("key init failed: {e}")))?;
+        .map_err(|e| FormatError::EncryptionError(format!("key init failed: {e}")))?;
     let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
     let ciphertext = cipher
         .encrypt(
@@ -459,7 +448,7 @@ fn encrypt_bytes(
                 aad,
             },
         )
-        .map_err(|e| LocalFileCacheError::EncryptionError(format!("encryption failed: {e}")))?;
+        .map_err(|e| FormatError::EncryptionError(format!("encryption failed: {e}")))?;
 
     // Store as: nonce (12 bytes) ‖ ciphertext.
     let mut result = Vec::with_capacity(nonce.len() + ciphertext.len());
@@ -469,7 +458,7 @@ fn encrypt_bytes(
 }
 
 #[cfg(feature = "encryption")]
-fn decrypt_bytes(data: &[u8], key: &[u8; 32], aad: &[u8]) -> Result<Vec<u8>, LocalFileCacheError> {
+fn decrypt_bytes(data: &[u8], key: &[u8; 32], aad: &[u8]) -> Result<Vec<u8>, FormatError> {
     use aes_gcm::{
         Aes256Gcm, KeyInit, Nonce,
         aead::{Aead, Payload},
@@ -477,14 +466,14 @@ fn decrypt_bytes(data: &[u8], key: &[u8; 32], aad: &[u8]) -> Result<Vec<u8>, Loc
 
     const NONCE_LEN: usize = 12;
     if data.len() < NONCE_LEN {
-        return Err(LocalFileCacheError::EncryptionError(
+        return Err(FormatError::EncryptionError(
             "ciphertext too short to contain nonce".into(),
         ));
     }
 
     let (nonce_bytes, ciphertext) = data.split_at(NONCE_LEN);
     let cipher = Aes256Gcm::new_from_slice(key)
-        .map_err(|e| LocalFileCacheError::EncryptionError(format!("key init failed: {e}")))?;
+        .map_err(|e| FormatError::EncryptionError(format!("key init failed: {e}")))?;
     let nonce = Nonce::from_slice(nonce_bytes);
     cipher
         .decrypt(
@@ -495,7 +484,7 @@ fn decrypt_bytes(data: &[u8], key: &[u8; 32], aad: &[u8]) -> Result<Vec<u8>, Loc
             },
         )
         .map_err(|_| {
-            LocalFileCacheError::EncryptionError(
+            FormatError::EncryptionError(
                 "decryption failed — wrong key, corrupted data, or the entry was moved from another path"
                 .into(),
             )
@@ -512,7 +501,7 @@ fn decrypt_bytes(data: &[u8], key: &[u8; 32], aad: &[u8]) -> Result<Vec<u8>, Loc
 /// with `old` and its associated data.
 ///
 /// Returns the new content and the new (bound) tag. A tag this build cannot
-/// decode is [`LocalFileCacheError::UnknownEncoding`].
+/// decode is [`FormatError::UnknownEncoding`].
 #[cfg(feature = "encryption")]
 pub(crate) fn reseal(
     content: &[u8],
@@ -520,13 +509,12 @@ pub(crate) fn reseal(
     path: &str,
     old: &[u8; 32],
     new: &[u8; 32],
-) -> Result<(Vec<u8>, &'static str), LocalFileCacheError> {
+) -> Result<(Vec<u8>, &'static str), FormatError> {
     let (base, sealing) = parse_tag(tag);
     if !is_known_base(base) {
-        return Err(LocalFileCacheError::UnknownEncoding(tag.to_owned()));
+        return Err(FormatError::UnknownEncoding(tag.to_owned()));
     }
-    let new_tag =
-        bound_tag(base).ok_or_else(|| LocalFileCacheError::UnknownEncoding(tag.to_owned()))?;
+    let new_tag = bound_tag(base).ok_or_else(|| FormatError::UnknownEncoding(tag.to_owned()))?;
     let plain = match sealing {
         Sealing::None => std::borrow::Cow::Borrowed(content),
         Sealing::Legacy => std::borrow::Cow::Owned(decrypt_bytes(content, old, &[])?),

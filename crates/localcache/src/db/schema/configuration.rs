@@ -1,16 +1,16 @@
 //! SQLite durability and post-initialization runtime configuration.
 
-use crate::error::SqliteResultExt;
+use crate::db::error::SqliteResultExt;
 use rusqlite::Connection;
 
 use super::InitializationOutcome;
+use crate::db::error::StorageError;
 use crate::db::{JournalMode, SynchronousMode};
-use crate::error::LocalFileCacheError;
 
-pub(super) fn prepare_file_migration(conn: &Connection) -> Result<(), LocalFileCacheError> {
+pub(super) fn prepare_file_migration(conn: &Connection) -> Result<(), StorageError> {
     let journal = observed_journal_mode(conn).db()?;
     if !matches!(journal.as_str(), "delete" | "truncate" | "persist" | "wal") {
-        return Err(LocalFileCacheError::DatabaseState(format!(
+        return Err(StorageError::DatabaseState(format!(
             "migration requires an existing rollback-capable or WAL journal; observed_journal_mode={journal}; database was not modified"
         )));
     }
@@ -18,7 +18,7 @@ pub(super) fn prepare_file_migration(conn: &Connection) -> Result<(), LocalFileC
     conn.execute_batch("PRAGMA synchronous = FULL;").db()?;
     let synchronous = observed_synchronous(conn).db()?;
     if synchronous != "full" {
-        return Err(LocalFileCacheError::DatabaseState(format!(
+        return Err(StorageError::DatabaseState(format!(
             "migration requires synchronous=FULL; observed_synchronous={synchronous}; database was not modified"
         )));
     }
@@ -30,7 +30,7 @@ pub(super) fn apply_runtime_configuration(
     requested_journal: JournalMode,
     requested_synchronous: SynchronousMode,
     outcome: &InitializationOutcome,
-) -> Result<(), LocalFileCacheError> {
+) -> Result<(), StorageError> {
     let schema_migration_committed = outcome.schema_migration_committed;
     if let Err(cause) = set_synchronous(conn, requested_synchronous) {
         return Err(configuration_error(
@@ -157,10 +157,10 @@ fn configuration_error(
     requested_synchronous: SynchronousMode,
     schema_migration_committed: bool,
     cause: &str,
-) -> LocalFileCacheError {
+) -> StorageError {
     let observed_journal = observed_journal_mode(conn).unwrap_or_else(|_| "unknown".into());
     let observed_synchronous = observed_synchronous(conn).unwrap_or_else(|_| "unknown".into());
-    LocalFileCacheError::DatabaseState(format!(
+    StorageError::DatabaseState(format!(
         "runtime configuration failed: schema_migration_committed={schema_migration_committed}; requested_synchronous={}; observed_synchronous={observed_synchronous}; requested_journal_mode={}; observed_journal_mode={observed_journal}; cause={cause}",
         synchronous_name(requested_synchronous),
         journal_name(requested_journal),

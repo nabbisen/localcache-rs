@@ -7,10 +7,11 @@
 //!
 //! | layer | may use |
 //! |---|---|
-//! | `error`, `key` | nothing of the crate |
+//! | `key` | nothing of the crate |
+//! | `db` (schema, repository, indexes, the values it stores, its `StorageError`) | nothing of the crate |
+//! | `serialization` (codec, compression, sealing, its `FormatError`) | `key` |
+//! | `error` (the public `LocalFileCacheError` and the crate-private lift from the two layer errors) | `db`, `serialization` |
 //! | `path` | `error` |
-//! | `db` (schema, repository, indexes, the values it stores) | `error` |
-//! | `serialization` (codec, compression, sealing) | `error`, `key` |
 //! | `detection` (freshness) | `error`, `db` (it compares a stored `FileMetadata`) |
 //! | `cache` (engine, query, options, builder, entry, glob) | everything above |
 //! | adapters: `pool`, `read_pool`, `cache::async_engine`, `cache::watcher` | everything above |
@@ -28,11 +29,11 @@ const CORE: &str = "cache";
 
 /// layer -> layers it may name (a layer may always name itself).
 const ALLOWED: &[(&str, &[&str])] = &[
-    ("error", &[]),
     ("key", &[]),
+    ("db", &[]),
+    ("serialization", &["key"]),
+    ("error", &["db", "serialization"]),
     ("path", &["error"]),
-    ("db", &["error"]),
-    ("serialization", &["error", "key"]),
     ("detection", &["error", "db"]),
     (
         CORE,

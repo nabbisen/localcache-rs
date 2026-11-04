@@ -6,6 +6,7 @@
 //! module of `cache::engine`, this module can reach `CacheEngine`'s private
 //! items directly — no visibility was widened to make the move possible.
 
+use crate::error::Lift;
 use std::path::Path;
 
 use serde::{Serialize, de::DeserializeOwned};
@@ -25,20 +26,22 @@ where
     T: Serialize + DeserializeOwned,
 {
     pub fn entry_count(&self) -> Result<usize, LocalFileCacheError> {
-        repository::count_in_namespace(&self.conn, &self.namespace)
+        repository::count_in_namespace(&self.conn, &self.namespace).lift()
     }
 
     pub fn entry_count_by_version(&self) -> Result<Vec<(u32, usize)>, LocalFileCacheError> {
-        repository::count_by_version(&self.conn, &self.namespace)
+        repository::count_by_version(&self.conn, &self.namespace).lift()
     }
 
     /// Return aggregate statistics for the current namespace.
     pub fn cache_stats(&self) -> Result<crate::cache::entry::CacheStats, LocalFileCacheError> {
         use crate::cache::entry::CacheStats;
 
-        let raw = repository::aggregate_stats(&self.conn, &self.namespace)?;
-        let entries_by_encoding = repository::encoding_breakdown(&self.conn, &self.namespace)?;
-        let entries_by_payload_version = repository::count_by_version(&self.conn, &self.namespace)?;
+        let raw = repository::aggregate_stats(&self.conn, &self.namespace).lift()?;
+        let entries_by_encoding =
+            repository::encoding_breakdown(&self.conn, &self.namespace).lift()?;
+        let entries_by_payload_version =
+            repository::count_by_version(&self.conn, &self.namespace).lift()?;
 
         Ok(CacheStats {
             namespace: self.namespace.clone(),
@@ -96,7 +99,8 @@ where
                 &self.namespace,
                 &cursor,
                 page_size,
-            )?;
+            )
+            .lift()?;
             if page.is_empty() {
                 break;
             }
@@ -108,7 +112,7 @@ where
                 .filter(|p| !Path::new(p).exists())
                 .collect();
             if !absent.is_empty() {
-                removed += repository::delete_paths(&self.conn, &self.namespace, &absent)?;
+                removed += repository::delete_paths(&self.conn, &self.namespace, &absent).lift()?;
             }
             if last_page {
                 break;
@@ -142,7 +146,8 @@ where
                 &self.namespace,
                 &cursor,
                 page_size,
-            )?;
+            )
+            .lift()?;
             if page.is_empty() {
                 break;
             }
@@ -155,7 +160,8 @@ where
                 .map(|(path, _)| path)
                 .collect();
             if !expired.is_empty() {
-                removed += repository::delete_paths(&self.conn, &self.namespace, &expired)?;
+                removed +=
+                    repository::delete_paths(&self.conn, &self.namespace, &expired).lift()?;
             }
             if last_page {
                 break;
@@ -167,6 +173,7 @@ where
     pub fn purge_stale_versions(&self) -> Result<usize, LocalFileCacheError> {
         self.guard_write()?;
         repository::delete_by_other_version(&self.conn, &self.namespace, self.payload_version)
+            .lift()
     }
 
     pub fn shrink_database(&self) -> Result<(), LocalFileCacheError> {
@@ -187,7 +194,7 @@ where
     )]
     pub fn drop_path_index(&self, name: &str) -> Result<bool, LocalFileCacheError> {
         self.guard_write()?;
-        indexes::drop_path_index(&self.conn, name)
+        indexes::drop_path_index(&self.conn, name).lift()
     }
 
     /// List structurally valid main-schema user indexes in alphabetical order.
@@ -199,7 +206,7 @@ where
         note = "the index duplicates the built-in unique index on (namespace, path) and cannot speed up a query; kept to find indexes created earlier"
     )]
     pub fn list_path_indexes(&self) -> Result<Vec<String>, LocalFileCacheError> {
-        indexes::list_path_indexes(&self.conn)
+        indexes::list_path_indexes(&self.conn).lift()
     }
 }
 

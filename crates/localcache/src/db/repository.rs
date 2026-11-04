@@ -7,7 +7,7 @@ use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use crate::db::EntryInfo;
 use crate::db::FileMetadata;
-use crate::error::{LocalFileCacheError, SqliteResultExt};
+use crate::db::error::{ArgumentName, SqliteResultExt, StorageError, invalid_argument};
 
 mod candidates;
 #[cfg(test)]
@@ -80,7 +80,7 @@ pub(crate) fn find_file(
     conn: &Connection,
     namespace: &str,
     path: &str,
-) -> Result<Option<FileRow>, LocalFileCacheError> {
+) -> Result<Option<FileRow>, StorageError> {
     let mut stmt = conn
         .prepare_cached(
             "SELECT id, path, mtime, file_size, hash, updated_at, payload_version
@@ -110,7 +110,7 @@ pub(crate) fn find_file(
 pub(crate) fn load_payload(
     conn: &Connection,
     file_id: i64,
-) -> Result<Option<PayloadRow>, LocalFileCacheError> {
+) -> Result<Option<PayloadRow>, StorageError> {
     let mut stmt = conn
         .prepare_cached("SELECT content, encoding FROM main.payloads WHERE file_id = ?1")
         .db()?;
@@ -193,18 +193,18 @@ pub(crate) fn use_value_of_record(last_accessed_at: i64, updated_at: i64) -> Opt
 /// `CHECK` (an integer below 2^62) is the only way `MAX + 1` can fail, and it
 /// is the one error that means the use order is exhausted; every other failure
 /// is an ordinary database error.
-fn use_error(error: rusqlite::Error) -> LocalFileCacheError {
+fn use_error(error: rusqlite::Error) -> StorageError {
     match &error {
         rusqlite::Error::SqliteFailure(failure, Some(message))
             if failure.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_CHECK
                 && message.contains("last_used_us") =>
         {
-            LocalFileCacheError::DatabaseState(
+            StorageError::DatabaseState(
                 "use order exhausted: a use value would reach 2^62; the database was not modified"
                     .into(),
             )
         }
-        _ => LocalFileCacheError::Database(crate::error::DatabaseError::from_sqlite(error)),
+        _ => StorageError::Database(crate::db::DatabaseError::from_sqlite(error)),
     }
 }
 
@@ -217,7 +217,7 @@ pub(crate) fn record_use(
     conn: &Connection,
     namespace: &str,
     file_id: i64,
-) -> Result<(), LocalFileCacheError> {
+) -> Result<(), StorageError> {
     conn.prepare_cached(RECORD_USE_SQL)
         .and_then(|mut statement| statement.execute(params![now_us(), namespace, file_id]))
         .map(|_| ())
@@ -238,7 +238,7 @@ pub(crate) fn upsert_in_tx(
     payload_bytes: &[u8],
     encoding: &str,
     payload_version: u32,
-) -> Result<i64, LocalFileCacheError> {
+) -> Result<i64, StorageError> {
     let updated_at = now_secs();
 
     // A write is a use (RFC 026 R1), a new row and an overwrite alike.
@@ -286,7 +286,7 @@ pub(crate) fn delete_by_path(
     conn: &Connection,
     namespace: &str,
     path: &str,
-) -> Result<bool, LocalFileCacheError> {
+) -> Result<bool, StorageError> {
     let n = conn
         .execute(
             "DELETE FROM files WHERE namespace = ?1 AND path = ?2",
@@ -304,7 +304,7 @@ pub(crate) fn delete_paths_in_tx(
     tx: &Transaction,
     namespace: &str,
     paths: &[String],
-) -> Result<usize, LocalFileCacheError> {
+) -> Result<usize, StorageError> {
     let mut stmt = tx
         .prepare_cached("DELETE FROM files WHERE namespace = ?1 AND path = ?2")
         .db()?;
@@ -322,7 +322,7 @@ pub(crate) fn delete_paths(
     conn: &Connection,
     namespace: &str,
     paths: &[String],
-) -> Result<usize, LocalFileCacheError> {
+) -> Result<usize, StorageError> {
     let tx = conn.unchecked_transaction().db()?;
     let removed = delete_paths_in_tx(&tx, namespace, paths)?;
     tx.commit().db()?;
@@ -333,7 +333,7 @@ pub(crate) fn delete_by_other_version(
     conn: &Connection,
     namespace: &str,
     current_version: u32,
-) -> Result<usize, LocalFileCacheError> {
+) -> Result<usize, StorageError> {
     let n = conn
         .execute(
             "DELETE FROM files WHERE namespace = ?1 AND payload_version != ?2",
@@ -371,7 +371,7 @@ pub(crate) fn evict_lru(
     namespace: &str,
     n: usize,
     protected: &[i64],
-) -> Result<Vec<PathBuf>, LocalFileCacheError> {
+) -> Result<Vec<PathBuf>, StorageError> {
     use std::collections::HashSet;
 
     let protected: HashSet<i64> = protected.iter().copied().collect();
@@ -421,7 +421,7 @@ pub(crate) fn paths_page_in_namespace(
     namespace: &str,
     after: &str,
     limit: usize,
-) -> Result<Vec<String>, LocalFileCacheError> {
+) -> Result<Vec<String>, StorageError> {
     let mut stmt = conn
         .prepare_cached(
             "SELECT path FROM files
@@ -444,7 +444,7 @@ pub(crate) fn path_rows_page_in_namespace(
     namespace: &str,
     after: &str,
     limit: usize,
-) -> Result<Vec<(String, i64)>, LocalFileCacheError> {
+) -> Result<Vec<(String, i64)>, StorageError> {
     let mut stmt = conn
         .prepare_cached(
             "SELECT path, updated_at FROM files
@@ -465,7 +465,7 @@ pub(crate) fn path_rows_page_in_namespace(
 pub(crate) fn count_in_namespace(
     conn: &Connection,
     namespace: &str,
-) -> Result<usize, LocalFileCacheError> {
+) -> Result<usize, StorageError> {
     let n: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM files WHERE namespace = ?1",
@@ -479,7 +479,7 @@ pub(crate) fn count_in_namespace(
 pub(crate) fn count_by_version(
     conn: &Connection,
     namespace: &str,
-) -> Result<Vec<(u32, usize)>, LocalFileCacheError> {
+) -> Result<Vec<(u32, usize)>, StorageError> {
     let mut stmt = conn
         .prepare_cached(
             "SELECT payload_version, COUNT(*)
@@ -503,7 +503,7 @@ pub(crate) fn count_by_version(
 pub(crate) fn list_entries(
     conn: &Connection,
     namespace: &str,
-) -> Result<Vec<EntryInfo>, LocalFileCacheError> {
+) -> Result<Vec<EntryInfo>, StorageError> {
     let mut stmt = conn
         .prepare_cached(
             "SELECT f.path, f.mtime, f.file_size, f.hash,
@@ -575,7 +575,7 @@ pub(crate) struct RawStats {
 pub(crate) fn aggregate_stats(
     conn: &Connection,
     namespace: &str,
-) -> Result<RawStats, LocalFileCacheError> {
+) -> Result<RawStats, StorageError> {
     let row = conn
         .query_row(
             "SELECT COUNT(*),
@@ -602,7 +602,7 @@ pub(crate) fn aggregate_stats(
 pub(crate) fn encoding_breakdown(
     conn: &Connection,
     namespace: &str,
-) -> Result<Vec<(String, usize)>, LocalFileCacheError> {
+) -> Result<Vec<(String, usize)>, StorageError> {
     let mut stmt = conn
         .prepare_cached(
             "SELECT p.encoding, COUNT(*)
@@ -651,7 +651,7 @@ pub(crate) fn load_payload_page(
     after: &str,
     max_rows: usize,
     max_bytes: usize,
-) -> Result<Vec<PayloadPageRow>, LocalFileCacheError> {
+) -> Result<Vec<PayloadPageRow>, StorageError> {
     let mut stmt = conn.prepare_cached(PAYLOAD_PAGE_SQL).db()?;
     let mut rows = stmt
         .query(params![namespace, after, max_rows as i64])
@@ -689,7 +689,7 @@ pub(crate) fn update_payload_content(
     file_id: i64,
     new_content: &[u8],
     new_tag: &str,
-) -> Result<(), LocalFileCacheError> {
+) -> Result<(), StorageError> {
     tx.execute(
         "UPDATE payloads SET content = ?1, encoding = ?2 WHERE file_id = ?3",
         params![new_content, new_tag, file_id],
@@ -719,7 +719,7 @@ pub(crate) struct FullRow {
 pub(crate) fn load_all_full(
     conn: &Connection,
     namespace: &str,
-) -> Result<Vec<FullRow>, LocalFileCacheError> {
+) -> Result<Vec<FullRow>, StorageError> {
     let mut stmt = conn
         .prepare_cached(
             "SELECT f.path, p.content, p.encoding,
@@ -751,9 +751,9 @@ pub(crate) fn load_all_full(
 }
 
 /// The error for a record whose recency the use order cannot hold.
-pub(crate) fn unrepresentable_recency() -> LocalFileCacheError {
-    crate::error::invalid_argument(
-        crate::error::ArgumentName::Records,
+pub(crate) fn unrepresentable_recency() -> StorageError {
+    invalid_argument(
+        ArgumentName::Records,
         "the recency of a record (last_accessed_at or updated_at) is out of range".to_owned(),
     )
 }
@@ -768,7 +768,7 @@ pub(crate) fn import_rows_in_tx(
     tx: &Transaction,
     namespace: &str,
     rows: &[FullRow],
-) -> Result<Vec<i64>, LocalFileCacheError> {
+) -> Result<Vec<i64>, StorageError> {
     let mut written = Vec::with_capacity(rows.len());
     for row in rows {
         // An import is a restore, not a use (RFC 026 R2): the row keeps the
@@ -829,11 +829,7 @@ pub(crate) fn import_rows_in_tx(
 // ---------------------------------------------------------------------------
 
 /// Return `true` if a row exists for `(namespace, path)`.
-pub(crate) fn exists(
-    conn: &Connection,
-    namespace: &str,
-    path: &str,
-) -> Result<bool, LocalFileCacheError> {
+pub(crate) fn exists(conn: &Connection, namespace: &str, path: &str) -> Result<bool, StorageError> {
     let n: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM files WHERE namespace = ?1 AND path = ?2",
@@ -855,7 +851,7 @@ pub(crate) fn keys(
     pattern: Option<&str>,
     path_in_dir: Option<(&str, bool)>,
     path_glob: Option<&[String]>,
-) -> Result<Vec<std::path::PathBuf>, LocalFileCacheError> {
+) -> Result<Vec<std::path::PathBuf>, StorageError> {
     let (sql, params_vec) = build_path_sql(namespace, pattern, path_in_dir, path_glob);
     let mut stmt = conn.prepare(&sql).db()?;
     let paths: Result<Vec<_>, _> = stmt
@@ -876,7 +872,7 @@ pub(crate) fn explain_query(
     pattern: Option<&str>,
     path_in_dir: Option<(&str, bool)>,
     path_glob: Option<&[String]>,
-) -> Result<String, LocalFileCacheError> {
+) -> Result<String, StorageError> {
     let (sql, params_vec) = build_path_sql(namespace, pattern, path_in_dir, path_glob);
     let explain_sql = format!("EXPLAIN QUERY PLAN {sql}");
     let mut stmt = conn.prepare(&explain_sql).db()?;
@@ -996,7 +992,7 @@ fn range_upper_bound(prefix: &str) -> String {
 // ---------------------------------------------------------------------------
 
 /// Return all distinct namespace names in the database, sorted.
-pub(crate) fn list_namespaces(conn: &Connection) -> Result<Vec<String>, LocalFileCacheError> {
+pub(crate) fn list_namespaces(conn: &Connection) -> Result<Vec<String>, StorageError> {
     let mut stmt = conn
         .prepare_cached("SELECT DISTINCT namespace FROM files ORDER BY namespace")
         .db()?;

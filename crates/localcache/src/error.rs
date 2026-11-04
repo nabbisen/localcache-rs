@@ -45,11 +45,11 @@ use std::path::PathBuf;
 pub enum LocalFileCacheError {
     /// An error from the underlying SQLite database.
     ///
-    /// The payload is opaque: [`DatabaseError::sqlite_extended_code`] gives the
+    /// The payload is opaque: [`DatabaseError::sqlite_extended_code`](crate::DatabaseError::sqlite_extended_code) gives the
     /// SQLite result code when there is one, and
     /// [`std::error::Error::source`] the underlying error.
     #[error("database error: {0}")]
-    Database(#[source] DatabaseError),
+    Database(#[source] crate::db::DatabaseError),
 
     /// An I/O error (file reading, canonicalization, etc.).
     #[error("io error: {0}")]
@@ -252,7 +252,6 @@ pub(crate) enum ArgumentName {
     #[cfg(feature = "encryption")]
     NewKey,
     PathGlob,
-    IndexName,
     Records,
     Items,
 }
@@ -263,7 +262,6 @@ impl ArgumentName {
             #[cfg(feature = "encryption")]
             Self::NewKey => "new_key",
             Self::PathGlob => "path_glob",
-            Self::IndexName => "index_name",
             Self::Records => "records",
             Self::Items => "items",
         }
@@ -290,71 +288,68 @@ pub(crate) fn invalid_argument(
     }
 }
 
-/// An error from the underlying SQLite database, as carried by
-/// [`LocalFileCacheError::Database`].
-///
-/// The error is opaque: no database-library type appears in this crate's
-/// public API. Its [`Display`](std::fmt::Display) is the database's own message,
-/// [`std::error::Error::source`] returns the underlying error, and
-/// [`sqlite_extended_code`](Self::sqlite_extended_code) gives the SQLite result
-/// code when the database reported one.
-///
-/// A value of this type is created by the library only.
-#[derive(Debug)]
-pub struct DatabaseError {
-    source: Box<dyn std::error::Error + Send + Sync + 'static>,
-    extended_code: Option<i32>,
-}
-
-impl DatabaseError {
-    /// The SQLite *extended* result code of this error, or `None` when the
-    /// failure did not come from SQLite reporting a code (for example a
-    /// query that returned no rows, or a value that could not be converted).
-    ///
-    /// The *primary* result code is `code & 0xff`. For example a busy database
-    /// is `SQLITE_BUSY`, primary code 5, so
-    /// `error.sqlite_extended_code().map(|code| code & 0xff) == Some(5)` tells a
-    /// caller the database was busy without naming any database library. The
-    /// extended codes are listed in the SQLite documentation, "Result and Error
-    /// Codes".
-    pub fn sqlite_extended_code(&self) -> Option<i32> {
-        self.extended_code
-    }
-
-    pub(crate) fn from_sqlite(error: rusqlite::Error) -> Self {
-        let extended_code = match &error {
-            rusqlite::Error::SqliteFailure(failure, _) => Some(failure.extended_code),
-            _ => None,
-        };
-        Self {
-            source: Box::new(error),
-            extended_code,
-        }
-    }
-}
-
-impl std::fmt::Display for DatabaseError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(&self.source, f)
-    }
-}
-
-impl std::error::Error for DatabaseError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&*self.source)
-    }
-}
-
 /// Crate-private conversion of a database result into the library's error
-/// type. It replaces the `From<rusqlite::Error>` impl, which would have been a
-/// public trait impl.
+/// type, for the code above the database layer that still holds a connection
+/// (RFC 030 slice 3 removes it). It replaces the `From<rusqlite::Error>` impl,
+/// which would have been a public trait impl.
 pub(crate) trait SqliteResultExt<T> {
     fn db(self) -> Result<T, LocalFileCacheError>;
 }
 
 impl<T> SqliteResultExt<T> for Result<T, rusqlite::Error> {
     fn db(self) -> Result<T, LocalFileCacheError> {
-        self.map_err(|error| LocalFileCacheError::Database(DatabaseError::from_sqlite(error)))
+        self.map_err(|error| {
+            LocalFileCacheError::Database(crate::db::DatabaseError::from_sqlite(error))
+        })
+    }
+}
+
+/// RFC 030 slice 2: the layer errors reach the public enum through this
+/// crate-private trait, one to one. A `From` impl would be public API and
+/// rustdoc would list it with the internal type.
+pub(crate) trait Lift<T> {
+    fn lift(self) -> Result<T, LocalFileCacheError>;
+}
+
+impl<T> Lift<T> for Result<T, crate::db::StorageError> {
+    fn lift(self) -> Result<T, LocalFileCacheError> {
+        self.map_err(LocalFileCacheError::from_storage)
+    }
+}
+
+impl<T> Lift<T> for Result<T, crate::serialization::FormatError> {
+    fn lift(self) -> Result<T, LocalFileCacheError> {
+        self.map_err(LocalFileCacheError::from_format)
+    }
+}
+
+impl LocalFileCacheError {
+    pub(crate) fn from_storage(error: crate::db::StorageError) -> Self {
+        use crate::db::StorageError as S;
+        match error {
+            S::Database(e) => Self::Database(e),
+            S::SchemaNotCurrent => Self::SchemaNotCurrent,
+            S::IncompatibleSchema(m) => Self::IncompatibleSchema(m),
+            S::DatabaseState(m) => Self::DatabaseState(m),
+            S::InvalidArgument { argument, reason } => Self::InvalidArgument { argument, reason },
+        }
+    }
+
+    pub(crate) fn from_format(error: crate::serialization::FormatError) -> Self {
+        use crate::serialization::FormatError as F;
+        match error {
+            F::Io(e) => Self::Io(e),
+            F::Serialization(m) => Self::Serialization(m),
+            F::UnknownEncoding(m) => Self::UnknownEncoding(m),
+            #[cfg(feature = "compression")]
+            F::PayloadTooLarge { limit } => Self::PayloadTooLarge { limit },
+            #[cfg(feature = "encryption")]
+            F::EncryptionError(m) => Self::EncryptionError(m),
+            #[cfg(feature = "encryption")]
+            F::MissingEncryptionKey => Self::MissingEncryptionKey,
+            #[cfg(feature = "encryption")]
+            F::UnsealedEntry => Self::UnsealedEntry,
+        }
     }
 }
 

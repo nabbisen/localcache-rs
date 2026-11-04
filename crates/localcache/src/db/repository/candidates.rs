@@ -10,7 +10,7 @@ use rusqlite::params;
 #[cfg(feature = "json")]
 use super::FullCandidateRow;
 use super::{CandidateRow, ID_LIST_CHUNK, path_filter_clauses};
-use crate::error::{LocalFileCacheError, SqliteResultExt};
+use crate::db::error::{SqliteResultExt, StorageError};
 
 // ---------------------------------------------------------------------------
 // RFC 021: one-pass, late-materialization candidate queries
@@ -26,7 +26,7 @@ pub(crate) fn query_candidates(
     pattern: Option<&str>,
     path_in_dir: Option<(&str, bool)>,
     path_glob: Option<&[String]>,
-) -> Result<Vec<CandidateRow>, LocalFileCacheError> {
+) -> Result<Vec<CandidateRow>, StorageError> {
     let (clauses, params) = path_filter_clauses(namespace, pattern, path_in_dir, path_glob);
     let sql = format!(
         "SELECT id, path, mtime, file_size, hash, last_used_us / 1000000 FROM main.files \
@@ -97,7 +97,7 @@ pub(crate) fn query_candidates_json_pushdown(
     path_glob: Option<&[String]>,
     select_fields: &[String],
     where_fields: &[(String, &'static str, f64)],
-) -> Result<Vec<JsonPushdownRow>, LocalFileCacheError> {
+) -> Result<Vec<JsonPushdownRow>, StorageError> {
     use rusqlite::types::Value;
 
     // Every distinct field path that needs extracting, select_fields first
@@ -195,7 +195,7 @@ pub(crate) fn query_candidates_json_pushdown(
 pub(crate) fn payloads_for_ids(
     conn: &Connection,
     ids: &[i64],
-) -> Result<Vec<(i64, Vec<u8>, String)>, LocalFileCacheError> {
+) -> Result<Vec<(i64, Vec<u8>, String)>, StorageError> {
     let mut out = Vec::with_capacity(ids.len());
     for chunk in ids.chunks(ID_LIST_CHUNK) {
         let placeholders = vec!["?"; chunk.len()].join(",");
@@ -230,7 +230,7 @@ pub(crate) fn query_candidates_with_payloads(
     pattern: Option<&str>,
     path_in_dir: Option<(&str, bool)>,
     path_glob: Option<&[String]>,
-) -> Result<Vec<FullCandidateRow>, LocalFileCacheError> {
+) -> Result<Vec<FullCandidateRow>, StorageError> {
     let (clauses, params) = path_filter_clauses(namespace, pattern, path_in_dir, path_glob);
     let sql = format!(
         "SELECT f.path, f.mtime, f.file_size, f.hash, f.last_used_us / 1000000, p.content, p.encoding \
@@ -265,10 +265,7 @@ pub(crate) fn query_candidates_with_payloads(
 /// and a mixed namespace never pushes down for a subset while silently
 /// dropping the rest.
 #[cfg(feature = "json")]
-pub(crate) fn namespace_all_json(
-    conn: &Connection,
-    namespace: &str,
-) -> Result<bool, LocalFileCacheError> {
+pub(crate) fn namespace_all_json(conn: &Connection, namespace: &str) -> Result<bool, StorageError> {
     let n: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM main.payloads p JOIN main.files f ON f.id = p.file_id \

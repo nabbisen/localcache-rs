@@ -277,7 +277,7 @@ fn sql_text_does_not_vary_with_the_directory() {
 
 use super::{record_use, test_clock, upsert_in_tx, use_error, use_value_of_record};
 use crate::db::FileMetadata;
-use crate::error::LocalFileCacheError;
+use crate::db::error::StorageError;
 
 fn use_value(conn: &Connection, path: &str) -> i64 {
     conn.query_row(
@@ -383,7 +383,7 @@ fn a_use_at_the_end_of_the_order_fails_with_a_typed_error_and_changes_nothing() 
     // The next value would be 2^62.
     let error = record_use(&conn, "ns", id_of(&conn, "/d/b")).unwrap_err();
     assert!(
-        matches!(&error, LocalFileCacheError::DatabaseState(message) if message.contains("use order exhausted")),
+        matches!(&error, StorageError::DatabaseState(message) if message.contains("use order exhausted")),
         "{error:?}"
     );
     assert_eq!(use_value(&conn, "/d/a"), top);
@@ -395,7 +395,7 @@ fn a_use_at_the_end_of_the_order_fails_with_a_typed_error_and_changes_nothing() 
         let tx = conn.transaction().unwrap();
         let error = upsert_in_tx(&tx, "ns", path, &metadata(), b"x", "raw", 0).unwrap_err();
         assert!(
-            matches!(&error, LocalFileCacheError::DatabaseState(m) if m.contains("use order exhausted")),
+            matches!(&error, StorageError::DatabaseState(m) if m.contains("use order exhausted")),
             "{path}: {error:?}"
         );
         drop(tx);
@@ -421,7 +421,7 @@ fn only_the_use_value_check_is_reported_as_an_exhausted_order() {
             rusqlite::ffi::SQLITE_CONSTRAINT_CHECK,
             "CHECK constraint failed: typeof(last_used_us) = 'integer' AND last_used_us < 4611686018427387904"
         )),
-        LocalFileCacheError::DatabaseState(_)
+        StorageError::DatabaseState(_)
     ));
     // Any other CHECK, any other constraint, any other failure.
     for error in [
@@ -435,7 +435,7 @@ fn only_the_use_value_check_is_reported_as_an_exhausted_order() {
         ),
         failure(rusqlite::ffi::SQLITE_BUSY, "database is locked"),
     ] {
-        assert!(matches!(use_error(error), LocalFileCacheError::Database(_)));
+        assert!(matches!(use_error(error), StorageError::Database(_)));
     }
 }
 

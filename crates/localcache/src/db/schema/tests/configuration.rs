@@ -3,7 +3,8 @@ use std::time::Duration;
 use rusqlite::Connection;
 use tempfile::TempDir;
 
-use crate::{JournalMode, LocalFileCacheError, SynchronousMode};
+use crate::db::StorageError;
+use crate::{JournalMode, SynchronousMode};
 
 use super::super::{
     CURRENT_VERSION, apply_runtime_configuration, configuration as runtime_configuration,
@@ -25,10 +26,7 @@ fn unsafe_existing_file_journal_modes_reject_before_migration() {
         let before = snapshot_v1(&conn);
 
         let error = initialize(&mut conn, false).unwrap_err();
-        assert!(
-            matches!(error, LocalFileCacheError::DatabaseState(_)),
-            "{error:?}"
-        );
+        assert!(matches!(error, StorageError::DatabaseState(_)), "{error:?}");
         let error = error.to_string();
         assert!(
             error.starts_with(
@@ -221,10 +219,7 @@ fn foreign_key_enforcement_that_cannot_be_enabled_is_a_database_state_error() {
     conn.execute_batch("PRAGMA foreign_keys = OFF; BEGIN;")
         .unwrap();
     let error = super::super::validate_read_only(&mut conn).unwrap_err();
-    assert!(
-        matches!(error, LocalFileCacheError::DatabaseState(_)),
-        "{error:?}"
-    );
+    assert!(matches!(error, StorageError::DatabaseState(_)), "{error:?}");
     assert_eq!(
         error.to_string(),
         "database state: SQLite foreign-key enforcement could not be enabled"
@@ -239,10 +234,7 @@ fn a_failed_migration_postcondition_keeps_the_rollback_clause() {
     let transaction = conn.unchecked_transaction().unwrap();
     // A version-1 database is not the final schema.
     let error = super::super::migration::validate_final_postconditions(&transaction).unwrap_err();
-    assert!(
-        matches!(error, LocalFileCacheError::DatabaseState(_)),
-        "{error:?}"
-    );
+    assert!(matches!(error, StorageError::DatabaseState(_)), "{error:?}");
     let text = error.to_string();
     assert!(
         text.starts_with("database state: migration precondition or postcondition failed: "),

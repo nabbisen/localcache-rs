@@ -4,8 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rusqlite::{Connection, OptionalExtension, types::Value};
 
+use crate::db::error::{SqliteResultExt, StorageError};
 use crate::db::indexes::{main_file_indexes, main_index_xinfo, validate_index_terms};
-use crate::error::{LocalFileCacheError, SqliteResultExt};
 
 use super::CURRENT_VERSION;
 
@@ -40,7 +40,7 @@ enum DdlToken {
     Symbol(char),
 }
 
-pub(super) fn read_user_version(conn: &Connection) -> Result<i64, LocalFileCacheError> {
+pub(super) fn read_user_version(conn: &Connection) -> Result<i64, StorageError> {
     conn.query_row("PRAGMA user_version", [], |row| row.get(0))
         .db()
 }
@@ -48,7 +48,7 @@ pub(super) fn read_user_version(conn: &Connection) -> Result<i64, LocalFileCache
 pub(super) fn classify(
     conn: &Connection,
     physical_version: i64,
-) -> Result<SchemaState, LocalFileCacheError> {
+) -> Result<SchemaState, StorageError> {
     if !(0..=i64::from(CURRENT_VERSION)).contains(&physical_version) {
         return Err(unrecognized(physical_version, "unsupported schema version"));
     }
@@ -75,7 +75,7 @@ pub(super) fn classify(
 pub(super) fn validate_effective_version(
     conn: &Connection,
     version: u8,
-) -> Result<SchemaState, LocalFileCacheError> {
+) -> Result<SchemaState, StorageError> {
     let objects = application_objects(conn)?;
     let files_high_water = validate_version(conn, i64::from(version), version, &objects)?;
     Ok(SchemaState::Version {
@@ -89,7 +89,7 @@ fn validate_version(
     physical_version: i64,
     version: u8,
     objects: &[SchemaObject],
-) -> Result<i64, LocalFileCacheError> {
+) -> Result<i64, StorageError> {
     validate_object_policy(physical_version, version, objects)?;
     validate_table(conn, physical_version, "files", version, objects)?;
     validate_table(conn, physical_version, "payloads", version, objects)?;
@@ -100,7 +100,7 @@ fn validate_version(
     Ok(files_high_water)
 }
 
-fn application_objects(conn: &Connection) -> Result<Vec<SchemaObject>, LocalFileCacheError> {
+fn application_objects(conn: &Connection) -> Result<Vec<SchemaObject>, StorageError> {
     let mut statement = conn
         .prepare(
             "SELECT type, name, tbl_name, sql
@@ -126,7 +126,7 @@ fn validate_object_policy(
     physical_version: i64,
     version: u8,
     objects: &[SchemaObject],
-) -> Result<(), LocalFileCacheError> {
+) -> Result<(), StorageError> {
     let required_indexes: BTreeSet<&str> = match version {
         1 => ["idx_files_path"].into_iter().collect(),
         2 | 3 => ["idx_files_namespace_path"].into_iter().collect(),
@@ -191,7 +191,7 @@ fn validate_table(
     table_name: &str,
     version: u8,
     objects: &[SchemaObject],
-) -> Result<(), LocalFileCacheError> {
+) -> Result<(), StorageError> {
     let table_kind: Option<(String, i64, i64)> = conn
         .query_row(
             "SELECT type, wr, strict
@@ -224,7 +224,7 @@ fn validate_table(
     Ok(())
 }
 
-fn table_columns(conn: &Connection, table_name: &str) -> Result<Vec<Column>, LocalFileCacheError> {
+fn table_columns(conn: &Connection, table_name: &str) -> Result<Vec<Column>, StorageError> {
     let mut statement = conn
         .prepare(
             "SELECT name, type, \"notnull\", dflt_value, pk, hidden
@@ -307,7 +307,7 @@ fn validate_table_ddl(
     table_name: &str,
     physical_version: i64,
     version: u8,
-) -> Result<(), LocalFileCacheError> {
+) -> Result<(), StorageError> {
     let tokens = tokenize(sql).map_err(|reason| unrecognized(physical_version, reason))?;
     let words: Vec<&str> = tokens
         .iter()
@@ -482,10 +482,7 @@ fn contains_word_sequence(words: &[&str], expected: &[&str]) -> bool {
         .any(|window| window == expected)
 }
 
-fn validate_foreign_key(
-    conn: &Connection,
-    physical_version: i64,
-) -> Result<(), LocalFileCacheError> {
+fn validate_foreign_key(conn: &Connection, physical_version: i64) -> Result<(), StorageError> {
     let mut statement = conn
         .prepare(
             "SELECT id, seq, \"table\", \"from\", \"to\", on_update, on_delete, match
@@ -532,7 +529,7 @@ fn validate_indexes(
     conn: &Connection,
     physical_version: i64,
     version: u8,
-) -> Result<(), LocalFileCacheError> {
+) -> Result<(), StorageError> {
     let indexes = main_file_indexes(conn)?;
 
     let expected_builtins: BTreeMap<&str, &[&str]> = match version {
@@ -610,7 +607,7 @@ fn validate_indexes(
     Ok(())
 }
 
-fn validate_sequence(conn: &Connection, physical_version: i64) -> Result<i64, LocalFileCacheError> {
+fn validate_sequence(conn: &Connection, physical_version: i64) -> Result<i64, StorageError> {
     let mut statement = conn
         .prepare("SELECT name, seq, typeof(seq) FROM sqlite_sequence")
         .db()?;
@@ -656,7 +653,7 @@ fn validate_sequence(conn: &Connection, physical_version: i64) -> Result<i64, Lo
 fn validate_foreign_key_integrity(
     conn: &Connection,
     physical_version: i64,
-) -> Result<(), LocalFileCacheError> {
+) -> Result<(), StorageError> {
     let violation_count: i64 = conn
         .query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |row| {
             row.get(0)
@@ -668,8 +665,8 @@ fn validate_foreign_key_integrity(
     Ok(())
 }
 
-fn unrecognized(physical_version: i64, reason: &str) -> LocalFileCacheError {
-    LocalFileCacheError::IncompatibleSchema(format!(
+fn unrecognized(physical_version: i64, reason: &str) -> StorageError {
+    StorageError::IncompatibleSchema(format!(
         "unrecognized at physical version {physical_version}: {reason}; database was not modified"
     ))
 }

@@ -4,6 +4,7 @@ mod diagnose;
 mod maintenance;
 mod portable;
 
+use crate::error::Lift;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -265,16 +266,17 @@ where
         };
 
         if read_only {
-            schema::validate_read_only(&mut conn)?;
+            schema::validate_read_only(&mut conn).lift()?;
         } else {
-            let outcome = schema::initialize(&mut conn, is_memory)?;
+            let outcome = schema::initialize(&mut conn, is_memory).lift()?;
             if !is_memory {
                 schema::apply_runtime_configuration(
                     &conn,
                     options.journal_mode,
                     options.synchronous,
                     &outcome,
-                )?;
+                )
+                .lift()?;
             }
         }
 
@@ -365,7 +367,7 @@ where
         let resolved = resolve_path_key(path.as_ref())?;
         let path_str = resolved.key();
 
-        let Some(row) = repository::find_file(&self.conn, &self.namespace, path_str)? else {
+        let Some(row) = repository::find_file(&self.conn, &self.namespace, path_str).lift()? else {
             #[cfg(feature = "tracing")]
             tracing::debug!("cache miss");
             #[cfg(feature = "metrics")]
@@ -374,7 +376,7 @@ where
             .increment(1);
             return Ok(None);
         };
-        let Some(payload_row) = repository::load_payload(&self.conn, row.id)? else {
+        let Some(payload_row) = repository::load_payload(&self.conn, row.id).lift()? else {
             #[cfg(feature = "metrics")]
             metrics::counter!("localcache.get.miss",
                 "namespace" => self.namespace.clone())
@@ -415,7 +417,7 @@ where
         let canonical = resolved.path();
         let path_str = resolved.key();
 
-        let Some(row) = repository::find_file(&self.conn, &self.namespace, path_str)? else {
+        let Some(row) = repository::find_file(&self.conn, &self.namespace, path_str).lift()? else {
             return Ok(None);
         };
         if is_expired(row.updated_at, self.ttl) {
@@ -428,7 +430,7 @@ where
             CacheStatus::Stale | CacheStatus::Missing => return Ok(None),
             CacheStatus::Fresh => {}
         }
-        let Some(payload_row) = repository::load_payload(&self.conn, row.id)? else {
+        let Some(payload_row) = repository::load_payload(&self.conn, row.id).lift()? else {
             return Ok(None);
         };
         let payload: T = self.decode(path_str, &payload_row.content, &payload_row.encoding)?;
@@ -545,7 +547,8 @@ where
             &bytes,
             encoding,
             self.payload_version,
-        )?;
+        )
+        .lift()?;
         // RFC 022 R6: a write is never its own eviction candidate.
         let evicted = self.enforce_max_entries(&tx, &[file_id])?;
         tx.commit().db()?;
@@ -695,7 +698,8 @@ where
                 bytes,
                 encoding,
                 self.payload_version,
-            )?;
+            )
+            .lift()?;
             written_ids.push(id);
             report.succeeded += 1;
         }
@@ -720,7 +724,7 @@ where
     {
         self.guard_write()?;
         let resolved = resolve_path_key(path.as_ref())?;
-        repository::delete_by_path(&self.conn, &self.namespace, resolved.key())
+        repository::delete_by_path(&self.conn, &self.namespace, resolved.key()).lift()
     }
 
     // ------------------------------------------------------------------
@@ -761,7 +765,7 @@ where
         }
         let canonical = resolved.path();
         let path_str = resolved.key();
-        let Some(row) = repository::find_file(&self.conn, &self.namespace, path_str)? else {
+        let Some(row) = repository::find_file(&self.conn, &self.namespace, path_str).lift()? else {
             #[cfg(feature = "tracing")]
             tracing::debug!(status = "Missing");
             return Ok(CacheStatus::Missing);
@@ -854,7 +858,7 @@ where
     /// Entries are ordered by `updated_at` descending (most recently written
     /// first).  Payload content is **not** loaded.
     pub fn list_entries(&self) -> Result<Vec<EntryInfo>, LocalFileCacheError> {
-        repository::list_entries(&self.conn, &self.namespace)
+        repository::list_entries(&self.conn, &self.namespace).lift()
     }
 
     // ------------------------------------------------------------------
@@ -984,7 +988,8 @@ where
                 &after,
                 rotation_page_rows(),
                 ROTATION_PAGE_BYTES,
-            )?;
+            )
+            .lift()?;
             let Some(last) = page.last() else {
                 break;
             };
@@ -1011,7 +1016,8 @@ where
                         &row.path,
                         old_key.as_bytes(),
                         new_key_arr.as_bytes(),
-                    )?;
+                    )
+                    .lift()?;
                     updates.push((row.file_id, content, tag));
                 }
             }
@@ -1019,12 +1025,12 @@ where
             // Write the page before the next one is read.
             let mut rows = updates.iter();
             if let Some((file_id, new_content, new_tag)) = rows.next() {
-                repository::update_payload_content(&tx, *file_id, new_content, new_tag)?;
+                repository::update_payload_content(&tx, *file_id, new_content, new_tag).lift()?;
                 #[cfg(test)]
                 test_hook(TestPoint::MidPage)?;
             }
             for (file_id, new_content, new_tag) in rows {
-                repository::update_payload_content(&tx, *file_id, new_content, new_tag)?;
+                repository::update_payload_content(&tx, *file_id, new_content, new_tag).lift()?;
             }
             total += updates.len();
             after = next_after;
@@ -1284,7 +1290,7 @@ where
     /// This is cheaper than `get()` because it does not load the payload.
     pub fn contains<P: AsRef<Path>>(&self, path: P) -> Result<bool, LocalFileCacheError> {
         let resolved = resolve_path_key(path.as_ref())?;
-        repository::exists(&self.conn, &self.namespace, resolved.key())
+        repository::exists(&self.conn, &self.namespace, resolved.key()).lift()
     }
 
     /// Return the exact stored paths of all entries in the current namespace,
@@ -1311,7 +1317,7 @@ where
         &self,
         path_like: Option<&str>,
     ) -> Result<Vec<std::path::PathBuf>, LocalFileCacheError> {
-        repository::keys(&self.conn, &self.namespace, path_like, None, None)
+        repository::keys(&self.conn, &self.namespace, path_like, None, None).lift()
     }
 
     // ------------------------------------------------------------------
@@ -1373,10 +1379,10 @@ where
             return Ok(false);
         }
         let path_str = resolved.key();
-        let Some(row) = repository::find_file(&self.conn, &self.namespace, path_str)? else {
+        let Some(row) = repository::find_file(&self.conn, &self.namespace, path_str).lift()? else {
             return Ok(false);
         };
-        repository::record_use(&self.conn, &self.namespace, row.id)?;
+        repository::record_use(&self.conn, &self.namespace, row.id).lift()?;
         Ok(true)
     }
 
@@ -1410,7 +1416,7 @@ where
         let Some(max) = self.max_entries else {
             return Ok(Vec::new());
         };
-        let count = repository::count_in_namespace(tx, &self.namespace)?;
+        let count = repository::count_in_namespace(tx, &self.namespace).lift()?;
         if count <= max {
             return Ok(Vec::new());
         }
@@ -1422,7 +1428,7 @@ where
         // Selection and deletion happen in one transaction — the caller's
         // `tx` — so the returned paths are exactly what was deleted, by
         // construction.
-        repository::evict_lru(tx, &self.namespace, excess, protected)
+        repository::evict_lru(tx, &self.namespace, excess, protected).lift()
     }
 
     fn encode(
@@ -1442,6 +1448,7 @@ where
             #[cfg(feature = "encryption")]
             guard.as_ref().map(crate::key::Key::as_bytes),
         )
+        .lift()
     }
 
     fn decode(&self, path: &str, bytes: &[u8], encoding: &str) -> Result<T, LocalFileCacheError> {
@@ -1456,6 +1463,7 @@ where
             #[cfg(feature = "encryption")]
             guard.as_ref().map(crate::key::Key::as_bytes),
         )
+        .lift()
     }
 
     /// Borrow the payload-type-independent parts of this engine.
@@ -1539,6 +1547,7 @@ where
         #[cfg(feature = "encryption")]
         guard.as_ref().map(crate::key::Key::as_bytes),
     )
+    .lift()
 }
 
 // ---------------------------------------------------------------------------

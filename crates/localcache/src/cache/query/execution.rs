@@ -2,6 +2,7 @@
 //! [`QueryReport`](super::QueryReport). Holds the RFC 021 plan tiers, the
 //! offset/limit materialization (RFC 022 R2), and the sort comparators.
 
+use crate::error::Lift;
 use std::path::PathBuf;
 
 use serde::{Serialize, de::DeserializeOwned};
@@ -65,7 +66,7 @@ where
         // pushdown reads stored text that nothing has authenticated.
         QueryPlan::Tier2 { .. }
             if q.core.is_keyed()
-                || !repository::namespace_all_json(q.core.conn, q.core.namespace)? =>
+                || !repository::namespace_all_json(q.core.conn, q.core.namespace).lift()? =>
         {
             QueryPlan::Tier3
         }
@@ -81,7 +82,8 @@ where
                 q.path_like.as_deref(),
                 prepared.path_in_dir(),
                 prepared.path_glob(),
-            )?;
+            )
+            .lift()?;
             let mut order: Vec<usize> = (0..candidates.len()).collect();
             if !q.order_by.is_empty() {
                 order.sort_by(|&ia, &ib| {
@@ -109,7 +111,8 @@ where
                 prepared.path_glob(),
                 &select_fields,
                 &where_fields,
-            )?;
+            )
+            .lift()?;
             let (candidates, field_values): (Vec<CandidateRow>, Vec<Vec<Option<f64>>>) =
                 rows.into_iter().unzip();
             let mut order: Vec<usize> = (0..candidates.len()).collect();
@@ -185,7 +188,8 @@ where
         q.path_like.as_deref(),
         prepared.path_in_dir(),
         prepared.path_glob(),
-    )?;
+    )
+    .lift()?;
 
     let mut matched: Vec<(CacheEntry<T>, serde_json::Value, i64)> = Vec::new();
     let mut skipped: Vec<SkippedEntry> = Vec::new();
@@ -300,7 +304,7 @@ where
         let window_end = (idx + want.min(repository::ID_LIST_CHUNK)).min(order.len());
         let window = &order[idx..window_end];
         let ids: Vec<i64> = window.iter().map(|&i| candidates[i].id).collect();
-        let payload_rows = repository::payloads_for_ids(q.core.conn, &ids)?;
+        let payload_rows = repository::payloads_for_ids(q.core.conn, &ids).lift()?;
         let mut payload_map: HashMap<i64, (Vec<u8>, String)> = payload_rows
             .into_iter()
             .map(|(id, content, encoding)| (id, (content, encoding)))
@@ -458,7 +462,7 @@ pub(super) fn describe_query_plan<T>(
         // pushdown reads stored text that nothing has authenticated.
         QueryPlan::Tier2 { .. }
             if q.core.is_keyed()
-                || !repository::namespace_all_json(q.core.conn, q.core.namespace)? =>
+                || !repository::namespace_all_json(q.core.conn, q.core.namespace).lift()? =>
         {
             QueryPlan::Tier3
         }

@@ -20,7 +20,7 @@ impl Drop for HookGuard {
     }
 }
 
-fn set_hook(hook: impl FnMut(TestPoint) -> Result<(), LocalFileCacheError> + 'static) -> HookGuard {
+fn set_hook(hook: impl FnMut(TestPoint) -> Result<(), StorageError> + 'static) -> HookGuard {
     TEST_HOOK.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
     HookGuard
 }
@@ -189,7 +189,7 @@ fn drop_errors_after_ddl_roll_back() {
     let before_drop = semantic_snapshot(&engine.conn);
     let hook = set_hook(|point| {
         if point == TestPoint::DropDdl {
-            return Err(LocalFileCacheError::DatabaseState("after drop".into()));
+            return Err(StorageError::DatabaseState("after drop".into()));
         }
         Ok(())
     });
@@ -349,7 +349,7 @@ fn list_fails_closed_on_an_invalid_owned_prefix_candidate() {
     assert!(
         matches!(
             error,
-            LocalFileCacheError::InvalidArgument {
+            StorageError::InvalidArgument {
                 argument: "index_name",
                 ..
             }
@@ -396,7 +396,7 @@ fn drop_rejects_every_non_owned_shape_and_leaves_it_in_place() {
         assert!(
             matches!(
                 error,
-                LocalFileCacheError::InvalidArgument {
+                StorageError::InvalidArgument {
                     argument: "index_name",
                     ..
                 }

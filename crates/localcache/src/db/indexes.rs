@@ -2,7 +2,7 @@
 
 use rusqlite::{Connection, TransactionBehavior};
 
-use crate::error::{ArgumentName, LocalFileCacheError, SqliteResultExt, invalid_argument};
+use crate::db::error::{ArgumentName, SqliteResultExt, StorageError, invalid_argument};
 
 pub(crate) const PUBLIC_INDEX_PREFIX: &str = "lc_user_";
 const IDENTIFIER_ERROR: &str = "not a valid SQLite identifier or not an allowed localcache index";
@@ -49,7 +49,7 @@ enum TestPoint {
 }
 
 #[cfg(test)]
-type TestHook = Box<dyn FnMut(TestPoint) -> Result<(), LocalFileCacheError>>;
+type TestHook = Box<dyn FnMut(TestPoint) -> Result<(), StorageError>>;
 
 #[cfg(test)]
 thread_local! {
@@ -59,7 +59,7 @@ thread_local! {
 
 #[cfg(test)]
 #[inline]
-fn test_hook(point: TestPoint) -> Result<(), LocalFileCacheError> {
+fn test_hook(point: TestPoint) -> Result<(), StorageError> {
     TEST_HOOK.with(|slot| {
         let mut hook = slot.borrow_mut();
         if let Some(hook) = hook.as_mut() {
@@ -69,10 +69,7 @@ fn test_hook(point: TestPoint) -> Result<(), LocalFileCacheError> {
     })
 }
 
-pub(crate) fn drop_path_index(
-    conn: &Connection,
-    suffix: &str,
-) -> Result<bool, LocalFileCacheError> {
+pub(crate) fn drop_path_index(conn: &Connection, suffix: &str) -> Result<bool, StorageError> {
     let full = format!("{PUBLIC_INDEX_PREFIX}{suffix}");
     let transaction =
         rusqlite::Transaction::new_unchecked(conn, TransactionBehavior::Immediate).db()?;
@@ -101,7 +98,7 @@ pub(crate) fn drop_path_index(
     Ok(true)
 }
 
-pub(crate) fn list_path_indexes(conn: &Connection) -> Result<Vec<String>, LocalFileCacheError> {
+pub(crate) fn list_path_indexes(conn: &Connection) -> Result<Vec<String>, StorageError> {
     let transaction =
         rusqlite::Transaction::new_unchecked(conn, TransactionBehavior::Deferred).db()?;
     let objects = public_schema_objects(&transaction)?;
@@ -114,9 +111,7 @@ pub(crate) fn list_path_indexes(conn: &Connection) -> Result<Vec<String>, LocalF
     Ok(names)
 }
 
-pub(crate) fn main_file_indexes(
-    conn: &Connection,
-) -> Result<Vec<IndexListRow>, LocalFileCacheError> {
+pub(crate) fn main_file_indexes(conn: &Connection) -> Result<Vec<IndexListRow>, StorageError> {
     let mut statement = conn
         .prepare(
             "SELECT name, \"unique\", origin, partial
@@ -140,7 +135,7 @@ pub(crate) fn main_file_indexes(
 pub(crate) fn main_index_xinfo(
     conn: &Connection,
     index_name: &str,
-) -> Result<Vec<IndexXinfoRow>, LocalFileCacheError> {
+) -> Result<Vec<IndexXinfoRow>, StorageError> {
     let mut statement = conn
         .prepare(
             "SELECT cid, name, \"desc\", coll, key
@@ -219,11 +214,11 @@ fn identifier_eq(left: &str, right: &str) -> bool {
             .all(|(left, right)| left.eq_ignore_ascii_case(&right))
 }
 
-fn identifier_error() -> LocalFileCacheError {
+fn identifier_error() -> StorageError {
     invalid_argument(ArgumentName::IndexName, IDENTIFIER_ERROR)
 }
 
-fn main_schema_objects(conn: &Connection) -> Result<Vec<SchemaObject>, LocalFileCacheError> {
+fn main_schema_objects(conn: &Connection) -> Result<Vec<SchemaObject>, StorageError> {
     let mut statement = conn
         .prepare(
             "SELECT type, name, tbl_name, sql
@@ -245,7 +240,7 @@ fn main_schema_objects(conn: &Connection) -> Result<Vec<SchemaObject>, LocalFile
     rows.collect::<Result<Vec<_>, _>>().db()
 }
 
-fn public_schema_objects(conn: &Connection) -> Result<Vec<SchemaObject>, LocalFileCacheError> {
+fn public_schema_objects(conn: &Connection) -> Result<Vec<SchemaObject>, StorageError> {
     let objects = main_schema_objects(conn)?;
     #[cfg(test)]
     test_hook(TestPoint::SchemaRead)?;
@@ -258,7 +253,7 @@ fn public_schema_objects(conn: &Connection) -> Result<Vec<SchemaObject>, LocalFi
 fn resolve_schema_object(
     conn: &Connection,
     requested: &str,
-) -> Result<Option<SchemaObject>, LocalFileCacheError> {
+) -> Result<Option<SchemaObject>, StorageError> {
     let objects = main_schema_objects(conn)?;
     #[cfg(test)]
     test_hook(TestPoint::SchemaRead)?;
@@ -275,7 +270,7 @@ fn resolve_schema_object(
 fn validate_owned_path_index(
     conn: &Connection,
     object: &SchemaObject,
-) -> Result<String, LocalFileCacheError> {
+) -> Result<String, StorageError> {
     if object.object_type != "index"
         || object.table_name != "files"
         || object.sql.is_none()
@@ -291,7 +286,7 @@ fn validate_index_shape(
     conn: &Connection,
     name: &str,
     expected: &[&str],
-) -> Result<(), LocalFileCacheError> {
+) -> Result<(), StorageError> {
     let row = main_file_indexes(conn)?
         .into_iter()
         .find(|row| identifier_eq(&row.name, name))

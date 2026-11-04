@@ -7,6 +7,7 @@
 //! `CacheEngine`'s private items directly -- no visibility was widened to
 //! make the move possible.
 
+use crate::error::Lift;
 use std::path::Path;
 
 use serde::{Serialize, de::DeserializeOwned};
@@ -53,7 +54,8 @@ where
         let resolved = resolve_path_key(path)?;
         let file_exists = resolved.exists();
         let canonical = resolved.path();
-        let entry_row = repository::find_file(&self.conn, &self.namespace, resolved.key())?;
+        let entry_row =
+            repository::find_file(&self.conn, &self.namespace, resolved.key()).lift()?;
 
         let Some(row) = entry_row else {
             return Ok(Diagnosis {

@@ -47,7 +47,8 @@ pub use cache::options::{
     CacheOptions, ChangeDetectionMode, Codec, JournalMode, ScanOptions, SynchronousMode,
 };
 pub use cache::query::{QueryBuilder, QueryReport, SkippedEntry, SortKey, SortOrder};
-pub use error::{DatabaseError, LocalFileCacheError};
+pub use db::DatabaseError;
+pub use error::LocalFileCacheError;
 pub use pool::{CacheOptionsExt, SyncCacheEngine};
 pub use read_pool::ReadPool;
 

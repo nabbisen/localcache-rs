@@ -10,7 +10,7 @@ use std::path::Path;
 use rusqlite::{Connection, params};
 use tempfile::TempDir;
 
-use crate::LocalFileCacheError;
+use crate::db::StorageError;
 
 use super::super::{
     CURRENT_VERSION,
@@ -485,7 +485,7 @@ fn every_failpoint_of_the_v5_migration_leaves_the_file_byte_identical() {
         let mut conn = Connection::open(&path).unwrap();
         let error = initialize_with_hook(&mut conn, false, &mut |point| {
             if point == failpoint {
-                Err(LocalFileCacheError::DatabaseState(format!(
+                Err(StorageError::DatabaseState(format!(
                     "synthetic failure at {point:?}"
                 )))
             } else {
@@ -567,7 +567,7 @@ fn a_hostile_v5_recency_fails_the_migration_and_leaves_the_file_unchanged() {
         let error = initialize(&mut conn, false).unwrap_err();
         let message = error.to_string();
         assert!(
-            matches!(error, LocalFileCacheError::DatabaseState(_)),
+            matches!(error, StorageError::DatabaseState(_)),
             "{column} = {hostile}: {message}"
         );
         assert!(
@@ -624,10 +624,7 @@ fn a_read_only_open_of_a_v5_database_reports_schema_not_current_and_changes_noth
     let mut reader =
         Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
     let error = super::super::validate_read_only(&mut reader).unwrap_err();
-    assert!(
-        matches!(error, LocalFileCacheError::SchemaNotCurrent),
-        "{error:?}"
-    );
+    assert!(matches!(error, StorageError::SchemaNotCurrent), "{error:?}");
     drop(reader);
     assert_eq!(bytes(&path), before);
 }
@@ -652,7 +649,7 @@ fn a_negative_recency_refuses_the_migration_until_the_row_is_fixed() {
     let mut conn = Connection::open(&path).unwrap();
     let error = initialize(&mut conn, false).unwrap_err();
     assert!(
-        matches!(&error, LocalFileCacheError::DatabaseState(m) if m.contains("outside the range")),
+        matches!(&error, StorageError::DatabaseState(m) if m.contains("outside the range")),
         "{error:?}"
     );
     drop(conn);

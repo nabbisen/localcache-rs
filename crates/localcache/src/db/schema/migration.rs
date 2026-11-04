@@ -2,7 +2,7 @@
 
 use rusqlite::{Transaction, params};
 
-use crate::error::{LocalFileCacheError, SqliteResultExt};
+use crate::db::error::{SqliteResultExt, StorageError};
 
 use super::CURRENT_VERSION;
 use super::classifier::{self, SchemaState};
@@ -59,7 +59,7 @@ impl StartingSnapshot {
     pub(super) fn capture(
         transaction: &Transaction<'_>,
         state: SchemaState,
-    ) -> Result<Self, LocalFileCacheError> {
+    ) -> Result<Self, StorageError> {
         let version = match state {
             SchemaState::Fresh => {
                 return Ok(Self {
@@ -159,7 +159,7 @@ impl StartingSnapshot {
     pub(super) fn validate_and_remove(
         &mut self,
         transaction: &Transaction<'_>,
-    ) -> Result<(), LocalFileCacheError> {
+    ) -> Result<(), StorageError> {
         if !self.active {
             return Ok(());
         }
@@ -253,7 +253,7 @@ impl StartingSnapshot {
     }
 }
 
-pub(super) fn create_fresh(transaction: &Transaction<'_>) -> Result<(), LocalFileCacheError> {
+pub(super) fn create_fresh(transaction: &Transaction<'_>) -> Result<(), StorageError> {
     transaction
         .execute_batch(
             "CREATE TABLE files (
@@ -285,8 +285,8 @@ pub(super) fn create_fresh(transaction: &Transaction<'_>) -> Result<(), LocalFil
 pub(super) fn migrate_v1_to_v2(
     transaction: &Transaction<'_>,
     files_high_water: i64,
-    hook: &mut dyn FnMut(MigrationPoint) -> Result<(), LocalFileCacheError>,
-) -> Result<(), LocalFileCacheError> {
+    hook: &mut dyn FnMut(MigrationPoint) -> Result<(), StorageError>,
+) -> Result<(), StorageError> {
     transaction
         .execute_batch(
             "CREATE TABLE __localcache_rfc010_files_v2 (
@@ -378,8 +378,8 @@ pub(super) fn migrate_v1_to_v2(
 
 pub(super) fn migrate_v2_to_v3(
     transaction: &Transaction<'_>,
-    hook: &mut dyn FnMut(MigrationPoint) -> Result<(), LocalFileCacheError>,
-) -> Result<(), LocalFileCacheError> {
+    hook: &mut dyn FnMut(MigrationPoint) -> Result<(), StorageError>,
+) -> Result<(), StorageError> {
     transaction
         .execute_batch(
             "ALTER TABLE files
@@ -395,8 +395,8 @@ pub(super) fn migrate_v2_to_v3(
 
 pub(super) fn migrate_v3_to_v4(
     transaction: &Transaction<'_>,
-    hook: &mut dyn FnMut(MigrationPoint) -> Result<(), LocalFileCacheError>,
-) -> Result<(), LocalFileCacheError> {
+    hook: &mut dyn FnMut(MigrationPoint) -> Result<(), StorageError>,
+) -> Result<(), StorageError> {
     transaction
         .execute_batch(
             "ALTER TABLE files
@@ -412,8 +412,8 @@ pub(super) fn migrate_v3_to_v4(
 
 pub(super) fn migrate_v4_to_v5(
     transaction: &Transaction<'_>,
-    hook: &mut dyn FnMut(MigrationPoint) -> Result<(), LocalFileCacheError>,
-) -> Result<(), LocalFileCacheError> {
+    hook: &mut dyn FnMut(MigrationPoint) -> Result<(), StorageError>,
+) -> Result<(), StorageError> {
     let invalid_storage: i64 = transaction
         .query_row(
             "SELECT count(*) FROM files WHERE typeof(mtime) <> 'integer'",
@@ -481,8 +481,8 @@ pub(super) fn migrate_v4_to_v5(
 /// the caller after `user_version` is written.
 pub(super) fn migrate_v5_to_v6(
     transaction: &Transaction<'_>,
-    hook: &mut dyn FnMut(MigrationPoint) -> Result<(), LocalFileCacheError>,
-) -> Result<(), LocalFileCacheError> {
+    hook: &mut dyn FnMut(MigrationPoint) -> Result<(), StorageError>,
+) -> Result<(), StorageError> {
     transaction
         .execute_batch(
             "ALTER TABLE files
@@ -539,7 +539,7 @@ pub(super) fn migrate_v5_to_v6(
             {
                 migration_invariant(RECENCY_OUT_OF_RANGE)
             }
-            other => LocalFileCacheError::Database(crate::error::DatabaseError::from_sqlite(other)),
+            other => StorageError::Database(crate::db::DatabaseError::from_sqlite(other)),
         })?;
     hook(MigrationPoint::AfterV6Backfill)?;
 
@@ -565,7 +565,7 @@ pub(super) fn migrate_v5_to_v6(
 /// from the starting snapshot by the recurrence itself (not by the window form
 /// the migration used), is an integer, and is below 2^62. Strictly increasing
 /// per namespace in the rule's order follows from the recurrence.
-fn validate_use_order(transaction: &Transaction<'_>) -> Result<(), LocalFileCacheError> {
+fn validate_use_order(transaction: &Transaction<'_>) -> Result<(), StorageError> {
     const LIMIT: i64 = 1 << 62;
     let mut statement = transaction
         .prepare(
@@ -611,7 +611,7 @@ fn validate_use_order(transaction: &Transaction<'_>) -> Result<(), LocalFileCach
 
 pub(super) fn validate_final_postconditions(
     transaction: &Transaction<'_>,
-) -> Result<(), LocalFileCacheError> {
+) -> Result<(), StorageError> {
     let version = classifier::read_user_version(transaction)?;
     match classifier::classify(transaction, version)? {
         SchemaState::Version {
@@ -624,9 +624,7 @@ pub(super) fn validate_final_postconditions(
     }
 }
 
-fn validate_v1_shadow_equivalence(
-    transaction: &Transaction<'_>,
-) -> Result<(), LocalFileCacheError> {
+fn validate_v1_shadow_equivalence(transaction: &Transaction<'_>) -> Result<(), StorageError> {
     let files_mismatch: i64 = transaction
         .query_row(
             "SELECT
@@ -679,7 +677,7 @@ fn validate_v1_shadow_equivalence(
     Ok(())
 }
 
-fn validate_v4_conversion(transaction: &Transaction<'_>) -> Result<(), LocalFileCacheError> {
+fn validate_v4_conversion(transaction: &Transaction<'_>) -> Result<(), StorageError> {
     let mismatch: i64 = transaction
         .query_row(
             "SELECT
@@ -712,8 +710,8 @@ fn validate_v4_conversion(transaction: &Transaction<'_>) -> Result<(), LocalFile
 
 const RECENCY_OUT_OF_RANGE: &str = "a stored recency is outside the range the use order can hold";
 
-fn migration_invariant(reason: &str) -> LocalFileCacheError {
-    LocalFileCacheError::DatabaseState(format!(
+fn migration_invariant(reason: &str) -> StorageError {
+    StorageError::DatabaseState(format!(
         "migration precondition or postcondition failed: {reason}; transaction will be rolled back"
     ))
 }

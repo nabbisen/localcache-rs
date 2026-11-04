@@ -25,6 +25,7 @@
 //! # Ok::<(), localcache::LocalFileCacheError>(())
 //! ```
 
+use crate::error::Lift;
 use std::path::PathBuf;
 
 use serde::{Serialize, de::DeserializeOwned};
@@ -388,7 +389,8 @@ where
             self.path_like.as_deref(),
             prepared.path_in_dir(),
             prepared.path_glob(),
-        )?;
+        )
+        .lift()?;
         let execution = describe_query_plan(&self)?;
         Ok(format!("{sql_plan}\n{execution}"))
     }

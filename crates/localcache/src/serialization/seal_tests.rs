@@ -220,13 +220,13 @@ fn encode_returns_a_bound_tag_and_decode_needs_the_same_path() {
     assert_eq!(decode("/data/a.txt", tag).unwrap(), value);
     assert!(matches!(
         decode("/data/b.txt", tag),
-        Err(LocalFileCacheError::EncryptionError(_))
+        Err(FormatError::EncryptionError(_))
     ));
     // the tag the payload is read under is part of what was sealed
     #[cfg(feature = "compression")]
     assert!(matches!(
         decode("/data/a.txt", "zstd-aes256gcm-bound"),
-        Err(LocalFileCacheError::EncryptionError(_))
+        Err(FormatError::EncryptionError(_))
     ));
 }
 
@@ -252,23 +252,23 @@ fn with_a_key_only_a_bound_payload_is_read() {
     // with a key
     assert!(matches!(
         decode(&plain, "raw", Some(&key)),
-        Err(LocalFileCacheError::UnsealedEntry)
+        Err(FormatError::UnsealedEntry)
     ));
     assert!(matches!(
         decode(&legacy, "raw-aes256gcm", Some(&key)),
-        Err(LocalFileCacheError::UnsealedEntry)
+        Err(FormatError::UnsealedEntry)
     ));
     // a bound tag on legacy bytes is an authentication failure, not a read
     assert!(matches!(
         decode(&legacy, "raw-aes256gcm-bound", Some(&key)),
-        Err(LocalFileCacheError::EncryptionError(_))
+        Err(FormatError::EncryptionError(_))
     ));
     // a tag this build cannot decode stays `UnknownEncoding`, whatever the key
     for tag in ["bogus", "bogus-aes256gcm", "bogus-aes256gcm-bound"] {
         assert!(
             matches!(
                 decode(&plain, tag, Some(&key)),
-                Err(LocalFileCacheError::UnknownEncoding(_))
+                Err(FormatError::UnknownEncoding(_))
             ),
             "{tag}"
         );
@@ -279,13 +279,13 @@ fn with_a_key_only_a_bound_payload_is_read() {
         assert!(
             matches!(
                 decode(&legacy, tag, None),
-                Err(LocalFileCacheError::MissingEncryptionKey)
+                Err(FormatError::MissingEncryptionKey)
             ),
             "{tag}"
         );
     }
     // the refusal text names the remedy
-    let text = LocalFileCacheError::UnsealedEntry.to_string();
+    let text = FormatError::UnsealedEntry.to_string();
     assert!(text.contains("rotate_encryption_key"), "{text}");
     assert!(text.contains("purge"), "{text}");
 }
@@ -320,10 +320,10 @@ fn reseal_takes_a_payload_from_any_state_to_bound_under_the_new_key() {
     // a tag this build cannot decode
     assert!(matches!(
         reseal(&plain, "bogus", path, &old, &new),
-        Err(LocalFileCacheError::UnknownEncoding(_))
+        Err(FormatError::UnknownEncoding(_))
     ));
     assert!(matches!(
         reseal(&plain, "bogus-aes256gcm-bound", path, &old, &new),
-        Err(LocalFileCacheError::UnknownEncoding(_))
+        Err(FormatError::UnknownEncoding(_))
     ));
 }

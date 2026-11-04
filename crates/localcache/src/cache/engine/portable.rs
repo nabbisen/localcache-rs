@@ -8,6 +8,7 @@
 //! `CacheEngine`'s private items directly -- no visibility was widened to
 //! make the move possible.
 
+use crate::error::Lift;
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::cache::entry::ExportRecord;
@@ -34,7 +35,7 @@ where
     pub fn export_entries(&self) -> Result<Vec<ExportRecord>, LocalFileCacheError> {
         use base64::{Engine as _, engine::general_purpose::STANDARD};
 
-        let rows = repository::load_all_full(&self.conn, &self.namespace)?;
+        let rows = repository::load_all_full(&self.conn, &self.namespace).lift()?;
         Ok(rows
             .into_iter()
             .map(|r| ExportRecord {
@@ -165,7 +166,7 @@ where
         U: Serialize + DeserializeOwned,
     {
         self.guard_write()?;
-        let rows = repository::load_all_full(&source.conn, &source.namespace)?;
+        let rows = repository::load_all_full(&source.conn, &source.namespace).lift()?;
         self.import_bounded(&rows)
     }
 
@@ -217,7 +218,9 @@ where
         if rows.iter().any(|row| {
             repository::use_value_of_record(row.last_accessed_at, row.updated_at).is_none()
         }) {
-            return Err(repository::unrepresentable_recency());
+            return Err(LocalFileCacheError::from_storage(
+                repository::unrepresentable_recency(),
+            ));
         }
         if let Some(max_entries) = self.max_entries {
             let distinct = rows
@@ -238,7 +241,7 @@ where
             rusqlite::TransactionBehavior::Immediate,
         )
         .db()?;
-        let written = repository::import_rows_in_tx(&tx, &self.namespace, rows)?;
+        let written = repository::import_rows_in_tx(&tx, &self.namespace, rows).lift()?;
         let evicted = self.enforce_max_entries(&tx, &written)?;
         tx.commit().db()?;
         if let Some(callback) = &self.evict_callback {
@@ -254,6 +257,6 @@ where
     /// Returns names sorted alphabetically.  Useful for inspecting which
     /// namespaces exist before running maintenance or migration tasks.
     pub fn namespace_list(&self) -> Result<Vec<String>, LocalFileCacheError> {
-        repository::list_namespaces(&self.conn)
+        repository::list_namespaces(&self.conn).lift()
     }
 }
