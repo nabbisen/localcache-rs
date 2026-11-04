@@ -10,9 +10,19 @@ use tempfile::TempDir;
 
 use super::*;
 use crate::CacheEngine;
-use crate::serialization::{seal_without_binding_for_tests, serialize_bincode};
+use crate::serialization::serialize_bincode;
 
-const OLD: [u8; 32] = [0x21; 32];
+/// The key of the committed v0.23.1 fixture (`tests/fixtures/README.md`): its
+/// public bytes are `0x40 + i`, and the rows it sealed carry no path binding.
+const OLD: [u8; 32] = {
+    let mut key = [0_u8; 32];
+    let mut i = 0;
+    while i < 32 {
+        key[i] = 0x40 + i as u8;
+        i += 1;
+    }
+    key
+};
 const NEW: [u8; 32] = [0x22; 32];
 
 struct HookGuard;
@@ -77,10 +87,56 @@ fn payload(i: usize) -> Vec<u8> {
     (0..40).map(|j| (i * 7 + j) as u8).collect()
 }
 
+/// The entries of the fixture's `raw` namespace, as the released v0.23.1
+/// wrote them: `(sealed content, tag, payload)`. The payload is the
+/// fixture generator's `payload(0, entry_index)`.
+fn legacy_rows() -> Vec<(Vec<u8>, String, Vec<u8>)> {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/compat-v0_23-encrypted.sqlite3");
+    let conn =
+        rusqlite::Connection::open_with_flags(fixture, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .unwrap();
+    let mut statement = conn
+        .prepare(
+            "SELECT p.content, p.encoding FROM payloads p JOIN files f ON f.id = p.file_id \
+             WHERE f.namespace = 'raw' ORDER BY f.path",
+        )
+        .unwrap();
+    let rows: Vec<(Vec<u8>, String)> = statement
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(
+        rows.len(),
+        3,
+        "the fixture's raw namespace has three entries"
+    );
+    rows.into_iter()
+        .enumerate()
+        .map(|(entry_index, (content, tag))| {
+            let plain: Vec<u8> = (0..200)
+                .map(|j| ((entry_index * 13 + j * 3) % 251) as u8)
+                .collect();
+            (content, tag, plain)
+        })
+        .collect()
+}
+
+/// What `get` returns for entry `i` of `mixed_namespace`: the third state
+/// carries a fixture payload, the other two `payload(i)`.
+fn expected(i: usize) -> Vec<u8> {
+    match i % 3 {
+        2 => legacy_rows()[(i / 3) % 3].2.clone(),
+        _ => payload(i),
+    }
+}
+
 /// Every row of `payloads`: `(file_id, tag, content)`.
 fn snapshot(engine: &CacheEngine<Vec<u8>>) -> Vec<(i64, String, Vec<u8>)> {
     let mut stmt = engine
-        .conn
+        .store
+        .raw()
         .prepare("SELECT file_id, encoding, content FROM payloads ORDER BY file_id")
         .unwrap();
     stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
@@ -103,16 +159,19 @@ fn mixed_namespace(ns: &Namespace, n: usize) -> Vec<PathBuf> {
             0 => keyed.set(path, &payload(i)).unwrap(),
             1 => keyless.set(path, &payload(i)).unwrap(),
             _ => {
+                // Sealed without binding, as the released v0.23.1 wrote it:
+                // the row of the committed fixture, put in by SQL.
                 keyless.set(path, &payload(i)).unwrap();
-                let sealed =
-                    seal_without_binding_for_tests(&serialize_bincode(&payload(i)).unwrap(), &OLD);
+                let (sealed, tag, _) = legacy_rows().swap_remove((i / 3) % 3);
                 keyless
-                    .conn
+                    .store
+                    .raw()
                     .execute(
-                        "UPDATE payloads SET content = ?1, encoding = 'raw-aes256gcm' \
-                         WHERE file_id = (SELECT id FROM files WHERE path = ?2)",
+                        "UPDATE payloads SET content = ?1, encoding = ?2 \
+                         WHERE file_id = (SELECT id FROM files WHERE path = ?3)",
                         rusqlite::params![
                             sealed,
+                            tag,
                             std::fs::canonicalize(path).unwrap().to_str().unwrap()
                         ],
                     )
@@ -128,7 +187,7 @@ fn assert_all_bound_and_readable(ns: &Namespace, key: [u8; 32], paths: &[PathBuf
     for (i, path) in paths.iter().enumerate() {
         assert_eq!(
             engine.get(path).unwrap().unwrap().payload,
-            payload(i),
+            expected(i),
             "entry {i}"
         );
     }
@@ -285,7 +344,7 @@ fn a_failure_anywhere_leaves_the_database_byte_identical_and_the_old_key() {
             for (i, path) in paths.iter().enumerate() {
                 let got = engine.get(path);
                 match i % 3 {
-                    0 => assert_eq!(got.unwrap().unwrap().payload, payload(i)),
+                    0 => assert_eq!(got.unwrap().unwrap().payload, expected(i)),
                     _ => assert!(
                         matches!(got, Err(LocalFileCacheError::UnsealedEntry)),
                         "entry {i}"
@@ -315,7 +374,8 @@ fn an_unknown_tag_or_a_wrong_key_aborts_and_changes_nothing() {
 
     // the last row (in path order) gets a tag nothing can decode
     engine
-        .conn
+        .store
+        .raw()
         .execute(
             "UPDATE payloads SET encoding = 'bogus-aes256gcm' \
              WHERE file_id = (SELECT id FROM files ORDER BY path DESC LIMIT 1)",

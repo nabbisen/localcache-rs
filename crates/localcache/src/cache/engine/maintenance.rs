@@ -11,8 +11,7 @@ use std::path::Path;
 
 use serde::{Serialize, de::DeserializeOwned};
 
-use crate::db::{indexes, repository};
-use crate::error::{LocalFileCacheError, SqliteResultExt};
+use crate::error::LocalFileCacheError;
 
 use super::{CacheEngine, is_expired};
 
@@ -26,22 +25,20 @@ where
     T: Serialize + DeserializeOwned,
 {
     pub fn entry_count(&self) -> Result<usize, LocalFileCacheError> {
-        repository::count_in_namespace(&self.conn, &self.namespace).lift()
+        self.store.count().lift()
     }
 
     pub fn entry_count_by_version(&self) -> Result<Vec<(u32, usize)>, LocalFileCacheError> {
-        repository::count_by_version(&self.conn, &self.namespace).lift()
+        self.store.count_by_version().lift()
     }
 
     /// Return aggregate statistics for the current namespace.
     pub fn cache_stats(&self) -> Result<crate::cache::entry::CacheStats, LocalFileCacheError> {
         use crate::cache::entry::CacheStats;
 
-        let raw = repository::aggregate_stats(&self.conn, &self.namespace).lift()?;
-        let entries_by_encoding =
-            repository::encoding_breakdown(&self.conn, &self.namespace).lift()?;
-        let entries_by_payload_version =
-            repository::count_by_version(&self.conn, &self.namespace).lift()?;
+        let raw = self.store.aggregate_stats().lift()?;
+        let entries_by_encoding = self.store.encoding_breakdown().lift()?;
+        let entries_by_payload_version = self.store.count_by_version().lift()?;
 
         Ok(CacheStats {
             namespace: self.namespace.clone(),
@@ -94,13 +91,7 @@ where
         let mut removed = 0usize;
         let mut cursor = String::new();
         loop {
-            let page = repository::paths_page_in_namespace(
-                &self.conn,
-                &self.namespace,
-                &cursor,
-                page_size,
-            )
-            .lift()?;
+            let page = self.store.paths_page(&cursor, page_size).lift()?;
             if page.is_empty() {
                 break;
             }
@@ -112,7 +103,7 @@ where
                 .filter(|p| !Path::new(p).exists())
                 .collect();
             if !absent.is_empty() {
-                removed += repository::delete_paths(&self.conn, &self.namespace, &absent).lift()?;
+                removed += self.store.delete_paths(&absent).lift()?;
             }
             if last_page {
                 break;
@@ -141,13 +132,7 @@ where
         let mut removed = 0usize;
         let mut cursor = String::new();
         loop {
-            let page = repository::path_rows_page_in_namespace(
-                &self.conn,
-                &self.namespace,
-                &cursor,
-                page_size,
-            )
-            .lift()?;
+            let page = self.store.path_rows_page(&cursor, page_size).lift()?;
             if page.is_empty() {
                 break;
             }
@@ -160,8 +145,7 @@ where
                 .map(|(path, _)| path)
                 .collect();
             if !expired.is_empty() {
-                removed +=
-                    repository::delete_paths(&self.conn, &self.namespace, &expired).lift()?;
+                removed += self.store.delete_paths(&expired).lift()?;
             }
             if last_page {
                 break;
@@ -172,14 +156,14 @@ where
 
     pub fn purge_stale_versions(&self) -> Result<usize, LocalFileCacheError> {
         self.guard_write()?;
-        repository::delete_by_other_version(&self.conn, &self.namespace, self.payload_version)
+        self.store
+            .delete_by_other_version(self.payload_version)
             .lift()
     }
 
     pub fn shrink_database(&self) -> Result<(), LocalFileCacheError> {
         self.guard_write()?;
-        self.conn.execute_batch("VACUUM;").db()?;
-        Ok(())
+        self.store.vacuum().lift()
     }
 
     /// Drop an owned main-schema user index by suffix.
@@ -194,7 +178,7 @@ where
     )]
     pub fn drop_path_index(&self, name: &str) -> Result<bool, LocalFileCacheError> {
         self.guard_write()?;
-        indexes::drop_path_index(&self.conn, name).lift()
+        self.store.drop_path_index(name).lift()
     }
 
     /// List structurally valid main-schema user indexes in alphabetical order.
@@ -206,7 +190,7 @@ where
         note = "the index duplicates the built-in unique index on (namespace, path) and cannot speed up a query; kept to find indexes created earlier"
     )]
     pub fn list_path_indexes(&self) -> Result<Vec<String>, LocalFileCacheError> {
-        indexes::list_path_indexes(&self.conn).lift()
+        self.store.list_path_indexes().lift()
     }
 }
 

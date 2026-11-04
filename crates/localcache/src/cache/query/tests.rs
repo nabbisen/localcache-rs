@@ -56,7 +56,8 @@ fn write_file(dir: &TempDir, name: &str) -> PathBuf {
 
 fn file_id<T>(engine: &CacheEngine<T>, path: &std::path::Path) -> i64 {
     engine
-        .conn
+        .store
+        .raw()
         .query_row(
             "SELECT id FROM files WHERE namespace = ?1 AND path = ?2",
             params![engine.namespace, path.display().to_string()],
@@ -72,7 +73,8 @@ fn set_mtime_updated_at(
     updated_at: i64,
 ) {
     engine
-        .conn
+        .store
+        .raw()
         .execute(
             "UPDATE files SET mtime = ?1, updated_at = ?2 WHERE namespace = ?3 AND path = ?4",
             params![
@@ -238,7 +240,8 @@ fn mixed_encoding_namespace_with_field_predicate_matches_all_decode_path() {
     assert_ne!(tag, "json", "the whole point is a non-json row");
     let id = file_id(&engine, &p_other_high);
     engine
-        .conn
+        .store
+        .raw()
         .execute(
             "UPDATE payloads SET content = ?1, encoding = ?2 WHERE file_id = ?3",
             params![bytes, tag, id],
@@ -366,7 +369,8 @@ fn undecodable_payload_and_missing_payload_row_are_skipped_and_backfilled() {
     // Orphan: file row survives, its payload row is deleted.
     let orphan_id = file_id(&engine, &p_orphan);
     engine
-        .conn
+        .store
+        .raw()
         .execute(
             "DELETE FROM payloads WHERE file_id = ?1",
             params![orphan_id],
@@ -376,7 +380,8 @@ fn undecodable_payload_and_missing_payload_row_are_skipped_and_backfilled() {
     // Corrupt: payload row survives, its content is not valid JSON.
     let corrupt_id = file_id(&engine, &p_corrupt);
     engine
-        .conn
+        .store
+        .raw()
         .execute(
             "UPDATE payloads SET content = ?1 WHERE file_id = ?2",
             params![b"not valid json".to_vec(), corrupt_id],
@@ -431,13 +436,15 @@ fn make_bad_row(engine: &CacheEngine<Value>, path: &std::path::Path, kind: BadKi
     match kind {
         BadKind::Orphan => {
             engine
-                .conn
+                .store
+                .raw()
                 .execute("DELETE FROM payloads WHERE file_id = ?1", params![id])
                 .unwrap();
         }
         BadKind::Corrupt => {
             engine
-                .conn
+                .store
+                .raw()
                 .execute(
                     "UPDATE payloads SET content = ?1 WHERE file_id = ?2",
                     params![b"not valid json".to_vec(), id],
@@ -527,7 +534,8 @@ fn offset_counts_only_successfully_decoded_rows_tier3() {
 
     let bad_id = file_id(&engine, &p_bad);
     engine
-        .conn
+        .store
+        .raw()
         .execute(
             "UPDATE payloads SET content = ?1 WHERE file_id = ?2",
             params![b"not valid json".to_vec(), bad_id],
@@ -550,7 +558,8 @@ fn offset_counts_only_successfully_decoded_rows_tier3() {
     assert_ne!(tag, "json", "the whole point is a non-json row");
     let c_id = file_id(&engine, &p_c);
     engine
-        .conn
+        .store
+        .raw()
         .execute(
             "UPDATE payloads SET content = ?1, encoding = ?2 WHERE file_id = ?3",
             params![bytes, tag, c_id],
@@ -1004,4 +1013,32 @@ fn run_report_lists_a_payload_that_decodes_but_cannot_become_json() {
             entry.error
         );
     }
+}
+
+/// Moved from `db/indexes/tests.rs` (RFC 030 slice 3), where it was two
+/// assertions in the main-schema-wins test: a `files` table in `temp` or in an
+/// attached database, with a row of its own, is never read by the query layer.
+/// The index-level half of that test stays in `db`, over a bare connection.
+#[test]
+fn a_files_table_in_temp_or_an_attached_database_is_never_queried() {
+    let engine: CacheEngine<Vec<f32>> =
+        CacheEngine::builder().database(":memory:").build().unwrap();
+    engine
+        .store
+        .raw()
+        .execute_batch(
+            "CREATE TEMP TABLE files(namespace TEXT, path TEXT, marker TEXT);
+             INSERT INTO temp.files VALUES ('default', '/temp-only', 'TEMP');
+             CREATE INDEX temp.lc_user_collision ON files(path);
+             ATTACH ':memory:' AS other;
+             CREATE TABLE other.files(namespace TEXT, path TEXT, marker TEXT);
+             INSERT INTO other.files VALUES ('default', '/attached-only', 'ATTACHED');
+             CREATE INDEX other.lc_user_collision ON files(namespace DESC);",
+        )
+        .unwrap();
+    assert!(
+        engine.query().run().unwrap().is_empty(),
+        "query read a non-main collision row"
+    );
+    engine.query().dry_run().unwrap();
 }

@@ -5,11 +5,14 @@ use std::sync::{
 };
 
 use super::*;
-use crate::CacheEngine;
+use crate::db::schema;
 use tempfile::TempDir;
 
-fn engine() -> CacheEngine<Vec<f32>> {
-    CacheEngine::builder().database(":memory:").build().unwrap()
+/// A bare connection with the current schema; no engine is involved.
+fn connection() -> Connection {
+    let mut conn = Connection::open_in_memory().unwrap();
+    schema::initialize(&mut conn, true).unwrap();
+    conn
 }
 
 struct HookGuard;
@@ -183,28 +186,28 @@ fn identifier_equality_and_quoting_are_exact() {
 
 #[test]
 fn drop_errors_after_ddl_roll_back() {
-    let engine = engine();
-    install_semantic_fixture(&engine.conn);
-    legacy_index(&engine.conn, "rollback_drop");
-    let before_drop = semantic_snapshot(&engine.conn);
+    let conn = connection();
+    install_semantic_fixture(&conn);
+    legacy_index(&conn, "rollback_drop");
+    let before_drop = semantic_snapshot(&conn);
     let hook = set_hook(|point| {
         if point == TestPoint::DropDdl {
             return Err(StorageError::DatabaseState("after drop".into()));
         }
         Ok(())
     });
-    assert!(drop_path_index(&engine.conn, "rollback_drop").is_err());
+    assert!(drop_path_index(&conn, "rollback_drop").is_err());
     drop(hook);
-    assert_eq!(semantic_snapshot(&engine.conn), before_drop);
-    assert!(drop_path_index(&engine.conn, "rollback_drop").unwrap());
+    assert_eq!(semantic_snapshot(&conn), before_drop);
+    assert!(drop_path_index(&conn, "rollback_drop").unwrap());
 }
 
 #[test]
 fn panic_after_drop_ddl_rolls_back() {
-    let engine = engine();
-    install_semantic_fixture(&engine.conn);
-    legacy_index(&engine.conn, "panic_drop");
-    let before = semantic_snapshot(&engine.conn);
+    let conn = connection();
+    install_semantic_fixture(&conn);
+    legacy_index(&conn, "panic_drop");
+    let before = semantic_snapshot(&conn);
     let hook = set_hook(|point| {
         if point == TestPoint::DropDdl {
             panic!("synthetic post-drop panic");
@@ -212,47 +215,42 @@ fn panic_after_drop_ddl_rolls_back() {
         Ok(())
     });
     let unwind = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        let _ = drop_path_index(&engine.conn, "panic_drop");
+        let _ = drop_path_index(&conn, "panic_drop");
     }));
     drop(hook);
     assert!(unwind.is_err());
-    assert_eq!(semantic_snapshot(&engine.conn), before);
-    assert!(drop_path_index(&engine.conn, "panic_drop").unwrap());
+    assert_eq!(semantic_snapshot(&conn), before);
+    assert!(drop_path_index(&conn, "panic_drop").unwrap());
 }
 
 #[test]
 fn nested_transaction_fails_before_mutation() {
-    let engine = engine();
-    legacy_index(&engine.conn, "nested");
-    let outer = engine.conn.unchecked_transaction().unwrap();
-    assert!(drop_path_index(&engine.conn, "nested").is_err());
+    let conn = connection();
+    legacy_index(&conn, "nested");
+    let outer = conn.unchecked_transaction().unwrap();
+    assert!(drop_path_index(&conn, "nested").is_err());
     outer.rollback().unwrap();
-    assert_eq!(list_path_indexes(&engine.conn).unwrap(), ["lc_user_nested"]);
+    assert_eq!(list_path_indexes(&conn).unwrap(), ["lc_user_nested"]);
 }
 
 #[test]
 fn main_schema_wins_over_temp_and_attached_collisions() {
-    let engine = engine();
-    engine
-        .conn
-        .execute_batch(
-            "CREATE TEMP TABLE files(namespace TEXT, path TEXT, marker TEXT);
+    let conn = connection();
+    conn.execute_batch(
+        "CREATE TEMP TABLE files(namespace TEXT, path TEXT, marker TEXT);
              INSERT INTO temp.files VALUES ('default', '/temp-only', 'TEMP');
              CREATE INDEX temp.lc_user_collision ON files(path);
              ATTACH ':memory:' AS other;
              CREATE TABLE other.files(namespace TEXT, path TEXT, marker TEXT);
              INSERT INTO other.files VALUES ('default', '/attached-only', 'ATTACHED');
              CREATE INDEX other.lc_user_collision ON files(namespace DESC);",
-        )
-        .unwrap();
-    let collisions_without_main = semantic_snapshot(&engine.conn);
+    )
+    .unwrap();
+    let collisions_without_main = semantic_snapshot(&conn);
 
-    assert_eq!(legacy_index(&engine.conn, "collision"), "lc_user_collision");
-    assert_eq!(
-        list_path_indexes(&engine.conn).unwrap(),
-        ["lc_user_collision"]
-    );
-    let main_row = main_file_indexes(&engine.conn)
+    assert_eq!(legacy_index(&conn, "collision"), "lc_user_collision");
+    assert_eq!(list_path_indexes(&conn).unwrap(), ["lc_user_collision"]);
+    let main_row = main_file_indexes(&conn)
         .unwrap()
         .into_iter()
         .find(|row| row.name == "lc_user_collision")
@@ -267,12 +265,11 @@ fn main_schema_wins_over_temp_and_attached_collisions() {
         }
     );
     validate_index_terms(
-        &main_index_xinfo(&engine.conn, "lc_user_collision").unwrap(),
+        &main_index_xinfo(&conn, "lc_user_collision").unwrap(),
         &["namespace", "path"],
     )
     .unwrap();
-    let temp_term: (String, i64) = engine
-        .conn
+    let temp_term: (String, i64) = conn
         .query_row(
             "SELECT name, \"desc\" FROM pragma_index_xinfo('lc_user_collision', 'temp')
              WHERE key = 1 ORDER BY seqno LIMIT 1",
@@ -280,8 +277,7 @@ fn main_schema_wins_over_temp_and_attached_collisions() {
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .unwrap();
-    let attached_term: (String, i64) = engine
-        .conn
+    let attached_term: (String, i64) = conn
         .query_row(
             "SELECT name, \"desc\" FROM pragma_index_xinfo('lc_user_collision', 'other')
              WHERE key = 1 ORDER BY seqno LIMIT 1",
@@ -292,60 +288,44 @@ fn main_schema_wins_over_temp_and_attached_collisions() {
     assert_eq!(temp_term, ("path".into(), 0));
     assert_eq!(attached_term, ("namespace".into(), 1));
     assert_eq!(
-        engine
-            .conn
-            .query_row("SELECT path, marker FROM temp.files", [], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })
-            .unwrap(),
+        conn.query_row("SELECT path, marker FROM temp.files", [], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .unwrap(),
         ("/temp-only".into(), "TEMP".into())
     );
     assert_eq!(
-        engine
-            .conn
-            .query_row("SELECT path, marker FROM other.files", [], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })
-            .unwrap(),
+        conn.query_row("SELECT path, marker FROM other.files", [], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .unwrap(),
         ("/attached-only".into(), "ATTACHED".into())
     );
-    assert!(
-        engine.query().run().unwrap().is_empty(),
-        "query read a non-main collision row"
-    );
-    engine.query().dry_run().unwrap();
 
-    assert!(drop_path_index(&engine.conn, "collision").unwrap());
+    assert!(drop_path_index(&conn, "collision").unwrap());
     for schema in ["temp", "other"] {
         let sql = format!(
             "SELECT count(*) FROM {schema}.sqlite_schema WHERE type = 'index' AND name = 'lc_user_collision'"
         );
         assert_eq!(
-            engine
-                .conn
-                .query_row(&sql, [], |row| row.get::<_, i64>(0))
+            conn.query_row(&sql, [], |row| row.get::<_, i64>(0))
                 .unwrap(),
             1
         );
     }
-    assert!(!drop_path_index(&engine.conn, "collision").unwrap());
-    assert_eq!(semantic_snapshot(&engine.conn), collisions_without_main);
+    assert!(!drop_path_index(&conn, "collision").unwrap());
+    assert_eq!(semantic_snapshot(&conn), collisions_without_main);
 
-    assert_eq!(legacy_index(&engine.conn, "collision"), "lc_user_collision");
-    assert_eq!(
-        list_path_indexes(&engine.conn).unwrap(),
-        ["lc_user_collision"]
-    );
+    assert_eq!(legacy_index(&conn, "collision"), "lc_user_collision");
+    assert_eq!(list_path_indexes(&conn).unwrap(), ["lc_user_collision"]);
 }
 
 #[test]
 fn list_fails_closed_on_an_invalid_owned_prefix_candidate() {
-    let engine = engine();
-    engine
-        .conn
-        .execute("CREATE INDEX lc_user_wrong ON files(path)", [])
+    let conn = connection();
+    conn.execute("CREATE INDEX lc_user_wrong ON files(path)", [])
         .unwrap();
-    let error = list_path_indexes(&engine.conn).unwrap_err();
+    let error = list_path_indexes(&conn).unwrap_err();
     assert!(
         matches!(
             error,
@@ -366,11 +346,9 @@ fn list_fails_closed_on_an_invalid_owned_prefix_candidate() {
 /// `lc_user_` index on `files(namespace, path)` is ever dropped.
 #[test]
 fn drop_rejects_every_non_owned_shape_and_leaves_it_in_place() {
-    let engine = engine();
-    engine
-        .conn
-        .execute_batch(
-            "CREATE INDEX arbitrary_ok_shape ON files(namespace, path);
+    let conn = connection();
+    conn.execute_batch(
+        "CREATE INDEX arbitrary_ok_shape ON files(namespace, path);
              CREATE UNIQUE INDEX lc_user_unique ON files(namespace, path);
              CREATE INDEX lc_user_partial ON files(namespace, path) WHERE path <> '';
              CREATE INDEX lc_user_desc ON files(namespace DESC, path);
@@ -379,8 +357,8 @@ fn drop_rejects_every_non_owned_shape_and_leaves_it_in_place() {
              CREATE INDEX lc_user_extra ON files(namespace, path, mtime);
              CREATE INDEX lcXuser_lookalike ON files(namespace, path);
              CREATE INDEX lc_user_wrong_table ON payloads(file_id);",
-        )
-        .unwrap();
+    )
+    .unwrap();
 
     // Owned-prefix names with a wrong shape are an error, never a drop.
     for suffix in [
@@ -392,7 +370,7 @@ fn drop_rejects_every_non_owned_shape_and_leaves_it_in_place() {
         "extra",
         "wrong_table",
     ] {
-        let error = drop_path_index(&engine.conn, suffix).unwrap_err();
+        let error = drop_path_index(&conn, suffix).unwrap_err();
         assert!(
             matches!(
                 error,
@@ -404,15 +382,14 @@ fn drop_rejects_every_non_owned_shape_and_leaves_it_in_place() {
             "dropped or mis-reported {suffix}: {error:?}"
         );
         assert!(
-            main_index_exists(&engine.conn, &format!("lc_user_{suffix}")),
+            main_index_exists(&conn, &format!("lc_user_{suffix}")),
             "{suffix} was dropped"
         );
     }
 
     // A name without the prefix is not an `lc_user_` index at all: the suffix
     // form cannot even address it, and the object stays.
-    let autoindex: String = engine
-        .conn
+    let autoindex: String = conn
         .query_row(
             "SELECT name FROM pragma_index_list('files', 'main') WHERE origin = 'u' AND name LIKE 'sqlite_autoindex%' LIMIT 1",
             [],
@@ -424,21 +401,18 @@ fn drop_rejects_every_non_owned_shape_and_leaves_it_in_place() {
         "lcXuser_lookalike",
         autoindex.as_str(),
     ] {
-        assert!(!drop_path_index(&engine.conn, name).unwrap());
-        assert!(main_index_exists(&engine.conn, name), "{name} was dropped");
+        assert!(!drop_path_index(&conn, name).unwrap());
+        assert!(main_index_exists(&conn, name), "{name} was dropped");
     }
 }
 
 #[test]
 fn ascii_case_equivalent_drop_finds_the_catalog_spelling() {
-    let engine = engine();
-    assert_eq!(legacy_index(&engine.conn, "MixedCase"), "lc_user_MixedCase");
-    assert_eq!(
-        list_path_indexes(&engine.conn).unwrap(),
-        ["lc_user_MixedCase"]
-    );
-    assert!(drop_path_index(&engine.conn, "mixedcase").unwrap());
-    assert!(list_path_indexes(&engine.conn).unwrap().is_empty());
+    let conn = connection();
+    assert_eq!(legacy_index(&conn, "MixedCase"), "lc_user_MixedCase");
+    assert_eq!(list_path_indexes(&conn).unwrap(), ["lc_user_MixedCase"]);
+    assert!(drop_path_index(&conn, "mixedcase").unwrap());
+    assert!(list_path_indexes(&conn).unwrap().is_empty());
 }
 
 /// An out-of-grammar legacy spelling (which the narrowed grammar of v0.21 could
@@ -446,23 +420,30 @@ fn ascii_case_equivalent_drop_finds_the_catalog_spelling() {
 /// dropped.
 #[test]
 fn an_out_of_grammar_legacy_spelling_can_be_listed_and_dropped() {
-    let engine = engine();
-    let full = legacy_index(&engine.conn, "éclair$");
+    let conn = connection();
+    let full = legacy_index(&conn, "éclair$");
     assert_eq!(full, "lc_user_éclair$");
-    assert_eq!(list_path_indexes(&engine.conn).unwrap(), [full.as_str()]);
-    assert!(drop_path_index(&engine.conn, "éclair$").unwrap());
-    assert!(!main_index_exists(&engine.conn, &full));
+    assert_eq!(list_path_indexes(&conn).unwrap(), [full.as_str()]);
+    assert!(drop_path_index(&conn, "éclair$").unwrap());
+    assert!(!main_index_exists(&conn, &full));
 }
 
 #[test]
 fn list_uses_one_generation_and_later_operations_revalidate() {
     let directory = TempDir::new().unwrap();
     let database = directory.path().join("list-race.sqlite3");
-    let engine = CacheEngine::<Vec<f32>>::builder()
-        .database(&database)
-        .build()
-        .unwrap();
-    legacy_index(&engine.conn, "list_race");
+    let mut conn = Connection::open(&database).unwrap();
+    let outcome = schema::initialize(&mut conn, false).unwrap();
+    // A new file gets WAL, as an engine would give it: the second connection
+    // of the hook must be able to write while the listing reads.
+    schema::apply_runtime_configuration(
+        &conn,
+        crate::JournalMode::Preserve,
+        crate::SynchronousMode::Normal,
+        &outcome,
+    )
+    .unwrap();
+    legacy_index(&conn, "list_race");
 
     let changed = Arc::new(AtomicBool::new(false));
     let changed_in_hook = Arc::clone(&changed);
@@ -482,13 +463,13 @@ fn list_uses_one_generation_and_later_operations_revalidate() {
         }
         Ok(())
     });
-    let listed = list_path_indexes(&engine.conn);
+    let listed = list_path_indexes(&conn);
     drop(hook);
 
     assert!(changed.load(Ordering::SeqCst));
     assert_eq!(listed.unwrap(), ["lc_user_list_race"]);
     // The index was replaced by one of the wrong shape: the next operation
     // revalidates it and refuses.
-    assert!(drop_path_index(&engine.conn, "list_race").is_err());
-    assert!(main_index_exists(&engine.conn, "lc_user_list_race"));
+    assert!(drop_path_index(&conn, "list_race").is_err());
+    assert!(main_index_exists(&conn, "lc_user_list_race"));
 }

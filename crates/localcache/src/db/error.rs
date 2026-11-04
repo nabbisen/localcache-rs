@@ -111,3 +111,28 @@ impl<T> SqliteResultExt<T> for Result<T, rusqlite::Error> {
         self.map_err(|error| StorageError::Database(DatabaseError::from_sqlite(error)))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_extension_trait_wraps_an_error_and_passes_a_value() {
+        let busy = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
+            Some("database is locked".to_owned()),
+        );
+        let failed: Result<(), rusqlite::Error> = Err(busy);
+        match failed.db() {
+            Err(StorageError::Database(error)) => {
+                assert_eq!(
+                    error.sqlite_extended_code(),
+                    Some(rusqlite::ffi::SQLITE_BUSY)
+                );
+            }
+            other => panic!("expected a database error, got {other:?}"),
+        }
+        let fine: Result<u8, rusqlite::Error> = Ok(7);
+        assert_eq!(fine.db().unwrap(), 7);
+    }
+}

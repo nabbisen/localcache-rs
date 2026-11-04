@@ -16,7 +16,8 @@ pub(crate) mod test_clock;
 mod tests;
 #[cfg(feature = "json")]
 pub(crate) use candidates::{
-    namespace_all_json, query_candidates_json_pushdown, query_candidates_with_payloads,
+    JsonPushdownRow, namespace_all_json, query_candidates_json_pushdown,
+    query_candidates_with_payloads,
 };
 pub(crate) use candidates::{payloads_for_ids, query_candidates};
 

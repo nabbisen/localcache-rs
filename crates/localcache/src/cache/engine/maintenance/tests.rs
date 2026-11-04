@@ -4,7 +4,6 @@ use std::time::Duration;
 use rusqlite::params;
 use tempfile::TempDir;
 
-use crate::db::repository;
 use crate::{CacheEngine, CacheOptions};
 
 /// Page size used by every boundary test below — small enough that
@@ -42,7 +41,8 @@ fn set_n(engine: &CacheEngine<Vec<f32>>, dir: &TempDir, prefix: &str, n: usize) 
 
 fn set_updated_at(engine: &CacheEngine<Vec<f32>>, path: &Path, updated_at: i64) {
     engine
-        .conn
+        .store
+        .raw()
         .execute(
             "UPDATE files SET updated_at = ?1 WHERE namespace = ?2 AND path = ?3",
             params![updated_at, engine.namespace, path.display().to_string()],
@@ -75,7 +75,7 @@ fn cleanup_expired_paged_chunk_boundaries() {
         let dir = TempDir::new().unwrap();
         let engine = engine_in(&dir, Some(Duration::from_secs(1000)));
         let paths = set_n(&engine, &dir, "f", n);
-        let long_ago = repository::now_secs() - 2000;
+        let long_ago = crate::db::now_secs() - 2000;
         for path in &paths {
             set_updated_at(&engine, path, long_ago);
         }
@@ -123,7 +123,7 @@ fn cleanup_expired_cursor_advances_through_a_fully_expired_page() {
     let dir = TempDir::new().unwrap();
     let engine = engine_in(&dir, Some(Duration::from_secs(1000)));
     let paths = set_n(&engine, &dir, "f", 7);
-    let long_ago = repository::now_secs() - 2000;
+    let long_ago = crate::db::now_secs() - 2000;
     for path in &paths {
         set_updated_at(&engine, path, long_ago);
     }
@@ -175,7 +175,7 @@ fn cleanup_expired_mixed_expiry_spans_pages() {
     let dir = TempDir::new().unwrap();
     let engine = engine_in(&dir, Some(Duration::from_secs(1000)));
     let paths = set_n(&engine, &dir, "f", 7);
-    let long_ago = repository::now_secs() - 2000;
+    let long_ago = crate::db::now_secs() - 2000;
     for (index, path) in paths.iter().enumerate() {
         if index % 2 == 0 {
             set_updated_at(&engine, path, long_ago);
@@ -214,20 +214,28 @@ fn delete_paths_partial_progress_on_error_rolls_back_only_the_failing_page() {
     let page_a = page_a.to_vec();
     let page_b = page_b.to_vec();
 
-    let removed_a = repository::delete_paths(&engine.conn, &engine.namespace, &page_a).unwrap();
+    let removed_a = engine.store.delete_paths(&page_a).unwrap();
     assert_eq!(removed_a, 3);
     assert_eq!(engine.entry_count().unwrap(), 3, "page A must be committed");
 
     // Force the next page's DELETE to fail deterministically, without
     // threading: SQLite's query_only pragma rejects any write with
     // SQLITE_READONLY.
-    engine.conn.execute_batch("PRAGMA query_only = 1;").unwrap();
-    let result = repository::delete_paths(&engine.conn, &engine.namespace, &page_b);
+    engine
+        .store
+        .raw()
+        .execute_batch("PRAGMA query_only = 1;")
+        .unwrap();
+    let result = engine.store.delete_paths(&page_b);
     assert!(
         result.is_err(),
         "expected the forced write failure to propagate"
     );
-    engine.conn.execute_batch("PRAGMA query_only = 0;").unwrap();
+    engine
+        .store
+        .raw()
+        .execute_batch("PRAGMA query_only = 0;")
+        .unwrap();
 
     assert_eq!(
         engine.entry_count().unwrap(),
@@ -249,9 +257,17 @@ fn cleanup_missing_files_paged_propagates_a_page_delete_failure() {
         std::fs::remove_file(path).unwrap();
     }
 
-    engine.conn.execute_batch("PRAGMA query_only = 1;").unwrap();
+    engine
+        .store
+        .raw()
+        .execute_batch("PRAGMA query_only = 1;")
+        .unwrap();
     assert!(engine.cleanup_missing_files_paged(TEST_PAGE).is_err());
-    engine.conn.execute_batch("PRAGMA query_only = 0;").unwrap();
+    engine
+        .store
+        .raw()
+        .execute_batch("PRAGMA query_only = 0;")
+        .unwrap();
 
     assert_eq!(
         engine.entry_count().unwrap(),
@@ -285,7 +301,7 @@ fn cleanup_expired_empty_and_single_entry_namespace() {
 
     let path = write_file(&dir, "solo.txt");
     engine.set(&path, &vec![1.0_f32]).unwrap();
-    set_updated_at(&engine, &path, repository::now_secs() - 2000);
+    set_updated_at(&engine, &path, crate::db::now_secs() - 2000);
     assert_eq!(engine.cleanup_expired_paged(TEST_PAGE).unwrap(), 1);
     assert_eq!(engine.entry_count().unwrap(), 0);
 }
@@ -324,7 +340,7 @@ fn cleanup_expired_public_method_uses_the_real_constant() {
     let dir = TempDir::new().unwrap();
     let engine = engine_in(&dir, Some(Duration::from_secs(1000)));
     let paths = set_n(&engine, &dir, "f", 5);
-    let long_ago = repository::now_secs() - 2000;
+    let long_ago = crate::db::now_secs() - 2000;
     for path in &paths {
         set_updated_at(&engine, path, long_ago);
     }
@@ -395,7 +411,7 @@ fn cleanup_expired_does_not_touch_other_namespaces() {
     // silently match zero rows (`set_updated_at` filters by the given
     // engine's own namespace) and be misleading dead code.
     let _paths_b = set_n(&engine_b, &dir, "b", 3);
-    let long_ago = repository::now_secs() - 2000;
+    let long_ago = crate::db::now_secs() - 2000;
     for path in &paths_a {
         set_updated_at(&engine_a, path, long_ago);
     }

@@ -1,14 +1,13 @@
-//! RFC 026: the use order, through the engine, with a clock the test controls
-//! ([`repository::test_clock`]). The integration tests cannot fix the clock;
-//! these can, so they reach the cases that depend on it: a clock that never
-//! moves, one that runs backwards, and uses inside one microsecond.
+//! RFC 026: the use order, through the engine, with the real clock. The cases
+//! that depend on the clock itself — one that never moves, one that runs
+//! backwards, uses inside one microsecond — are tests of the `Store`, where the
+//! use order lives (`db/store/tests.rs`).
 
 use std::path::PathBuf;
 
 use tempfile::TempDir;
 
 use crate::CacheEngine;
-use crate::db::repository::test_clock;
 
 fn write_file(dir: &TempDir, name: &str) -> PathBuf {
     let path = dir.path().join(name);
@@ -35,36 +34,11 @@ fn survivors(engine: &CacheEngine<Vec<u8>>) -> String {
     names.join(",")
 }
 
-type Clock = Box<dyn FnMut() -> i64>;
-
-/// The clocks the order must not depend on.
-fn clocks() -> Vec<(&'static str, Clock)> {
-    let mut backwards = 1_800_000_000_000_000_i64;
-    vec![
-        (
-            "the real clock",
-            Box::new(|| std::time::UNIX_EPOCH.elapsed().unwrap().as_micros() as i64),
-        ),
-        (
-            "a clock that never moves",
-            Box::new(|| 1_800_000_000_000_000),
-        ),
-        (
-            "a clock that runs backwards",
-            Box::new(move || {
-                backwards -= 5_000_000;
-                backwards
-            }),
-        ),
-    ]
-}
-
 /// The pathology of RFC 026: before v0.23.0 an entry read once, ever, outlived
 /// every entry that was only written, so the survivors were `a`, `g`, `h`.
 #[test]
 fn an_entry_read_once_is_not_immortal() {
-    for (label, clock) in clocks() {
-        let _guard = test_clock::set(clock);
+    {
         let dir = TempDir::new().unwrap();
         let engine = engine(3);
         let files: Vec<PathBuf> = ["a", "b", "c", "d", "e", "f", "g", "h"]
@@ -78,14 +52,12 @@ fn an_entry_read_once_is_not_immortal() {
         for file in &files[3..] {
             engine.set(file, &vec![1]).unwrap();
         }
-        assert_eq!(survivors(&engine), "f,g,h", "{label}");
+        assert_eq!(survivors(&engine), "f,g,h");
     }
 }
 
 #[test]
-fn touch_protects_from_eviction_even_inside_one_microsecond() {
-    // Every use happens at the same instant.
-    let _guard = test_clock::set(|| 1_800_000_000_000_000);
+fn touch_protects_from_eviction() {
     let dir = TempDir::new().unwrap();
     let engine = engine(3);
     let [a, b, c, d] = ["a", "b", "c", "d"].map(|name| write_file(&dir, name));
@@ -99,8 +71,7 @@ fn touch_protects_from_eviction_even_inside_one_microsecond() {
 }
 
 #[test]
-fn a_read_hit_protects_from_eviction_even_inside_one_microsecond() {
-    let _guard = test_clock::set(|| 1_800_000_000_000_000);
+fn a_read_hit_protects_from_eviction() {
     let dir = TempDir::new().unwrap();
     let engine = engine(2);
     let [a, b, c] = ["a", "b", "c"].map(|name| write_file(&dir, name));
@@ -113,7 +84,6 @@ fn a_read_hit_protects_from_eviction_even_inside_one_microsecond() {
 
 #[test]
 fn an_overwrite_is_a_use() {
-    let _guard = test_clock::set(|| 1_800_000_000_000_000);
     let dir = TempDir::new().unwrap();
     let engine = engine(2);
     let [a, b, c] = ["a", "b", "c"].map(|name| write_file(&dir, name));
@@ -126,7 +96,6 @@ fn an_overwrite_is_a_use() {
 
 #[test]
 fn a_batch_is_a_run_of_uses_and_never_evicts_its_own_rows() {
-    let _guard = test_clock::set(|| 1_800_000_000_000_000);
     let dir = TempDir::new().unwrap();
     let engine = engine(3);
     let [a, b, c, d] = ["a", "b", "c", "d"].map(|name| write_file(&dir, name));
@@ -155,7 +124,6 @@ fn a_read_only_engine_records_no_use() {
             .unwrap()
     };
     let before = stored(&database);
-    let _guard = test_clock::set(move || before + 1_000_000_000);
     let reader: CacheEngine<Vec<u8>> = CacheEngine::builder()
         .database(&database)
         .read_only()
@@ -221,7 +189,6 @@ fn a_read_pool_slot_records_no_use() {
             .unwrap()
     };
     let before = stored();
-    let _guard = test_clock::set(move || before + 1_000_000_000);
     let pool = CacheEngine::<Vec<u8>>::builder()
         .database(&database)
         .build_read_pool(2)

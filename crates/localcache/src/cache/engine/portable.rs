@@ -12,8 +12,8 @@ use crate::error::Lift;
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::cache::entry::ExportRecord;
-use crate::db::repository;
-use crate::error::{ArgumentName, LocalFileCacheError, SqliteResultExt, invalid_argument};
+use crate::db::{FullRow, unrepresentable_recency, use_value_of_record};
+use crate::error::{ArgumentName, LocalFileCacheError, invalid_argument};
 
 use super::CacheEngine;
 
@@ -35,7 +35,7 @@ where
     pub fn export_entries(&self) -> Result<Vec<ExportRecord>, LocalFileCacheError> {
         use base64::{Engine as _, engine::general_purpose::STANDARD};
 
-        let rows = repository::load_all_full(&self.conn, &self.namespace).lift()?;
+        let rows = self.store.load_all_full().lift()?;
         Ok(rows
             .into_iter()
             .map(|r| ExportRecord {
@@ -97,7 +97,7 @@ where
 
         self.guard_write()?;
 
-        let rows: Result<Vec<repository::FullRow>, LocalFileCacheError> = records
+        let rows: Result<Vec<FullRow>, LocalFileCacheError> = records
             .iter()
             .map(|r| {
                 let content = STANDARD.decode(&r.payload_b64).map_err(|e| {
@@ -106,7 +106,7 @@ where
                         format!("base64 decode error for '{}': {e}", r.path),
                     )
                 })?;
-                Ok(repository::FullRow {
+                Ok(FullRow {
                     path: r.path.clone(),
                     content,
                     encoding: r.encoding.clone(),
@@ -166,7 +166,7 @@ where
         U: Serialize + DeserializeOwned,
     {
         self.guard_write()?;
-        let rows = repository::load_all_full(&source.conn, &source.namespace).lift()?;
+        let rows = source.store.load_all_full().lift()?;
         self.import_bounded(&rows)
     }
 
@@ -185,7 +185,7 @@ where
     ///   refuse to read.
     ///
     /// Returns the number of records imported.
-    fn import_bounded(&self, rows: &[repository::FullRow]) -> Result<usize, LocalFileCacheError> {
+    fn import_bounded(&self, rows: &[FullRow]) -> Result<usize, LocalFileCacheError> {
         if rows.is_empty() {
             return Ok(0);
         }
@@ -215,12 +215,11 @@ where
         }
         // RFC 026 F2: refuse the whole import, before writing, if any record's
         // recency cannot be held by the use order.
-        if rows.iter().any(|row| {
-            repository::use_value_of_record(row.last_accessed_at, row.updated_at).is_none()
-        }) {
-            return Err(LocalFileCacheError::from_storage(
-                repository::unrepresentable_recency(),
-            ));
+        if rows
+            .iter()
+            .any(|row| use_value_of_record(row.last_accessed_at, row.updated_at).is_none())
+        {
+            return Err(LocalFileCacheError::from_storage(unrepresentable_recency()));
         }
         if let Some(max_entries) = self.max_entries {
             let distinct = rows
@@ -236,14 +235,10 @@ where
             }
         }
 
-        let tx = rusqlite::Transaction::new_unchecked(
-            &self.conn,
-            rusqlite::TransactionBehavior::Immediate,
-        )
-        .db()?;
-        let written = repository::import_rows_in_tx(&tx, &self.namespace, rows).lift()?;
+        let tx = self.store.begin_write().lift()?;
+        let written = tx.import_rows(rows).lift()?;
         let evicted = self.enforce_max_entries(&tx, &written)?;
-        tx.commit().db()?;
+        tx.commit().lift()?;
         if let Some(callback) = &self.evict_callback {
             for path in &evicted {
                 callback(path);
@@ -257,6 +252,6 @@ where
     /// Returns names sorted alphabetically.  Useful for inspecting which
     /// namespaces exist before running maintenance or migration tasks.
     pub fn namespace_list(&self) -> Result<Vec<String>, LocalFileCacheError> {
-        repository::list_namespaces(&self.conn).lift()
+        self.store.list_namespaces().lift()
     }
 }

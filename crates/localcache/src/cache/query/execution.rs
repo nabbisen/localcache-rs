@@ -11,8 +11,8 @@ use super::{OrderBy, QueryBuilder, QueryReport, SkippedEntry, SortOrder, decode_
 #[cfg(feature = "json")]
 use super::{Predicate, get_field};
 use crate::cache::entry::CacheEntry;
+use crate::db::CandidateRow;
 use crate::db::FileMetadata;
-use crate::db::repository::{self, CandidateRow};
 use crate::error::LocalFileCacheError;
 
 pub(super) struct PreparedPathFilters {
@@ -65,8 +65,7 @@ where
         // A keyed engine never evaluates payloads in SQL (RFC 029 R2): the
         // pushdown reads stored text that nothing has authenticated.
         QueryPlan::Tier2 { .. }
-            if q.core.is_keyed()
-                || !repository::namespace_all_json(q.core.conn, q.core.namespace).lift()? =>
+            if q.core.is_keyed() || !q.core.store.namespace_all_json().lift()? =>
         {
             QueryPlan::Tier3
         }
@@ -76,14 +75,15 @@ where
     match plan {
         QueryPlan::Tier3 => execute_tier3(q, &prepared),
         QueryPlan::Tier1 => {
-            let candidates = repository::query_candidates(
-                q.core.conn,
-                q.core.namespace,
-                q.path_like.as_deref(),
-                prepared.path_in_dir(),
-                prepared.path_glob(),
-            )
-            .lift()?;
+            let candidates = q
+                .core
+                .store
+                .query_candidates(
+                    q.path_like.as_deref(),
+                    prepared.path_in_dir(),
+                    prepared.path_glob(),
+                )
+                .lift()?;
             let mut order: Vec<usize> = (0..candidates.len()).collect();
             if !q.order_by.is_empty() {
                 order.sort_by(|&ia, &ib| {
@@ -103,16 +103,17 @@ where
             field_index,
             where_fields,
         } => {
-            let rows = repository::query_candidates_json_pushdown(
-                q.core.conn,
-                q.core.namespace,
-                q.path_like.as_deref(),
-                prepared.path_in_dir(),
-                prepared.path_glob(),
-                &select_fields,
-                &where_fields,
-            )
-            .lift()?;
+            let rows = q
+                .core
+                .store
+                .query_candidates_json_pushdown(
+                    q.path_like.as_deref(),
+                    prepared.path_in_dir(),
+                    prepared.path_glob(),
+                    &select_fields,
+                    &where_fields,
+                )
+                .lift()?;
             let (candidates, field_values): (Vec<CandidateRow>, Vec<Vec<Option<f64>>>) =
                 rows.into_iter().unzip();
             let mut order: Vec<usize> = (0..candidates.len()).collect();
@@ -147,14 +148,15 @@ where
     T: Serialize + DeserializeOwned,
 {
     let prepared = q.prepare_path_filters()?;
-    let candidates = repository::query_candidates(
-        q.core.conn,
-        q.core.namespace,
-        q.path_like.as_deref(),
-        prepared.path_in_dir(),
-        prepared.path_glob(),
-    )
-    .lift()?;
+    let candidates = q
+        .core
+        .store
+        .query_candidates(
+            q.path_like.as_deref(),
+            prepared.path_in_dir(),
+            prepared.path_glob(),
+        )
+        .lift()?;
     let mut order: Vec<usize> = (0..candidates.len()).collect();
     if !q.order_by.is_empty() {
         order.sort_by(|&ia, &ib| {
@@ -183,14 +185,15 @@ fn execute_tier3<T>(
 where
     T: Serialize + DeserializeOwned,
 {
-    let rows = repository::query_candidates_with_payloads(
-        q.core.conn,
-        q.core.namespace,
-        q.path_like.as_deref(),
-        prepared.path_in_dir(),
-        prepared.path_glob(),
-    )
-    .lift()?;
+    let rows = q
+        .core
+        .store
+        .query_candidates_with_payloads(
+            q.path_like.as_deref(),
+            prepared.path_in_dir(),
+            prepared.path_glob(),
+        )
+        .lift()?;
 
     let mut matched: Vec<(CacheEntry<T>, serde_json::Value, i64)> = Vec::new();
     let mut skipped: Vec<SkippedEntry> = Vec::new();
@@ -299,13 +302,13 @@ where
             Some(t) => to_skip.saturating_add(t - out.len()),
             None => order.len() - idx,
         };
-        // `repository::ID_LIST_CHUNK`: the same chunk size `payloads_for_ids`
+        // `crate::db::ID_LIST_CHUNK`: the same chunk size `payloads_for_ids`
         // and `evict_lru` use, so all three id-list SQL statements in this
         // codebase stay equal by construction (RFC 022 R6).
-        let window_end = (idx + want.min(repository::ID_LIST_CHUNK)).min(order.len());
+        let window_end = (idx + want.min(crate::db::ID_LIST_CHUNK)).min(order.len());
         let window = &order[idx..window_end];
         let ids: Vec<i64> = window.iter().map(|&i| candidates[i].id).collect();
-        let payload_rows = repository::payloads_for_ids(q.core.conn, &ids).lift()?;
+        let payload_rows = q.core.store.payloads_for_ids(&ids).lift()?;
         let mut payload_map: HashMap<i64, (Vec<u8>, String)> = payload_rows
             .into_iter()
             .map(|(id, content, encoding)| (id, (content, encoding)))
@@ -462,8 +465,7 @@ pub(super) fn describe_query_plan<T>(
         // A keyed engine never evaluates payloads in SQL (RFC 029 R2): the
         // pushdown reads stored text that nothing has authenticated.
         QueryPlan::Tier2 { .. }
-            if q.core.is_keyed()
-                || !repository::namespace_all_json(q.core.conn, q.core.namespace).lift()? =>
+            if q.core.is_keyed() || !q.core.store.namespace_all_json().lift()? =>
         {
             QueryPlan::Tier3
         }

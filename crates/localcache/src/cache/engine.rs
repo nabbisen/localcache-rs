@@ -10,20 +10,18 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use rusqlite::{Connection, OpenFlags};
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::cache::entry::{CacheEntry, CacheStatus, EntryInfo, PreloadReport};
 use crate::cache::options::{
     CacheOptions, ChangeDetectionMode, Codec, ScanOptions, is_memory_path,
 };
-use crate::db::{repository, schema};
+use crate::db::{Location, Store, StoreConfig, WriteTx};
 use crate::detection::hash::{compute_full_hash, compute_partial_hash};
 use crate::detection::metadata::collect_metadata;
 use crate::detection::strategy::detect_change;
 use crate::error::{
-    ArgumentName, ConfigOption, LocalFileCacheError, SqliteResultExt, invalid_argument,
-    invalid_configuration,
+    ArgumentName, ConfigOption, LocalFileCacheError, invalid_argument, invalid_configuration,
 };
 use crate::path::{normalize_path, path_to_str, resolve_path_key};
 use crate::serialization::{decode_payload, encode_payload};
@@ -152,7 +150,7 @@ pub struct BatchSetReport {
 /// # Ok::<(), localcache::LocalFileCacheError>(())
 /// ```
 pub struct CacheEngine<T> {
-    pub(crate) conn: Connection,
+    pub(crate) store: Store,
     #[cfg(feature = "watching")]
     pub(crate) database_path: std::path::PathBuf,
     #[cfg(feature = "watching")]
@@ -225,60 +223,32 @@ where
         // would be permanently empty).
         let read_only = options.read_only || (options.shared_cache && !is_memory);
 
-        let mut conn = if options.shared_cache {
+        let location = if options.shared_cache {
             if is_memory {
-                // Named shared in-memory database: every connection opened
-                // with this URI within the process sees the same data.
-                Connection::open_with_flags(
-                    "file::memory:?cache=shared",
-                    OpenFlags::SQLITE_OPEN_URI
-                        | OpenFlags::SQLITE_OPEN_READ_WRITE
-                        | OpenFlags::SQLITE_OPEN_CREATE
-                        | OpenFlags::SQLITE_OPEN_SHARED_CACHE,
-                )
-                .db()?
+                Location::SharedMemory
             } else {
+                // A `file:` URI carries UTF-8 only; check it before anything
+                // is opened (RFC 025 Amendment 1).
                 let path_str = options.database_path.to_str().ok_or_else(|| {
                     LocalFileCacheError::InvalidPath {
                         path: options.database_path.clone(),
                     }
                 })?;
-                let uri = format!("file:{}?mode=ro&cache=shared", uri_encode_path(path_str));
-                Connection::open_with_flags(
-                    uri,
-                    OpenFlags::SQLITE_OPEN_URI
-                        | OpenFlags::SQLITE_OPEN_READ_ONLY
-                        | OpenFlags::SQLITE_OPEN_SHARED_CACHE
-                        | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-                )
-                .db()?
+                Location::SharedFile(path_str.to_owned())
             }
         } else if is_memory {
-            Connection::open_in_memory().db()?
-        } else if read_only {
-            Connection::open_with_flags(
-                &options.database_path,
-                OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-            )
-            .db()?
+            Location::Memory
         } else {
-            Connection::open(&options.database_path).db()?
+            Location::File(options.database_path.clone())
         };
-
-        if read_only {
-            schema::validate_read_only(&mut conn).lift()?;
-        } else {
-            let outcome = schema::initialize(&mut conn, is_memory).lift()?;
-            if !is_memory {
-                schema::apply_runtime_configuration(
-                    &conn,
-                    options.journal_mode,
-                    options.synchronous,
-                    &outcome,
-                )
-                .lift()?;
-            }
-        }
+        let store = Store::open(&StoreConfig {
+            location,
+            namespace: options.namespace.clone(),
+            read_only,
+            journal_mode: options.journal_mode,
+            synchronous: options.synchronous,
+        })
+        .lift()?;
 
         let compress = {
             #[cfg(feature = "compression")]
@@ -292,7 +262,7 @@ where
         };
 
         Ok(Self {
-            conn,
+            store,
             #[cfg(feature = "watching")]
             database_path: options.database_path.clone(),
             #[cfg(feature = "watching")]
@@ -367,7 +337,7 @@ where
         let resolved = resolve_path_key(path.as_ref())?;
         let path_str = resolved.key();
 
-        let Some(row) = repository::find_file(&self.conn, &self.namespace, path_str).lift()? else {
+        let Some(row) = self.store.find_file(path_str).lift()? else {
             #[cfg(feature = "tracing")]
             tracing::debug!("cache miss");
             #[cfg(feature = "metrics")]
@@ -376,7 +346,7 @@ where
             .increment(1);
             return Ok(None);
         };
-        let Some(payload_row) = repository::load_payload(&self.conn, row.id).lift()? else {
+        let Some(payload_row) = self.store.load_payload(row.id).lift()? else {
             #[cfg(feature = "metrics")]
             metrics::counter!("localcache.get.miss",
                 "namespace" => self.namespace.clone())
@@ -388,7 +358,7 @@ where
             // A read must not fail for want of bookkeeping: the result of
             // recording the use is ignored here (RFC 026 F4). `touch`, `set`
             // and `batch_set` return theirs.
-            let _ = repository::record_use(&self.conn, &self.namespace, row.id);
+            let _ = self.store.record_use(row.id);
         }
         #[cfg(feature = "tracing")]
         tracing::debug!("cache hit");
@@ -417,7 +387,7 @@ where
         let canonical = resolved.path();
         let path_str = resolved.key();
 
-        let Some(row) = repository::find_file(&self.conn, &self.namespace, path_str).lift()? else {
+        let Some(row) = self.store.find_file(path_str).lift()? else {
             return Ok(None);
         };
         if is_expired(row.updated_at, self.ttl) {
@@ -430,7 +400,7 @@ where
             CacheStatus::Stale | CacheStatus::Missing => return Ok(None),
             CacheStatus::Fresh => {}
         }
-        let Some(payload_row) = repository::load_payload(&self.conn, row.id).lift()? else {
+        let Some(payload_row) = self.store.load_payload(row.id).lift()? else {
             return Ok(None);
         };
         let payload: T = self.decode(path_str, &payload_row.content, &payload_row.encoding)?;
@@ -438,7 +408,7 @@ where
             // A read must not fail for want of bookkeeping: the result of
             // recording the use is ignored here (RFC 026 F4). `touch`, `set`
             // and `batch_set` return theirs.
-            let _ = repository::record_use(&self.conn, &self.namespace, row.id);
+            let _ = self.store.record_use(row.id);
         }
         Ok(Some(CacheEntry {
             path: PathBuf::from(&row.path),
@@ -534,24 +504,13 @@ where
         // `Err` means nothing changed. A concurrent writer waits under the
         // busy timeout, rather than racing a deferred read-then-write here
         // and failing with `SQLITE_BUSY_SNAPSHOT`.
-        let tx = rusqlite::Transaction::new_unchecked(
-            &self.conn,
-            rusqlite::TransactionBehavior::Immediate,
-        )
-        .db()?;
-        let file_id = repository::upsert_in_tx(
-            &tx,
-            &self.namespace,
-            path_str,
-            &metadata,
-            &bytes,
-            encoding,
-            self.payload_version,
-        )
-        .lift()?;
+        let tx = self.store.begin_write().lift()?;
+        let file_id = tx
+            .upsert(path_str, &metadata, &bytes, encoding, self.payload_version)
+            .lift()?;
         // RFC 022 R6: a write is never its own eviction candidate.
         let evicted = self.enforce_max_entries(&tx, &[file_id])?;
-        tx.commit().db()?;
+        tx.commit().lift()?;
         if let Some(cb) = &self.evict_callback {
             for p in &evicted {
                 cb(p);
@@ -683,29 +642,18 @@ where
 
         // Same rule as `set` (RFC 022 R6 item 3 / Q0c review C1): the whole
         // batch and its eviction share one IMMEDIATE transaction.
-        let tx = rusqlite::Transaction::new_unchecked(
-            &self.conn,
-            rusqlite::TransactionBehavior::Immediate,
-        )
-        .db()?;
+        let tx = self.store.begin_write().lift()?;
         let mut written_ids: Vec<i64> = Vec::with_capacity(prepared.len());
         for (path_str, metadata, bytes, encoding) in &prepared {
-            let id = repository::upsert_in_tx(
-                &tx,
-                &self.namespace,
-                path_str,
-                metadata,
-                bytes,
-                encoding,
-                self.payload_version,
-            )
-            .lift()?;
+            let id = tx
+                .upsert(path_str, metadata, bytes, encoding, self.payload_version)
+                .lift()?;
             written_ids.push(id);
             report.succeeded += 1;
         }
         // RFC 022 R6: a batch write never evicts any row it just wrote.
         let evicted = self.enforce_max_entries(&tx, &written_ids)?;
-        tx.commit().db()?;
+        tx.commit().lift()?;
         if let Some(cb) = &self.evict_callback {
             for p in &evicted {
                 cb(p);
@@ -724,7 +672,7 @@ where
     {
         self.guard_write()?;
         let resolved = resolve_path_key(path.as_ref())?;
-        repository::delete_by_path(&self.conn, &self.namespace, resolved.key()).lift()
+        self.store.delete_by_path(resolved.key()).lift()
     }
 
     // ------------------------------------------------------------------
@@ -735,7 +683,7 @@ where
     where
         P: AsRef<Path>,
     {
-        self.check_status_at(path, repository::now_secs())
+        self.check_status_at(path, crate::db::now_secs())
     }
 
     /// `check_status` at a given `now`, so a caller that reports several
@@ -765,7 +713,7 @@ where
         }
         let canonical = resolved.path();
         let path_str = resolved.key();
-        let Some(row) = repository::find_file(&self.conn, &self.namespace, path_str).lift()? else {
+        let Some(row) = self.store.find_file(path_str).lift()? else {
             #[cfg(feature = "tracing")]
             tracing::debug!(status = "Missing");
             return Ok(CacheStatus::Missing);
@@ -858,7 +806,7 @@ where
     /// Entries are ordered by `updated_at` descending (most recently written
     /// first).  Payload content is **not** loaded.
     pub fn list_entries(&self) -> Result<Vec<EntryInfo>, LocalFileCacheError> {
-        repository::list_entries(&self.conn, &self.namespace).lift()
+        self.store.list_entries().lift()
     }
 
     // ------------------------------------------------------------------
@@ -970,11 +918,7 @@ where
         // C2). The rows are read and written in pages, inside this one
         // transaction, so memory is bounded by the page and not by the
         // namespace (RFC 029 R3).
-        let tx = rusqlite::Transaction::new_unchecked(
-            &self.conn,
-            rusqlite::TransactionBehavior::Immediate,
-        )
-        .db()?;
+        let tx = self.store.begin_write().lift()?;
 
         // Every row of the namespace, in `path` order, whatever state it is in:
         // plain, sealed without binding, or bound. A path is never empty, so
@@ -982,14 +926,9 @@ where
         let mut after = String::new();
         let mut total = 0_usize;
         loop {
-            let page = repository::load_payload_page(
-                &tx,
-                &self.namespace,
-                &after,
-                rotation_page_rows(),
-                ROTATION_PAGE_BYTES,
-            )
-            .lift()?;
+            let page = tx
+                .load_payload_page(&after, rotation_page_rows(), ROTATION_PAGE_BYTES)
+                .lift()?;
             let Some(last) = page.last() else {
                 break;
             };
@@ -1025,12 +964,14 @@ where
             // Write the page before the next one is read.
             let mut rows = updates.iter();
             if let Some((file_id, new_content, new_tag)) = rows.next() {
-                repository::update_payload_content(&tx, *file_id, new_content, new_tag).lift()?;
+                tx.update_payload_content(*file_id, new_content, new_tag)
+                    .lift()?;
                 #[cfg(test)]
                 test_hook(TestPoint::MidPage)?;
             }
             for (file_id, new_content, new_tag) in rows {
-                repository::update_payload_content(&tx, *file_id, new_content, new_tag).lift()?;
+                tx.update_payload_content(*file_id, new_content, new_tag)
+                    .lift()?;
             }
             total += updates.len();
             after = next_after;
@@ -1041,7 +982,7 @@ where
 
         #[cfg(test)]
         test_hook(TestPoint::BeforeCommit)?;
-        tx.commit().db()?;
+        tx.commit().lift()?;
 
         // `Ok` from this point on always means this engine now uses
         // `new_key`, including when `updates` is empty — there is no
@@ -1290,7 +1231,7 @@ where
     /// This is cheaper than `get()` because it does not load the payload.
     pub fn contains<P: AsRef<Path>>(&self, path: P) -> Result<bool, LocalFileCacheError> {
         let resolved = resolve_path_key(path.as_ref())?;
-        repository::exists(&self.conn, &self.namespace, resolved.key()).lift()
+        self.store.exists(resolved.key()).lift()
     }
 
     /// Return the exact stored paths of all entries in the current namespace,
@@ -1317,7 +1258,7 @@ where
         &self,
         path_like: Option<&str>,
     ) -> Result<Vec<std::path::PathBuf>, LocalFileCacheError> {
-        repository::keys(&self.conn, &self.namespace, path_like, None, None).lift()
+        self.store.keys(path_like, None, None).lift()
     }
 
     // ------------------------------------------------------------------
@@ -1379,10 +1320,10 @@ where
             return Ok(false);
         }
         let path_str = resolved.key();
-        let Some(row) = repository::find_file(&self.conn, &self.namespace, path_str).lift()? else {
+        let Some(row) = self.store.find_file(path_str).lift()? else {
             return Ok(false);
         };
-        repository::record_use(&self.conn, &self.namespace, row.id).lift()?;
+        self.store.record_use(row.id).lift()?;
         Ok(true)
     }
 
@@ -1410,13 +1351,13 @@ where
     /// paths (RFC 022 R6 item 3 / Q0c review C1).
     fn enforce_max_entries(
         &self,
-        tx: &rusqlite::Transaction,
+        tx: &WriteTx<'_>,
         protected: &[i64],
     ) -> Result<Vec<PathBuf>, LocalFileCacheError> {
         let Some(max) = self.max_entries else {
             return Ok(Vec::new());
         };
-        let count = repository::count_in_namespace(tx, &self.namespace).lift()?;
+        let count = tx.count().lift()?;
         if count <= max {
             return Ok(Vec::new());
         }
@@ -1428,7 +1369,7 @@ where
         // Selection and deletion happen in one transaction — the caller's
         // `tx` — so the returned paths are exactly what was deleted, by
         // construction.
-        repository::evict_lru(tx, &self.namespace, excess, protected).lift()
+        tx.evict_lru(excess, protected).lift()
     }
 
     fn encode(
@@ -1474,8 +1415,7 @@ where
     /// `CacheEngine<U>`.
     pub(crate) fn core(&self) -> EngineCore<'_> {
         EngineCore {
-            conn: &self.conn,
-            namespace: &self.namespace,
+            store: &self.store,
             #[cfg(feature = "compression")]
             max_decompressed_bytes: self.max_decompressed_bytes,
             #[cfg(feature = "encryption")]
@@ -1499,8 +1439,7 @@ where
 /// [`CacheEngine::rotate_encryption_key`] call and run after it decodes
 /// with the key current at decode time (RFC 022 R1).
 pub(crate) struct EngineCore<'e> {
-    pub(crate) conn: &'e Connection,
-    pub(crate) namespace: &'e str,
+    pub(crate) store: &'e Store,
     #[cfg(feature = "compression")]
     pub(crate) max_decompressed_bytes: usize,
     #[cfg(feature = "encryption")]
@@ -1581,7 +1520,7 @@ pub(crate) fn ttl_remaining(now: i64, updated_at: i64, ttl: Option<Duration>) ->
 }
 
 pub(crate) fn is_expired(updated_at: i64, ttl: Option<Duration>) -> bool {
-    ttl_remaining(repository::now_secs(), updated_at, ttl) == Some(0)
+    ttl_remaining(crate::db::now_secs(), updated_at, ttl) == Some(0)
 }
 
 /// What [`check_configuration`] derives from the options and `open` keeps.
@@ -1649,26 +1588,6 @@ fn check_configuration(
     {
         Ok(())
     }
-}
-
-/// Percent-encode the characters that are significant inside a SQLite
-/// `file:` URI path component: `%`, `#`, `?`, and space.
-///
-/// SQLite decodes `%XX` escapes in URI filenames, so a literal `%` must be
-/// escaped first; `#` and `?` would otherwise terminate the path component.
-/// No external dependency is required for this small, fixed set.
-fn uri_encode_path(path: &str) -> String {
-    let mut out = String::with_capacity(path.len());
-    for c in path.chars() {
-        match c {
-            '%' => out.push_str("%25"),
-            '#' => out.push_str("%23"),
-            '?' => out.push_str("%3F"),
-            ' ' => out.push_str("%20"),
-            _ => out.push(c),
-        }
-    }
-    out
 }
 
 // ---------------------------------------------------------------------------

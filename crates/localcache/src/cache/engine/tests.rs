@@ -298,7 +298,7 @@ fn ttl_remaining_saturates_at_the_extremes_without_panicking() {
 /// disagree, including for a future `updated_at`.
 #[test]
 fn is_expired_follows_ttl_remaining() {
-    let now = repository::now_secs();
+    let now = crate::db::now_secs();
     assert!(!is_expired(now, None));
     assert!(!is_expired(now + 1000, secs(3600)));
     assert!(!is_expired(i64::MAX, secs(3600)));
@@ -323,7 +323,8 @@ fn explain_at_judges_status_and_ttl_at_one_instant() {
     let path = write_file(&dir, "boundary.txt");
     engine.set(&path, &vec![1.0]).unwrap();
     let updated_at: i64 = engine
-        .conn
+        .store
+        .raw()
         .query_row("SELECT updated_at FROM files", [], |row| row.get(0))
         .unwrap();
 

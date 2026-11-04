@@ -13,7 +13,6 @@ use std::path::Path;
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::cache::entry::CacheStatus;
-use crate::db::repository;
 use crate::error::LocalFileCacheError;
 use crate::path::resolve_path_key;
 
@@ -35,7 +34,7 @@ where
         &self,
         path: P,
     ) -> Result<crate::cache::entry::Diagnosis, LocalFileCacheError> {
-        self.explain_at(path, repository::now_secs())
+        self.explain_at(path, crate::db::now_secs())
     }
 
     /// `explain` at a given `now`. The TTL fields, the expired flag, the
@@ -54,8 +53,7 @@ where
         let resolved = resolve_path_key(path)?;
         let file_exists = resolved.exists();
         let canonical = resolved.path();
-        let entry_row =
-            repository::find_file(&self.conn, &self.namespace, resolved.key()).lift()?;
+        let entry_row = self.store.find_file(resolved.key()).lift()?;
 
         let Some(row) = entry_row else {
             return Ok(Diagnosis {

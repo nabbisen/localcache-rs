@@ -288,22 +288,6 @@ pub(crate) fn invalid_argument(
     }
 }
 
-/// Crate-private conversion of a database result into the library's error
-/// type, for the code above the database layer that still holds a connection
-/// (RFC 030 slice 3 removes it). It replaces the `From<rusqlite::Error>` impl,
-/// which would have been a public trait impl.
-pub(crate) trait SqliteResultExt<T> {
-    fn db(self) -> Result<T, LocalFileCacheError>;
-}
-
-impl<T> SqliteResultExt<T> for Result<T, rusqlite::Error> {
-    fn db(self) -> Result<T, LocalFileCacheError> {
-        self.map_err(|error| {
-            LocalFileCacheError::Database(crate::db::DatabaseError::from_sqlite(error))
-        })
-    }
-}
-
 /// RFC 030 slice 2: the layer errors reach the public enum through this
 /// crate-private trait, one to one. A `From` impl would be public API and
 /// rustdoc would list it with the internal type.

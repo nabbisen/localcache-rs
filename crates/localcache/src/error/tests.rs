@@ -57,19 +57,3 @@ fn source_is_the_underlying_error_type_erased() {
     let source = std::error::Error::source(&error).expect("has a source");
     assert!(source.downcast_ref::<rusqlite::Error>().is_some());
 }
-
-#[test]
-fn the_extension_trait_wraps_an_error_and_passes_a_value() {
-    let failed: Result<(), rusqlite::Error> = Err(busy());
-    match failed.db() {
-        Err(LocalFileCacheError::Database(error)) => {
-            assert_eq!(
-                error.sqlite_extended_code(),
-                Some(rusqlite::ffi::SQLITE_BUSY)
-            );
-        }
-        other => panic!("expected a database error, got {other:?}"),
-    }
-    let fine: Result<u8, rusqlite::Error> = Ok(7);
-    assert_eq!(fine.db().unwrap(), 7);
-}

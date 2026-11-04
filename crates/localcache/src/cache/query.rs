@@ -31,7 +31,6 @@ use std::path::PathBuf;
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::cache::entry::CacheEntry;
-use crate::db::repository;
 use crate::error::LocalFileCacheError;
 
 mod execution;
@@ -383,14 +382,15 @@ where
     /// ```
     pub fn dry_run(self) -> Result<String, LocalFileCacheError> {
         let prepared = self.prepare_path_filters()?;
-        let sql_plan = repository::explain_query(
-            self.core.conn,
-            self.core.namespace,
-            self.path_like.as_deref(),
-            prepared.path_in_dir(),
-            prepared.path_glob(),
-        )
-        .lift()?;
+        let sql_plan = self
+            .core
+            .store
+            .explain_query(
+                self.path_like.as_deref(),
+                prepared.path_in_dir(),
+                prepared.path_glob(),
+            )
+            .lift()?;
         let execution = describe_query_plan(&self)?;
         Ok(format!("{sql_plan}\n{execution}"))
     }
