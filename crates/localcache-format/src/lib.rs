@@ -273,12 +273,13 @@ impl PayloadFormat {
     /// Decode the bytes stored under `path` with the encoding `tag`.
     ///
     /// With a key only a payload bound to `path` is read; a plain or
-    /// unbound one is [`FormatError::UnsealedEntry`]. Without a key a sealed
-    /// tag is [`FormatError::MissingEncryptionKey`] and a plain tag is read.
+    /// unbound one is `FormatError::UnsealedEntry`. Without a key a sealed
+    /// tag is `FormatError::MissingEncryptionKey` and a plain tag is read.
     /// A tag this build cannot decode is [`FormatError::UnknownEncoding`]
     /// whatever the key. A compressed payload that would decompress to more
-    /// than the bound is [`FormatError::PayloadTooLarge`]; an uncompressed one
-    /// is not limited.
+    /// than the bound is `FormatError::PayloadTooLarge`; an uncompressed one
+    /// is not limited. (The first three variants exist with the `encryption`
+    /// or `compression` feature, so they are not links.)
     pub fn decode<T: DeserializeOwned>(
         &self,
         bytes: &[u8],
