@@ -7,9 +7,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [0.24.0] — Unreleased
+## [0.24.0] — 2026-11-04
 
-*Date set at owner authorization.*
+Authorized by the project owner on 2026-11-04. The source is that of release candidate `d6cf122`; the release
+commit changes only this date.
 
 **Breaking: with an encryption key, an entry is readable only if it is sealed under that key and bound to its path** (RFC 029, announced in v0.23.1). No schema change. Unencrypted databases and engines without a key are not affected.
 
