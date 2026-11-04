@@ -5,7 +5,7 @@ version (MSRV). A successful build on current stable Rust does not substitute
 for this contract. Dependency changes must preserve all four locked MSRV rows:
 
 ```sh
-cargo check -p localcache --all-targets --all-features --locked
+cargo check -p localcache-format -p localcache --all-targets --all-features --locked
 cargo check -p localcache --all-targets --no-default-features --features async-std --locked
 cargo check -p localcache --all-targets --no-default-features --features smol --locked
 cargo check -p localcache-cli --all-targets --all-features --locked

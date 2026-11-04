@@ -83,7 +83,7 @@ engine.set(path, payload)
   ├── normalize_path(path)          → canonical PathBuf
   ├── collect_metadata(path)        → mtime, file_size
   ├── compute_hash_for_mode(path)   → Option<BLAKE3 hash>
-  ├── encode_payload(payload, path) → (bytes, encoding_tag)
+  ├── PayloadFormat::encode(payload, path, key) → (bytes, encoding_tag)
   │     codec (bincode / json)
   │     compress? (zstd; refused above max_decompressed_bytes)
   │     encrypt? (AES-256-GCM + nonce, bound to the path)
@@ -110,7 +110,7 @@ engine.get_if_fresh(path)
   ├── version check                 → payload_version match?
   ├── detect_change(path, metadata) → CacheStatus
   ├── repository::load_payload()    → (content, encoding)
-  ├── decode_payload(content, tag, path) → T
+  ├── PayloadFormat::decode(content, tag, path, key) → T
   │     decrypt? (AES-256-GCM; with a key only bound entries, opened with the path)
   │     decompress? (zstd; bounded by max_decompressed_bytes)
   │     deserialise (bincode / json)
@@ -176,7 +176,7 @@ User payload (T: Serialize)
 
 The `bincode` codec (`Codec::Bincode`, the tags `raw` and `zstd`) writes and reads the legacy
 `bincode`-1 wire format of RFC 008: little-endian, fixed-width integers, `u64` length prefixes and
-`u32` variant indices. The codec is this crate's own (`serialization/payload_codec`, RFC 028); the
+`u32` variant indices. The codec is the project's own (`payload_codec` in `localcache-format`, RFC 028); the
 name is the format's, and `bincode` is not a dependency. Its decoder is written for hostile input:
 every length and count is checked against the bytes that remain before anything is allocated, and
 nesting is limited to 128 levels. See [Security Model](./security.md).
@@ -196,18 +196,26 @@ sealed bound to its path is refused instead of decoded (`UnsealedEntry`).
 This is accurate about *configuration*, but which tags can be decoded **at all** is fixed by which
 Cargo features this build was compiled with: `zstd`/`json-zstd` need `compression`, `json*` needs
 `json`, and `*-aes256gcm` and `*-aes256gcm-bound` need `encryption`. A tag this build cannot handle returns
-`UnknownEncoding` (`crates/localcache/src/serialization.rs`, `decode_payload`).
+`UnknownEncoding` (`crates/localcache-format/src/lib.rs`, `PayloadFormat::decode`).
 
-## Layers
+## Crates and layers
 
-The library is built in layers, lowest first. A module may name only the layers listed for it; `tests/layering.rs` reads the source and fails, with the file and the line, when a lower layer names a higher one.
+Three crates are published from this workspace, always at one version:
+
+| Crate | Holds | Depend on it? |
+|---|---|---|
+| `localcache-format` | the payload format: the codec, compression, JSON, the table of encoding tags, sealing and opening, `Key`, `Codec`, `FormatError` | No: an implementation crate. Its API is not a separate stability promise |
+| `localcache` | everything else: the database layer, freshness, the engine, the query layer, the pools, the watchers, the public error | **Yes**: this is the library |
+| `localcache-cli` | the command-line tool | to install, not to depend on |
+
+`localcache` depends on `localcache-format` at the exact same version (`=X.Y.Z`; `scripts/check_versions.py` fails if the pin and the workspace version differ), forwards its `compression`, `json` and `encryption` features to it, and re-exports `Codec` and `DEFAULT_MAX_DECOMPRESSED_BYTES` under the paths they always had. **The compiler enforces the boundary between them**: `localcache-format` names nothing of `localcache`, has no SQL, no async and no file system, and `localcache` reaches it through its public API only (`PayloadFormat`, `seal_state`, `reseal`, `Key`). That is also what makes the format crate checkable on its own: its golden vectors and their digests, a Miri run and two fuzz targets live in `crates/localcache-format` (see its README).
+
+Inside `localcache` the code is built in layers, lowest first. A module may name only the layers listed for it; `tests/layering.rs` reads the source and fails, with the file and the line, when a lower layer names a higher one. This is what the compiler cannot see inside one crate.
 
 | Layer | Holds | May use |
 |---|---|---|
-| `key` | the encryption key type | nothing of the crate |
 | `db` | the schema, its migrations and the classifier, every statement (repository, indexes), the values it stores (`EntryInfo`, `FileMetadata`, `JournalMode`, `SynchronousMode`), its error type `StorageError` (with `DatabaseError`), and the `Store`, the one handle to the database | nothing of the crate |
-| `serialization` | the payload codec, compression, sealing and the encoding tags, `Codec`, and its error type `FormatError` | `key` |
-| `error` | the public error enum, and the crate-private lift of `StorageError` and `FormatError` into it | `db`, `serialization` |
+| `error` | the public error enum, and the crate-private lift of `StorageError` and `FormatError` into it | `db` |
 | `path` | canonical path keys | `error` |
 | `detection` | freshness (`CacheStatus`, `ChangeDetectionMode`, hashing) | `error`, `db` (it compares a stored `FileMetadata`) |
 | `cache` | the engine, the query layer, options, the builder, globbing | everything above |
@@ -215,4 +223,4 @@ The library is built in layers, lowest first. A module may name only the layers 
 
 The engine, the query layer, the pools and the watchers reach the database only through `db::Store`: it opens the connection (flags, shared-cache URIs, pragmas, the schema check or migration), starts the `IMMEDIATE` write transaction, and has one method per statement the layers above need. Outside `db` no production file names `rusqlite`, and none names `db::repository`, `db::schema` or `db::indexes`; `tests/layering.rs` checks both. It is a test that reads source text, weaker than the compiler: it also rejects the relative spellings (`super::super`, a `super::` that reaches the crate root, `localcache::`, `use crate::*`) in the lower layers, and its header lists what it still cannot see (macro-built paths, `#[path]`, items reached through another module's glob). Test files may still use `rusqlite` to set up and inspect rows through `Store::raw`, which exists only in test builds.
 
-The public types that live in a lower layer (`EntryInfo`, `Codec`, …) are re-exported from the crate root under the same paths as before. The two lower layers report their own crate-private errors, and `error` turns them into the public `LocalFileCacheError` through a crate-private trait (`Lift`, the `.lift()` call): there is deliberately no `From` impl on the public enum, because a trait impl would be public API and rustdoc would list the internal type. The public variants, payloads and texts are pinned by `error/golden.rs`. Three public methods of the engine and the builder return an adapter type (`CacheEngineBuilder::build_read_pool`, `CacheEngine::watcher`, `CacheEngine::debounced_watcher`); the test names them as its only exceptions.
+The public types that live in a lower layer or in `localcache-format` (`EntryInfo`, `Codec`, …) are re-exported from the crate root under the same paths as before. The database layer and the format crate report their own errors (`StorageError`, `FormatError`), and `error` turns them into the public `LocalFileCacheError` through a crate-private trait (`Lift`, the `.lift()` call): there is deliberately no `From` impl on the public enum, because a trait impl would be public API and rustdoc would list the internal type. The public variants, payloads and texts are pinned by `error/golden.rs`. Three public methods of the engine and the builder return an adapter type (`CacheEngineBuilder::build_read_pool`, `CacheEngine::watcher`, `CacheEngine::debounced_watcher`); the test names them as its only exceptions.

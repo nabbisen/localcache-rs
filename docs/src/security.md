@@ -47,7 +47,7 @@ anything in it. The rest of this page is mostly about what that can and cannot d
   that asks for a 128 MiB decoder window, which is zstd's own constant maximum).
 - Make a read abort through a forged length or a count, or overflow the stack through nesting
   (fixed in v0.22.1; it was a Known issue of v0.22.0). The decoder for uncompressed
-  (`raw`) payloads is this crate's own (RFC 028). It checks every string, byte-buffer, sequence
+  (`raw`) payloads is the project's own (RFC 028), in the crate `localcache-format`. It checks every string, byte-buffer, sequence
   and map length against the bytes that remain **before** it allocates or loops, so a payload
   that claims a gigabyte but holds four bytes is a `Serialization` error, and it refuses nesting
   deeper than 128 levels (the limit `serde_json` applies to documents). No allocation is made
@@ -180,7 +180,7 @@ What it does **not** do:
   only, no Git dependencies). A standing exception must carry its reason and the condition
   that ends it; the one current exception is the `async-std` runtime feature (see
   [MSRV & Dependency Security](./dependency_security.md)). The `bincode` exception ended in
-  v0.22.1, when the payload format's reader and writer moved into this crate.
+  v0.22.1, when the payload format's reader and writer became the project's own code.
 - **Releases** are published by one GitHub Actions workflow, not from a workstation, through
   crates.io Trusted Publishing: the workflow exchanges a short-lived GitHub identity for a
   registry token that lasts 30 minutes. A real run starts only when the owner starts it with
@@ -189,6 +189,7 @@ What it does **not** do:
   The source archive of each release is built from that commit and carries a GitHub build
   attestation (`gh attestation verify`). The tag's signature is made on the owner's machine and
   is not verified by CI (see [Project Source Archives](./source_archives.md)).
+- **Three crates are published**, always at one version: `localcache-format` (the payload format: the decoders, the decompression bound and the sealing this page describes), `localcache` and `localcache-cli`. `localcache` depends on `localcache-format` at exactly its own version. The format crate is an implementation crate: depend on `localcache`.
 - **The build** is read-only by default in CI: no job holds a secret, no workflow uses
   `pull_request_target`, and every third-party action is pinned to a commit.
 

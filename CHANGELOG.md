@@ -7,6 +7,19 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [Unreleased]
+
+No change to the public API, behaviour, feature names, stored bytes, error texts or the MSRV (1.85). `localcache` is the crate to depend on, as before.
+
+### Internal
+
+- **A third published crate, `localcache-format`**, an implementation crate: the payload codec (the bincode-1 wire format of RFC 028), compression, JSON, the table of encoding tags, sealing and opening, `Key`, `Codec` and `FormatError`. `localcache` depends on it at the exact same version and re-exports `Codec` and `DEFAULT_MAX_DECOMPRESSED_BYTES` under the paths they always had; the features `compression`, `json` and `encryption` are forwarded to it. The crate's API is not a separate stability promise: depend on `localcache`. Its golden vectors and their digests, its unit tests and its Miri and fuzz commands live with it (`crates/localcache-format/README.md`).
+- The engine, the query layer, the pools and the watchers no longer name `rusqlite`: every statement is behind a `Store` in the database layer, and a test (`crates/localcache/tests/layering.rs`) fails when a lower layer names a higher one or when code above the database layer names `rusqlite` or the database layer's internals. Per-layer error types (`FormatError`, `StorageError`) are lifted into `LocalFileCacheError` by a crate-private trait, with every public variant and text pinned by a golden table.
+- One documentation link is now a code span because its target is in another crate: `DEFAULT_MAX_DECOMPRESSED_BYTES` no longer links to `CacheOptions::max_decompressed_bytes` (the rustdoc comparison with v0.24.0 shows no other difference but the cosmetic rendering of `Debug::fmt` on `Codec`).
+- The release workflow records and checks three `.crate` digests (`localcache-format`, `localcache`, `localcache-cli`, in that order); `scripts/check_versions.py` fails if the `localcache-format` pin in `Cargo.toml` is not exactly the workspace version.
+
+---
+
 ## [0.24.0] — 2026-11-04
 
 Authorized by the project owner on 2026-11-04. The source is that of release candidate `d6cf122`; after it only
