@@ -16,6 +16,12 @@
 //! | `cache` (engine, query, options, builder, entry, glob) | everything above |
 //! | adapters: `pool`, `read_pool`, `cache::async_engine`, `cache::watcher` | everything above |
 //!
+//! RFC 030 slice 3 adds two rules about the database, checked by
+//! `above_db_nothing_names_rusqlite_or_the_inside_of_db`: outside `db`, no
+//! production file names `rusqlite`, and none reaches into `db::repository`,
+//! `db::schema` or `db::indexes`. The one door is `db::Store`. (Test files may
+//! use `rusqlite` to set up and inspect rows; they are not a layer.)
+//!
 //! The cuts of RFC 030 turn the rows `db` and `serialization` into crates; this
 //! test is what makes that cut a move and not a redesign. It reads the source
 //! text, so it needs no feature and runs in every row.
@@ -301,4 +307,59 @@ fn every_layer_in_the_table_is_defined_and_only_lists_known_layers() {
             assert!(names.contains(m), "`{layer}` allows an unknown layer `{m}`");
         }
     }
+}
+
+/// Production files outside `db` hold no database-library type and use the
+/// layer only through its `Store`.
+#[test]
+fn above_db_nothing_names_rusqlite_or_the_inside_of_db() {
+    let mut files = Vec::new();
+    rust_files(&src(), &mut files);
+    files.sort();
+    let mut found = Vec::new();
+    for file in files {
+        let relative = file.strip_prefix(src()).unwrap();
+        let first = relative
+            .components()
+            .next()
+            .unwrap()
+            .as_os_str()
+            .to_str()
+            .unwrap();
+        if first == "db" || first == "db.rs" {
+            continue;
+        }
+        let text = fs::read_to_string(&file).unwrap();
+        let mut in_block_comment = false;
+        for (number, line) in text.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if in_block_comment {
+                in_block_comment = !trimmed.contains("*/");
+                continue;
+            }
+            if trimmed.starts_with("/*") && !trimmed.contains("*/") {
+                in_block_comment = true;
+                continue;
+            }
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            let code = line.split("//").next().unwrap_or("");
+            for forbidden in ["rusqlite", "db::repository", "db::schema", "db::indexes"] {
+                if code.contains(forbidden) {
+                    found.push(format!(
+                        "src/{}:{}: names `{forbidden}`; above `db` only `db::Store` and the values `db` re-exports are allowed",
+                        relative.display(),
+                        number + 1
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        found.is_empty(),
+        "the storage boundary of RFC 030 is broken ({} place(s)):\n{}",
+        found.len(),
+        found.join("\n")
+    );
 }

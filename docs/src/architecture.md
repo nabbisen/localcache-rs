@@ -205,12 +205,14 @@ The library is built in layers, lowest first. A module may name only the layers 
 | Layer | Holds | May use |
 |---|---|---|
 | `key` | the encryption key type | nothing of the crate |
-| `db` | the schema, its migrations and the classifier, every statement (repository, indexes), the values it stores (`EntryInfo`, `FileMetadata`, `JournalMode`, `SynchronousMode`), and its error type `StorageError` (with `DatabaseError`) | nothing of the crate |
+| `db` | the schema, its migrations and the classifier, every statement (repository, indexes), the values it stores (`EntryInfo`, `FileMetadata`, `JournalMode`, `SynchronousMode`), its error type `StorageError` (with `DatabaseError`), and the `Store`, the one handle to the database | nothing of the crate |
 | `serialization` | the payload codec, compression, sealing and the encoding tags, `Codec`, and its error type `FormatError` | `key` |
 | `error` | the public error enum, and the crate-private lift of `StorageError` and `FormatError` into it | `db`, `serialization` |
 | `path` | canonical path keys | `error` |
 | `detection` | freshness (`CacheStatus`, `ChangeDetectionMode`, hashing) | `error`, `db` (it compares a stored `FileMetadata`) |
 | `cache` | the engine, the query layer, options, the builder, globbing | everything above |
 | adapters | `SyncCacheEngine`, `ReadPool`, `AsyncCacheEngine`, the watchers | everything above |
+
+The engine, the query layer, the pools and the watchers reach the database only through `db::Store`: it opens the connection (flags, shared-cache URIs, pragmas, the schema check or migration), starts the `IMMEDIATE` write transaction, and has one method per statement the layers above need. Outside `db` no production file names `rusqlite`, and none names `db::repository`, `db::schema` or `db::indexes`; `tests/layering.rs` checks both. Test files may still use `rusqlite` to set up and inspect rows through `Store::raw`, which exists only in test builds.
 
 The public types that live in a lower layer (`EntryInfo`, `Codec`, …) are re-exported from the crate root under the same paths as before. The two lower layers report their own crate-private errors, and `error` turns them into the public `LocalFileCacheError` through a crate-private trait (`Lift`, the `.lift()` call): there is deliberately no `From` impl on the public enum, because a trait impl would be public API and rustdoc would list the internal type. The public variants, payloads and texts are pinned by `error/golden.rs`. Three public methods of the engine and the builder return an adapter type (`CacheEngineBuilder::build_read_pool`, `CacheEngine::watcher`, `CacheEngine::debounced_watcher`); the test names them as its only exceptions.
