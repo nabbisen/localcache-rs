@@ -5,6 +5,7 @@
 #
 # Gates (the same tasks CI runs; RFC 027):
 #   cargo make gate-features  — feature assertion, clippy and tests on every row
+#                               (localcache and localcache-format, RFC 030)
 #   cargo make gate-msrv      — declared-MSRV check (rustup run 1.85 cargo make gate-msrv)
 #   cargo make gate-deny      — advisories and sources (deny.toml)
 #   cargo make gate-versions  — script tests; install examples and CHANGELOG name the version
@@ -97,7 +98,7 @@ description = "Fail if a localcache Cargo feature is missing from the list the g
 # Every library feature. `--each-feature` below covers each one alone; the two
 # suite rows combine the runtime features with the companions named in them.
 # Adding a feature means adding it here and deciding whether the suites need it.
-env = { GATE_LIBRARY_FEATURES = "async async-std smol compression json encryption tracing watching metrics opentelemetry" }
+env = { GATE_LIBRARY_FEATURES = "async async-std smol compression json encryption tracing watching metrics opentelemetry", GATE_FORMAT_FEATURES = "compression encryption json" }
 script = [
     '''
     declared=$(python3 -c "import tomllib; print(*sorted(tomllib.load(open('crates/localcache/Cargo.toml','rb'))['features']))")
@@ -108,6 +109,14 @@ script = [
         exit 1
     fi
     echo "OK: the gate rows name every localcache feature"
+    declared=$(python3 -c "import tomllib; print(*sorted(tomllib.load(open('crates/localcache-format/Cargo.toml','rb'))['features']))")
+    named=$(printf '%s\n' $GATE_FORMAT_FEATURES | sort | tr '\n' ' ' | sed 's/ $//')
+    if [ "$declared" != "$named" ]; then
+        echo "ERROR: features declared in crates/localcache-format/Cargo.toml: $declared"
+        echo "       features the gate rows name:                              $named"
+        exit 1
+    fi
+    echo "OK: the gate rows name every localcache-format feature"
     '''
 ]
 
@@ -116,6 +125,7 @@ description = "Clippy (-D warnings) on every feature row: library each-feature, 
 script = [
     '''
     set -e
+    cargo hack clippy -p localcache-format --each-feature --all-targets --locked -- -D warnings
     cargo hack clippy -p localcache --each-feature --all-targets --locked -- -D warnings
     cargo clippy -p localcache --all-targets --no-default-features --features async-std,compression,json,encryption,tracing,watching,metrics --locked -- -D warnings
     cargo clippy -p localcache --all-targets --no-default-features --features smol,compression,json,encryption,tracing,watching,metrics --locked -- -D warnings
@@ -129,6 +139,7 @@ description = "Tests on every feature row, and the workspace doctests"
 script = [
     '''
     set -e
+    cargo hack test -p localcache-format --each-feature --all-targets --locked
     cargo hack test -p localcache --each-feature --all-targets --locked
     cargo test -p localcache --all-targets --no-default-features --features async-std,compression,json,encryption,tracing,watching,metrics --locked
     cargo test -p localcache --all-targets --no-default-features --features smol,compression,json,encryption,tracing,watching,metrics --locked
@@ -151,14 +162,15 @@ args = ["deny", "--locked", "check", "-D", "advisory-not-detected", "advisories"
 description = "Declared-MSRV cargo check on the four MSRV rows (RFC 014 R8). Locally: rustup run 1.85 cargo make gate-msrv"
 # The toolchain is whatever `cargo` resolves to: CI installs the declared MSRV
 # as the job's default; locally `rustup run 1.85 cargo make gate-msrv` does it.
-# The rows are the old `MSRV_ROW_NAMES`: lib-all-features, lib-feature-async-std,
+# The rows are the old `MSRV_ROW_NAMES`: lib-all-features (both library crates,
+# `localcache-format` and `localcache`), lib-feature-async-std,
 # lib-feature-smol, cli-all-features. async-std and smol each get their own
 # row because Tokio takes priority under --all-features, so all-features alone
 # never compiles those backends.
 script = [
     '''
     set -ex
-    cargo check -p localcache --all-targets --all-features --locked
+    cargo check -p localcache-format -p localcache --all-targets --all-features --locked
     cargo check -p localcache --all-targets --no-default-features --features async-std --locked
     cargo check -p localcache --all-targets --no-default-features --features smol --locked
     cargo check -p localcache-cli --all-targets --all-features --locked
@@ -184,6 +196,7 @@ script = [
     '''
     set -ex
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features --locked
+    RUSTDOCFLAGS="-D warnings" cargo doc -p localcache-format --no-deps --no-default-features --locked
     RUSTDOCFLAGS="-D warnings" cargo doc -p localcache --no-deps --no-default-features --locked
     mdbook build docs
     cargo package --workspace --locked
