@@ -42,8 +42,49 @@ use std::io::Cursor;
 
 use serde::{Serialize, de::DeserializeOwned};
 
-use crate::cache::options::Codec;
 use crate::error::LocalFileCacheError;
+
+/// Selects the serialization codec used to encode payload values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Codec {
+    /// Compact binary encoding (the legacy `bincode`-1 wire format of
+    /// RFC 008) — compact and fast.  Default.
+    ///
+    /// # Wire-format stability guarantee
+    ///
+    /// Payloads written with this codec are in the legacy `bincode`-1 wire
+    /// format, which is byte-compatible with every `localcache` release from
+    /// 0.1 onwards.  This guarantee holds for **all 0.x and future 1.x**
+    /// releases: the wire format will only change behind a headline
+    /// CHANGELOG migration that transparently rewrites existing payloads.
+    ///
+    /// **Consequence for applications:** a `localcache` upgrade **never**
+    /// requires bumping `payload_version`.  The `payload_version` field is
+    /// yours to increment when *your* payload struct or pipeline changes,
+    /// not when the crate version changes.
+    #[default]
+    Bincode,
+
+    /// JSON encoding via `serde_json` — human-readable, larger on disk.
+    ///
+    /// Requires the `json` Cargo feature.
+    #[cfg(feature = "json")]
+    Json,
+}
+
+// ---------------------------------------------------------------------------
+// Decompression limit
+// ---------------------------------------------------------------------------
+
+/// The default for [`CacheOptions::max_decompressed_bytes`](crate::CacheOptions::max_decompressed_bytes): 64 MiB
+/// (`67_108_864` bytes), about ten thousand times the largest payload the
+/// project's benchmarks store. A larger default lets a hostile database file
+/// exhaust a modest host; a smaller one costs users with unusually large
+/// compressed payloads a clear error and a one-line fix.
+///
+/// Requires the `compression` Cargo feature.
+#[cfg(feature = "compression")]
+pub const DEFAULT_MAX_DECOMPRESSED_BYTES: usize = 64 * 1024 * 1024;
 
 mod payload_codec;
 

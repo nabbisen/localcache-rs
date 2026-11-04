@@ -10,8 +10,8 @@ use super::{OrderBy, QueryBuilder, QueryReport, SkippedEntry, SortOrder, decode_
 #[cfg(feature = "json")]
 use super::{Predicate, get_field};
 use crate::cache::entry::CacheEntry;
+use crate::db::FileMetadata;
 use crate::db::repository::{self, CandidateRow};
-use crate::detection::metadata::FileMetadata;
 use crate::error::LocalFileCacheError;
 
 pub(super) struct PreparedPathFilters {

@@ -3,7 +3,8 @@
 use crate::error::SqliteResultExt;
 use rusqlite::{Connection, TransactionBehavior};
 
-use crate::{JournalMode, SynchronousMode, error::LocalFileCacheError};
+use crate::db::{JournalMode, SynchronousMode};
+use crate::error::LocalFileCacheError;
 
 mod classifier;
 mod configuration;

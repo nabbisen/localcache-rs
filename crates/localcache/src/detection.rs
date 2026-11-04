@@ -3,3 +3,6 @@
 pub(crate) mod hash;
 pub(crate) mod metadata;
 pub(crate) mod strategy;
+mod types;
+
+pub use types::{CacheStatus, ChangeDetectionMode};

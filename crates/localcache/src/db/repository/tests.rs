@@ -276,7 +276,7 @@ fn sql_text_does_not_vary_with_the_directory() {
 // ---------------------------------------------------------------------------
 
 use super::{record_use, test_clock, upsert_in_tx, use_error, use_value_of_record};
-use crate::detection::metadata::FileMetadata;
+use crate::db::FileMetadata;
 use crate::error::LocalFileCacheError;
 
 fn use_value(conn: &Connection, path: &str) -> i64 {

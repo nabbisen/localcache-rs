@@ -4,10 +4,11 @@
 
 use std::path::Path;
 
-use crate::cache::entry::CacheStatus;
-use crate::cache::options::ChangeDetectionMode;
+use crate::db::FileMetadata;
+use crate::detection::CacheStatus;
+use crate::detection::ChangeDetectionMode;
 use crate::detection::hash::{compute_full_hash, compute_partial_hash, is_partial_hash};
-use crate::detection::metadata::{FileMetadata, collect_metadata};
+use crate::detection::metadata::collect_metadata;
 use crate::error::LocalFileCacheError;
 
 /// Compare the on-disk file against `stored` metadata using `mode`.

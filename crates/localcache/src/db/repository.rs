@@ -5,8 +5,8 @@ use std::time::UNIX_EPOCH;
 
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
-use crate::cache::entry::EntryInfo;
-use crate::detection::metadata::FileMetadata;
+use crate::db::EntryInfo;
+use crate::db::FileMetadata;
 use crate::error::{LocalFileCacheError, SqliteResultExt};
 
 mod candidates;

@@ -197,3 +197,19 @@ This is accurate about *configuration*, but which tags can be decoded **at all**
 Cargo features this build was compiled with: `zstd`/`json-zstd` need `compression`, `json*` needs
 `json`, and `*-aes256gcm` and `*-aes256gcm-bound` need `encryption`. A tag this build cannot handle returns
 `UnknownEncoding` (`crates/localcache/src/serialization.rs`, `decode_payload`).
+
+## Layers
+
+The library is built in layers, lowest first. A module may name only the layers listed for it; `tests/layering.rs` reads the source and fails, with the file and the line, when a lower layer names a higher one.
+
+| Layer | Holds | May use |
+|---|---|---|
+| `error`, `key` | the public error enum; the encryption key type | nothing of the crate |
+| `path` | canonical path keys | `error` |
+| `db` | the schema, its migrations and the classifier, every statement (repository, indexes), and the values it stores (`EntryInfo`, `FileMetadata`, `JournalMode`, `SynchronousMode`) | `error` |
+| `serialization` | the payload codec, compression, sealing and the encoding tags, and `Codec` | `error`, `key` |
+| `detection` | freshness (`CacheStatus`, `ChangeDetectionMode`, hashing) | `error`, `db` (it compares a stored `FileMetadata`) |
+| `cache` | the engine, the query layer, options, the builder, globbing | everything above |
+| adapters | `SyncCacheEngine`, `ReadPool`, `AsyncCacheEngine`, the watchers | everything above |
+
+The public types that live in a lower layer (`EntryInfo`, `Codec`, …) are re-exported from the crate root under the same paths as before. Three public methods of the engine and the builder return an adapter type (`CacheEngineBuilder::build_read_pool`, `CacheEngine::watcher`, `CacheEngine::debounced_watcher`); the test names them as its only exceptions.

@@ -611,12 +611,8 @@ where
         // Pass 1: everything that decides which rows this batch would occupy
         // (the canonical key, the file's metadata, its hash). Nothing is
         // encoded or written yet.
-        let mut occupying: Vec<(
-            usize,
-            std::path::PathBuf,
-            String,
-            crate::detection::metadata::FileMetadata,
-        )> = Vec::with_capacity(items.len());
+        let mut occupying: Vec<(usize, std::path::PathBuf, String, crate::db::FileMetadata)> =
+            Vec::with_capacity(items.len());
         for (index, (path, _)) in items.iter().enumerate() {
             let canonical = match normalize_path(path.as_ref()) {
                 Ok(p) => p,
@@ -668,12 +664,8 @@ where
         }
 
         // Pass 2: encode the payloads.
-        let mut prepared: Vec<(
-            String,
-            crate::detection::metadata::FileMetadata,
-            Vec<u8>,
-            &'static str,
-        )> = Vec::with_capacity(occupying.len());
+        let mut prepared: Vec<(String, crate::db::FileMetadata, Vec<u8>, &'static str)> =
+            Vec::with_capacity(occupying.len());
         for (index, canonical, path_str, metadata) in occupying {
             match self.encode(&path_str, &items[index].1) {
                 Ok((bytes, encoding)) => prepared.push((path_str, metadata, bytes, encoding)),

@@ -4,7 +4,8 @@ use crate::error::SqliteResultExt;
 use rusqlite::Connection;
 
 use super::InitializationOutcome;
-use crate::{JournalMode, LocalFileCacheError, SynchronousMode};
+use crate::db::{JournalMode, SynchronousMode};
+use crate::error::LocalFileCacheError;
 
 pub(super) fn prepare_file_migration(conn: &Connection) -> Result<(), LocalFileCacheError> {
     let journal = observed_journal_mode(conn).db()?;
