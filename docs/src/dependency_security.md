@@ -257,10 +257,15 @@ condition that would change the decision, because an `ignore` has no expiry date
 { id = "RUSTSEC-2025-0052", reason = "Preserve the advertised async-std runtime feature. Follow-up: Reassess if a maintained fork of async-std gains adoption, or if any vulnerability or unsound advisory is published against async-std at the locked version." },
 ```
 
-One unmaintained-crate finding is accepted this way today:
+Two unmaintained-crate findings are accepted this way today, both behind the one
+optional `async-std` runtime feature:
 
 - `RUSTSEC-2025-0052` for `async-std`, preserving the advertised optional runtime
   feature.
+- `RUSTSEC-2026-0441` for `pin-utils` (archived upstream on 2026-10-01, no
+  vulnerability or unsound advisory), which only `async-std` depends on. The entry
+  ends with the `async-std` entry: when `async-std` drops `pin-utils`, or the
+  feature is removed, it is deleted.
 
 It stays visible as a note on every run (`cargo deny -L info check advisories
 sources`). A newly published vulnerability or unsound advisory against that crate
