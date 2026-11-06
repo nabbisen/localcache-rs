@@ -110,3 +110,13 @@ archive` job and the three `.crate` digests as crates.io serves them.
 - On crates.io, for each of `localcache-format`, `localcache` and `localcache-cli`, a trusted publisher
   with repository `nabbisen/localcache-rs` and workflow `release.yaml`. The
   environment field is not set.
+- **A crate name that does not exist yet cannot be published by the workflow.**
+  crates.io refuses a Trusted Publishing token the creation of a crate
+  (`403 Forbidden: Trusted Publishing tokens do not support creating new crates.
+  Publish the crate manually, first`), and a trusted publisher can be added only
+  to a crate that exists. The first version of a new crate is therefore published
+  once, by the owner, from a clean checkout of the signed tag with an API token
+  that has the `publish-new` scope (`cargo publish --workspace --locked`, its output
+  written to a file), and the trusted publisher is added afterwards. This happened
+  once, for `localcache-format` 0.25.0; every later release goes through the
+  workflow.
