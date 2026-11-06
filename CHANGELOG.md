@@ -7,9 +7,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [0.25.0] — Unreleased
+## [0.25.0] — 2026-11-07
 
-*Date set at owner authorization.*
+Authorized by the project owner on 2026-11-07. The source is that of release candidate `19e478d`; the release
+commit changes only this date.
 
 **Not breaking. No public change.** Nothing in the public API, behaviour, feature names, stored bytes, error texts or the MSRV (1.85) differs from 0.24.0, and there is nothing to do when you upgrade. What is new is a third published crate, `localcache-format`, an implementation crate that holds the payload format; `localcache` depends on it at exactly the same version and re-exports what it exposes, so keep depending on `localcache` only. For `Cargo.lock` it means one more package, `localcache-format`, and the cipher and compression libraries (`zstd`, `aes-gcm`, `zeroize`) are now dependencies of that package behind the same `compression` and `encryption` features.
 
