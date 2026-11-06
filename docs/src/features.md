@@ -5,7 +5,7 @@ only for what you use.
 
 ```toml
 [dependencies]
-localcache = { version = "0.24.0", features = ["async", "compression", "json"] }
+localcache = { version = "0.25.0", features = ["async", "compression", "json"] }
 ```
 
 ## Feature reference

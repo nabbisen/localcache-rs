@@ -7,9 +7,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [Unreleased]
+## [0.25.0] — Unreleased
 
-No change to the public API, behaviour, feature names, stored bytes, error texts or the MSRV (1.85). `localcache` is the crate to depend on, as before.
+*Date set at owner authorization.*
+
+**Not breaking. No public change.** Nothing in the public API, behaviour, feature names, stored bytes, error texts or the MSRV (1.85) differs from 0.24.0, and there is nothing to do when you upgrade. What is new is a third published crate, `localcache-format`, an implementation crate that holds the payload format; `localcache` depends on it at exactly the same version and re-exports what it exposes, so keep depending on `localcache` only. For `Cargo.lock` it means one more package, `localcache-format`, and the cipher and compression libraries (`zstd`, `aes-gcm`, `zeroize`) are now dependencies of that package behind the same `compression` and `encryption` features.
 
 ### Internal
 
@@ -1851,7 +1853,8 @@ Namespaces, batch ops, TTL, PRAGMAs, schema migration.
 ## [0.1.0] — 2026-05-03
 Initial release.
 
-[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/0.24.0...HEAD
+[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/0.25.0...HEAD
+[0.25.0]: https://github.com/nabbisen/localcache-rs/compare/0.24.0...0.25.0
 [0.24.0]: https://github.com/nabbisen/localcache-rs/compare/0.23.1...0.24.0
 [0.23.1]: https://github.com/nabbisen/localcache-rs/compare/0.23.0...0.23.1
 [0.23.0]: https://github.com/nabbisen/localcache-rs/compare/0.22.2...0.23.0
