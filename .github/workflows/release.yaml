@@ -1,6 +1,6 @@
 name: Release
 
-# RFC 027 R5: publishing both crates through crates.io Trusted Publishing. No
+# RFC 027 R5: publishing the three crates through crates.io Trusted Publishing. No
 # long-lived registry token is used here.
 #
 # A real run starts only when the project owner starts it by hand
