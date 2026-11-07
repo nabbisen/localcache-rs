@@ -1724,6 +1724,21 @@ A fix release under the SemVer policy by the owner's decision on RFC 028: a stor
 v0.22.0 Known issue and a stack overflow found while fixing it), `bincode` and its advisory exception left the tree, and two inputs
 that v0.22.0 accepted are refused (a count above the remaining bytes, nesting beyond 128 levels). No known issue is open.
 
+### v0.25.1 — released 2026-11-07
+
+| | |
+|---|---|
+| Release candidate | `f1a0cbe` (review 103: Go) |
+| Release commit | `2b1645d` (`docs: set the v0.25.1 release date`); between the candidate and it only a handoff document under `rfcs/` and the CHANGELOG date changed |
+| Tag | `0.25.1`, GPG-signed and annotated (tag object `c0149b84…`), on the release commit, pushed |
+| CI on the release commit | CI run 42368145379 and Docs run 42368145410 green |
+| `Release` workflow | dry run from the tag, run 42369948716: all jobs green, three digests printed. Real run, run 42370134188: all six jobs green |
+| Published | `localcache-format 0.25.1` (checksum `b217941148fca83e74cb54ac9d68c36deb1b322714433cb0d2b8f8f5783d2539`), `localcache 0.25.1` (`1e5bcf1aac2344f16b34bb41b3c2049913ae88da3041a091f8a27b846be5ab98`) and `localcache-cli 0.25.1` (`37127601071f64646aa32fd26a244b543c8a13a2511ad35631c9909a31022532`) on crates.io, 2026-11-07 11:56 UTC, none yanked, `rust-version` 1.85; the downloaded `.crate` files hash to the registry checksums, which equal the dry run's digests. The first release published by the workflow with all three crates (Trusted Publishing on `localcache-format` configured by the owner) |
+| GitHub release | `0.25.1`, asset `localcache-v0.25.1.tar.gz` (1,037,586 bytes, SHA-256 `04e9fa02ed23c5d125c2a3a2ae575e0525422867346f2468aaefe6547ea6d3af`); the notes list the archive and the three `.crate` digests; `gh attestation verify` exits 0 (its output was empty in this session, where it printed the signer for 0.25.0) |
+| Fresh consumer | `rust-version = "1.85"`, `localcache = "0.25.1"` with `compression`, `json`, `encryption`, MSRV-aware resolution: `cargo +1.85.0 check` exits 0; `localcache-format 0.25.1`, `base64 0.23.1`, `rusqlite 0.40.2`, `libsqlite3-sys 0.38.2` in the graph (`.git-exclude/tmp/post-0.25.1/consumer`) |
+
+A patch: the encoder's inlined writers (a 1 MiB `Vec<u8>` `set` about 4.2× faster), `base64 0.23` (one error text changes), the performance page, the known issue of the bundled SQLite 3.53.2 (CVE-2026-119375) stated in the book, and the announcement that v0.26.0 removes the `opentelemetry` and `async-std` features. Nothing was removed.
+
 ### After v0.25.0 — decisions by the owner, 2026-11-07
 
 Accepted on the evidence of reviews 099 to 102 (requests 075 to 079):
@@ -1731,7 +1746,7 @@ Accepted on the evidence of reviews 099 to 102 (requests 075 to 079):
 1. **`opentelemetry` is removed in v0.26.0** (the feature and its two optional dependencies, `opentelemetry` and `tracing-opentelemetry`): the feature only bridges the crate's `tracing` spans into an OpenTelemetry pipeline that the application builds, which the application can do itself with `tracing-opentelemetry` on top of the `tracing` feature (which stays); the project does not want to carry a telemetry surface, or the dependencies it adds, for that. **Announced one release ahead, in v0.25.1.**
 2. **`async-std` is removed in v0.26.0** (the feature, its runtime module, and the two `deny.toml` entries that exist only because of it, `RUSTSEC-2025-0052` and `RUSTSEC-2026-0441`): the runtime is unmaintained and its advisory could only ever be excused, never fixed. **Announced one release ahead, in v0.25.1.** `smol` and Tokio remain.
 3. **The minimum supported Rust version is raised from 1.85 to 1.89 in v0.26.0**, under RFC 023 R3.1 (a security fix that exists only in a dependency that needs the newer toolchain): `rusqlite 0.41` (bundled SQLite 3.54.1, which fixes CVE-2026-119375), `sha2 0.11` and `criterion 0.8`; `aes-gcm 0.11` follows as v0.26.1. The raise is announced in the release that makes it, as RFC 023 R3.1 provides; until then `docs/src/security.md` states the known issue (commit `1784370`).
-4. **v0.25.1** (a patch; date authorized separately): the content of request 077 (the encoder's inlined writers, the performance page, `base64 0.23`, the unused `tokio-test` line), the known-issue documentation of request 079, and the announcement of items 1 and 2. Handoff: `rfcs/handoffs/031-maintenance-2026-11/v0.25.1-release-preparation.md`.
+4. **v0.25.1** (a patch; **✅ released 2026-11-07**): the content of request 077 (the encoder's inlined writers, the performance page, `base64 0.23`, the unused `tokio-test` line), the known-issue documentation of request 079, and the announcement of items 1 and 2. Handoff: `rfcs/handoffs/031-maintenance-2026-11/v0.25.1-release-preparation.md`.
 
 5. **Dependency freshness is controlled by events and gates, not by a schedule (Q25, authorized 2026-11-07).** The owner rejected a monthly review and a weekly one: the project must not depend on any routine of any period. A `gate-requirements` check compares each declared requirement with the newest stable version on crates.io and fails the **release** unless the requirement admits it or a row in `requirements-held.toml` says why it is held and what ends the hold; a row fails when a newer version appears. GitHub Dependabot alerts push advisories to the owner when they are published: **enabled by the owner on 2026-11-07** (alerts only; Dependabot security updates stay off, because an automatic bump does not know the MSRV, the `links` constraint or the `localcache-format` pin). The weekly `advisories` and `msrv-fresh` workflows stay but nothing relies on them. Handoff: `rfcs/handoffs/031-maintenance-2026-11/q25-requirements-gate.md` (step 0 first; nothing is pushed before v0.25.1 is released). Order: v0.25.1 → Q25 → v0.26.0 (the two removals, the MSRV raise to 1.89, `rusqlite 0.41`, `sha2 0.11`, `criterion 0.8`) → v0.26.1 (`aes-gcm 0.11`).
 
