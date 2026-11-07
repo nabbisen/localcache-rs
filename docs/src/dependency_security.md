@@ -161,7 +161,7 @@ the floor moved **within a patch series**, up (`rusqlite 0.40.0`/`0.40.1` and
 build could break, or be repaired, with no change to anything they declared. That is why RFC 023 adds a check of a
 *fresh* resolution, rather than trusting the locked graph alone.
 
-That check, and the guarantee that `rust-version = "1.85"` builds, assume **MSRV-aware resolution** on the consumer's side.
+That check, and the guarantee that `rust-version = "1.89"` builds, assume **MSRV-aware resolution** on the consumer's side.
 Cargo does it by default for edition 2024 (resolver 3). On edition 2021 it must be requested, with
 `CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback` or `resolver.incompatible-rust-versions = "fallback"` in
 `.cargo/config.toml`; otherwise a fresh resolution takes the newest versions whatever they declare. For example, at
