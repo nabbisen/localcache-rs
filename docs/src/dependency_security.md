@@ -310,7 +310,8 @@ condition that would change the decision, because an `ignore` has no expiry date
 ```
 
 Two unmaintained-crate findings are accepted this way today, both behind the one
-optional `async-std` runtime feature:
+optional `async-std` runtime feature, which is removed in v0.26.0 (announced in v0.25.1);
+both entries are deleted with it:
 
 - `RUSTSEC-2025-0052` for `async-std`, preserving the advertised optional runtime
   feature.

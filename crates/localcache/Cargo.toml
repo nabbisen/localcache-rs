@@ -21,6 +21,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 async           = ["dep:tokio"]
 
 ## Enables `AsyncCacheEngine` backed by `async_std::task::spawn_blocking`.
+## **Removed in v0.26.0** (announced in v0.25.1): use `async` (Tokio) or `smol`.
 ## When multiple async runtime features are enabled simultaneously,
 ## Tokio (`async`) takes priority, then `async-std`, then `smol`.
 ## Features are kept additive so that `--all-features` and `docs.rs` continue
@@ -54,6 +55,8 @@ metrics         = ["dep:metrics"]
 ## to any OTel-compatible backend (Jaeger, OTLP, stdout, etc.).
 ## The caller is responsible for installing the `OpenTelemetryLayer`
 ## subscriber; see the cookbook for a complete example.
+## **Removed in v0.26.0** (announced in v0.25.1): keep the `tracing` feature and
+## add `tracing-opentelemetry` to your own program's subscriber.
 opentelemetry   = ["tracing", "dep:opentelemetry", "dep:tracing-opentelemetry"]
 
 [dependencies]

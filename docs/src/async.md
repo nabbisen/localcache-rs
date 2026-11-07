@@ -180,8 +180,11 @@ has unless you choose one with `journal_mode(JournalMode::Wal)` or `Delete` (see
 `AsyncCacheEngine` is no longer tied to Tokio.  Enable one of the
 alternative runtime features instead:
 
+> **`async-std` is removed in v0.26.0** (announced in v0.25.1): use `async` (Tokio) or `smol`.
+> The public API of `AsyncCacheEngine` is the same on each.
+
 ```toml
-# async-std backend
+# async-std backend (removed in v0.26.0)
 localcache = { version = "0.25.0", features = ["async-std"] }
 
 # smol backend
@@ -212,7 +215,7 @@ async fn main() -> Result<(), localcache::LocalFileCacheError> {
 |---|---|
 | Single-threaded / simple scripts | `CacheEngine<T>` |
 | Async (Tokio) | `AsyncCacheEngine<T>` with `async` feature |
-| Async (async-std) | `AsyncCacheEngine<T>` with `async-std` feature |
+| Async (async-std) | `AsyncCacheEngine<T>` with `async-std` feature (removed in v0.26.0) |
 | Async (smol) | `AsyncCacheEngine<T>` with `smol` feature |
 | Sync multi-threaded — mixed reads and writes | `SyncCacheEngine<T>` |
 | Sync multi-threaded — read-heavy, separate writer | `ReadPool<T>` (N concurrent connections) |

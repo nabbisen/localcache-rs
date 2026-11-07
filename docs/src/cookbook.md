@@ -244,6 +244,10 @@ let engine = CacheEngine::<Vec<f32>>::builder()
 
 ## Recipe 9 — Distributed tracing with OpenTelemetry
 
+> **The `opentelemetry` feature is removed in v0.26.0** (announced in v0.25.1). This recipe
+> works with `features = ["tracing"]` instead: `tracing-opentelemetry` is already a
+> dependency of your own program below.
+
 Enable the `opentelemetry` feature to export `localcache` spans to any
 OTel-compatible backend:
 

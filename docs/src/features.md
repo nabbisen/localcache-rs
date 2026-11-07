@@ -14,20 +14,20 @@ localcache = { version = "0.25.0", features = ["async", "compression", "json"] }
 |---|---|---|
 | *(default)* | Core cache — compact binary payloads (`Codec::Bincode`), BLAKE3, SQLite | `CacheEngine<T>`, `SyncCacheEngine<T>` |
 | `async` | Tokio-based async wrapper | `AsyncCacheEngine<T>` |
-| `async-std` | async-std async wrapper | `AsyncCacheEngine<T>` |
+| `async-std` | async-std async wrapper — **removed in v0.26.0** | `AsyncCacheEngine<T>` |
 | `smol` | smol async wrapper | `AsyncCacheEngine<T>` |
 | `compression` | zstd payload compression | `CacheOptions::compress_payloads` |
 | `json` | JSON codec + `QueryBuilder` predicates | `Codec::Json`, `engine.query()` |
 | `encryption` | AES-256-GCM payload encryption | `CacheEngineBuilder::encryption_key()` |
 | `tracing` | `tracing` spans on hot paths (with `namespace` field) | automatic; zero-cost when disabled |
-| `opentelemetry` | OTel bridge via `tracing-opentelemetry` (implies `tracing`) | caller installs `OpenTelemetryLayer` |
+| `opentelemetry` | OTel bridge via `tracing-opentelemetry` (implies `tracing`) — **removed in v0.26.0** | caller installs `OpenTelemetryLayer` |
 | `watching` | OS file-system events for reactive invalidation | `CacheWatcher<T>`, `CacheDebouncedWatcher<T>` |
 | `metrics` | `metrics` counters and histograms | automatic; zero-cost when disabled |
 
 > **Async runtime priority:** when more than one async feature is enabled
 > simultaneously, the active backend is chosen by priority:
 > `async` (Tokio) > `async-std` > `smol`.  Features remain additive for
-> `--all-features` compatibility.
+> `--all-features` compatibility.  (`async-std` is removed in v0.26.0.)
 
 ## async
 
@@ -155,6 +155,11 @@ No code changes are required; all spans are compiled out when the feature
 is disabled.
 
 ## opentelemetry
+
+> **Removed in v0.26.0** (announced in v0.25.1). The feature only pulls in the two
+> OpenTelemetry crates; the spans come from the `tracing` feature, which stays. To keep
+> your traces, depend on `tracing-opentelemetry` in your own program and add its layer to
+> your subscriber, as the example below does. See the [cookbook](./cookbook.md).
 
 Bridges the existing `tracing` instrumentation to any OpenTelemetry-compatible
 backend (Jaeger, Honeycomb, OTLP, stdout, …) via
