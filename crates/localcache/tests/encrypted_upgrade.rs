@@ -52,7 +52,10 @@ struct Copy {
 fn copy_of_the_fixture() -> Copy {
     let bytes = fs::read(FIXTURE).unwrap();
     assert_eq!(
-        format!("{:x}", Sha256::digest(&bytes)),
+        Sha256::digest(&bytes)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>(),
         FIXTURE_SHA256,
         "immutable fixture digest changed"
     );

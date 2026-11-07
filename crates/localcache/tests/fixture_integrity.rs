@@ -32,7 +32,10 @@ const V0_23_ENCRYPTED_SHA256: &str =
 
 fn assert_sha256(path: &str, expected: &str) {
     let bytes = fs::read(path).unwrap_or_else(|error| panic!("cannot read {path}: {error}"));
-    let actual = format!("{:x}", Sha256::digest(bytes));
+    let actual = Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
     assert_eq!(actual, expected, "immutable fixture digest changed: {path}");
 }
 

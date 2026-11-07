@@ -97,7 +97,13 @@ fn version_state(version: u8, files_high_water: i64) -> SchemaState {
 
 fn assert_fixture_sha256(path: &str, expected: &str) {
     let bytes = fs::read(path).unwrap();
-    assert_eq!(format!("{:x}", Sha256::digest(bytes)), expected);
+    assert_eq!(
+        Sha256::digest(bytes)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>(),
+        expected
+    );
 }
 
 fn assert_rejected_unchanged(sql: &str) {

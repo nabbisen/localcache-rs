@@ -12,7 +12,10 @@ fn digest(path: &str) -> String {
         env!("CARGO_MANIFEST_DIR")
     );
     let bytes = std::fs::read(&full).unwrap_or_else(|error| panic!("cannot read {full}: {error}"));
-    format!("{:x}", Sha256::digest(bytes))
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>()
 }
 
 #[test]
