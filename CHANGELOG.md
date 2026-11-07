@@ -7,9 +7,9 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [0.26.0] — Unreleased
+## [0.26.0] — 2026-11-07
 
-*Date set at owner authorization.*
+Authorized by the project owner on 2026-11-07. The source is that of release candidate `b499ce5`; the release commit changes only this date.
 
 **Breaking (a minor release under the 0.x policy). Three things may need your action: the `opentelemetry` and `async-std` features are removed (announced in 0.25.1); the minimum supported Rust version is now 1.89; and a `rusqlite` dependency of your own must be 0.41.1 or later in the 0.41 line.** This release also fixes CVE-2026-119375 by bundling SQLite 3.54.1. Nothing changes in the stored format, the schema, the wire format or the public API apart from the two removed features.
 
