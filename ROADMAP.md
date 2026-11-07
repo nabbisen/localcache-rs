@@ -1733,7 +1733,7 @@ Accepted on the evidence of reviews 099 to 102 (requests 075 to 079):
 3. **The minimum supported Rust version is raised from 1.85 to 1.89 in v0.26.0**, under RFC 023 R3.1 (a security fix that exists only in a dependency that needs the newer toolchain): `rusqlite 0.41` (bundled SQLite 3.54.1, which fixes CVE-2026-119375), `sha2 0.11` and `criterion 0.8`; `aes-gcm 0.11` follows as v0.26.1. The raise is announced in the release that makes it, as RFC 023 R3.1 provides; until then `docs/src/security.md` states the known issue (commit `1784370`).
 4. **v0.25.1** (a patch; date authorized separately): the content of request 077 (the encoder's inlined writers, the performance page, `base64 0.23`, the unused `tokio-test` line), the known-issue documentation of request 079, and the announcement of items 1 and 2. Handoff: `rfcs/handoffs/031-maintenance-2026-11/v0.25.1-release-preparation.md`.
 
-Open at the same date: how dependency freshness is watched without a calendar routine (the owner declined a monthly review), and the storage crate of RFC 030 (decision point 2: the architect recommends no, with the reasoning sent to the owner for the final word). **1.0:** not planned; it requires the owner's explicit confirmation.
+Open at the same date: how dependency freshness is controlled with no calendar routine of any period (the owner declined a monthly review, and a weekly one). Closed at the same date: RFC 030's decision point 2 (the storage crate): **no**, storage stays a module (see the RFC). **1.0:** not planned; it requires the owner's explicit confirmation.
 
 ### v0.25.0 — released 2026-11-07
 

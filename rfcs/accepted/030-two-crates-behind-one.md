@@ -148,6 +148,8 @@ Handoffs: `../handoffs/030-two-crates-behind-one/` (step 0 first; the slices aft
 
 **Decision point 1, 2026-11-04 (review 091):** the owner answered **yes to slice 4, the format crate**, on the architect's recommendation; storage (slice 5) is left to decision point 2 and is expected to stay a module. Slice 4 and the gates, pipeline and book (slice 6) are handed off in `q18-the-format-crate.md`; the release is v0.25.0 with three published crates (`localcache-format`, `localcache`, `localcache-cli`) and one new name to publish by hand (R6).
 
+**Decision point 2, 2026-11-07: storage stays a module; `localcache-storage` is not cut.** The owner approved the architect's reasoning: the case for a storage crate is compile-time enforcement of a layering that `tests/layering.rs` already enforces in the gate; the crate would have no user but `localcache` and no dependency set of its own to offer; it would make the 21 types and 38 methods of the `Store` public API (the prototype needed no `#[doc(hidden)]`, so the cost is a larger public surface to keep stable, not hidden items), and it would add a fourth published crate with its own pin, digest line, trusted publisher and a first publication by hand. Revisit only for a second user of the storage layer (a read-only inspector, an alternative backend). The adapters (R7) are not pursued. Slice 5 is closed as not done.
+
 ## Open questions
 
 None for the owner. The eight items of step 0 are verifications with stop rules, not design questions.
