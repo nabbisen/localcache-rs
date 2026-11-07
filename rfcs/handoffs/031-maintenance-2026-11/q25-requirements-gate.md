@@ -7,7 +7,7 @@ Authorship: high-capability model.
 
 ## 0. The design in one paragraph
 
-Freshness matters at two moments: when we release (what users and deps.rs see) and when an advisory is published against what we ship. The first becomes a **hard gate in the release path**; the second is **pushed to the owner** by GitHub Dependabot alerts (a repository setting the owner enables; you do not touch it). The gate compares every *declared* requirement of every workspace member with the newest stable version on crates.io. A dependency passes if its requirement admits the newest version, or if it has a row in a held-back file that says why, what ends the hold, and the newest version the row was written against. A newer version appearing makes the row fail, so an upstream event, not a date, brings it back for a decision. The weekly `advisories` and `msrv-fresh` workflows stay (the release reruns them), but **nothing in the project may be described as relying on them**.
+Freshness matters at two moments: when we release (what users and deps.rs see) and when an advisory is published against what we ship. The first becomes a **hard gate in the release path**; the second is **pushed to the owner** by GitHub Dependabot alerts (a repository setting, already enabled by the owner on 2026-11-07; you do not touch it). The gate compares every *declared* requirement of every workspace member with the newest stable version on crates.io. A dependency passes if its requirement admits the newest version, or if it has a row in a held-back file that says why, what ends the hold, and the newest version the row was written against. A newer version appearing makes the row fail, so an upstream event, not a date, brings it back for a decision. The weekly `advisories` and `msrv-fresh` workflows stay (the release reruns them), but **nothing in the project may be described as relying on them**.
 
 ## 1. Step 0 — evidence, scratch only, before any commit
 
@@ -37,7 +37,7 @@ Start now; it needs nothing from the v0.25.1 stack.
 
 * `docs/src/dependency_security.md`: a section "How freshness is controlled" with the design of § 0 in the project's plain style; the limits stated: nothing detects staleness in a repository that is idle and silent, and that costs nothing until a release, which the gate stops; and what the advisory sources do and do not cover, **as step 0 item 1 found it** (do not write more than the evidence supports).
 * Rewrite the sentences that make a schedule the control: `dependency_security.md` ("The weekly run is the point", "which is why the weekly fresh-resolution run stays", the MSRV verification bullet), `docs/src/security.md` ("every push and every week"), `docs/src/source_archives.md` (the `Advisories` / `MSRV fresh resolution` row), `deny.toml` line 3, the comments of `advisories.yaml` and `msrv-fresh.yaml`. They may say the workflows exist and run weekly; they must not say the project depends on them. RFC 023's text is a record of a decision: leave it.
-* Dependabot alerts for Cargo dependencies: the pages already call them "a repository setting". Say what they are for (GitHub tells the owner when an advisory is published against the locked graph), and **do not state that they are enabled**: the architect records that, with the date, when the owner confirms.
+* Dependabot alerts for Cargo dependencies: the pages already call them "a repository setting". Say what they are for (GitHub tells the owner when an advisory is published against the locked graph), and say that they **are enabled** (the owner enabled Dependabot alerts on 2026-11-07; Dependabot security updates stay off, with the reason: an automatic bump does not know the MSRV, the `links` constraint or the exact `localcache-format` pin).
 * The existing `.github/dependabot.yml` (GitHub Actions only, weekly pull requests) is not changed here. Mention it nowhere as a freshness control for crates.
 
 ## 5. Order and the push
@@ -50,4 +50,4 @@ One review request (step 0 may be reported first as its own request, so the arch
 
 ## 7. Not yours
 
-The Dependabot setting, any change to workflow permissions, the date, tags and publication, `ROADMAP.md`, `docs/src/roadmap.md`, any removal of a feature (v0.26.0 is separate).
+The Dependabot settings, any change to workflow permissions, the date, tags and publication, `ROADMAP.md`, `docs/src/roadmap.md`, any removal of a feature (v0.26.0 is separate).
