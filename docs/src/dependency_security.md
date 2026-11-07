@@ -56,6 +56,7 @@ change them.
 ```text
 rusqlite 0.39  ->  libsqlite3-sys 0.37.x   (bundles SQLite 3.51.3)
 rusqlite 0.40  ->  libsqlite3-sys 0.38.x   (bundles SQLite 3.53.1 to 3.53.2)
+rusqlite 0.41  ->  libsqlite3-sys 0.39.x   (bundles SQLite 3.54.0 to 3.54.1)
 ```
 
 Whether `rusqlite 0.40` builds on Rust 1.85 depends on the exact patch release,
@@ -120,9 +121,11 @@ required `^0.39`, a crate on `rusqlite 0.40` had to move its own `rusqlite` to
 
 ### The upstream cause
 
-Neither `rusqlite` nor `libsqlite3-sys` declares a `rust-version` in its manifest.
-Because of that, Cargo's MSRV-aware resolution cannot see a toolchain requirement
-and cannot route around it.
+Neither `rusqlite 0.40.x` nor `libsqlite3-sys 0.38.x` declares a `rust-version` in its
+manifest. Because of that, Cargo's MSRV-aware resolution cannot see a toolchain
+requirement and cannot route around it. (The 0.41 line does declare one:
+`rusqlite 0.41.1` says 1.89.0 and `libsqlite3-sys 0.39.1` says 1.88.0, checked in their
+manifests on 2026-11-07.)
 
 The `rusqlite 0.40.x` and `libsqlite3-sys 0.38.x` series show why that matters:
 the floor moved **within a patch series**, up (`rusqlite 0.40.0`/`0.40.1` and
@@ -212,6 +215,19 @@ indistinguishable from crawler traffic. Neither case justified a yank.
 Tell us. A short note describing which side you are on, and what your own MSRV floor
 actually is, is more useful than a patch — the two cases above needed opposite fixes,
 and neither was the one first proposed.
+
+## Requirements held back
+
+A declared requirement that is not the latest line is a decision, and this is where each
+one is recorded, with the reason and what would end it (checked against crates.io on
+2026-11-07). The MSRV is 1.85 (RFC 023): it is raised only for a named necessity, and a
+development tool never justifies a raise.
+
+| Requirement | Latest | Why it is held | What ends the hold |
+|---|---|---|---|
+| `rusqlite 0.40.2` (bundles SQLite 3.53.2) | `0.41.1` (bundles 3.54.1) | `rusqlite 0.41.1` declares Rust 1.89.0 and `libsqlite3-sys 0.39.1` 1.88.0, above the MSRV; see the section above | An MSRV raise authorized under RFC 023 R3 (a named necessity such as a security fix in the bundled SQLite that reaches this crate's use of it), or an upstream release of the 0.41 line that builds on 1.85 |
+| `criterion 0.7` (development only: the `cache_bench` benchmark) | `0.8.2` (Rust 1.86) | A development dependency whose newer line needs a newer toolchain than the MSRV | The MSRV reaches 1.86 for another reason, or the benchmark stops using `criterion` |
+| `sha2 0.10` (development only: the digest checks of the committed fixtures) | `0.11.1` (Rust 1.88) | The same | The MSRV reaches 1.88 for another reason, or the checks stop needing SHA-256 from a library |
 
 ## The `zstd` features
 
