@@ -13,8 +13,10 @@ name: Release
 # `main`, which is how the trust chain is rehearsed before a release
 # (docs/src/source_archives.md).
 #
-# Jobs: `gate` checks the tag and the commit; `advisories` and `msrv-fresh` are
-# the two scheduled checks, run again at the moment of release; `archive` builds
+# Jobs: `gate` checks the tag, the commit and that every declared dependency
+# requirement admits the newest crates.io version or is held with a reason
+# (`requirements-held.toml`, Q25: freshness is a gate at release, not a timer);
+# `advisories` and `msrv-fresh` are two further checks, run again at the moment of release; `archive` builds
 # and attests the source archive; `publish` is the only job that asks crates.io
 # for a token, and it runs in the `release` Environment (the crates.io
 # trusted-publisher records name this repository and this workflow, not an
@@ -118,6 +120,10 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: python3 scripts/check_versions.py --expect "$VERSION"
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - name: Check every declared requirement admits the newest version, or is held with a reason
+        # Needs the network (the crates.io index) and fails closed without it: no cached copy.
+        run: python3 scripts/check_requirements.py
 
   advisories:
     name: Advisories

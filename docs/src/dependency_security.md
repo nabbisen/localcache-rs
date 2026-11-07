@@ -36,9 +36,9 @@ The declared MSRV changes only under a written rule
   and after each publication a fresh consumer crate with `rust-version = "1.85"`
   builds the published version on the declared toolchain. A fresh-resolution check —
   the tracked tree without its lockfile, resolved by the declared toolchain's
-  Cargo, then the same four rows — runs weekly and on request
-  (`.github/workflows/msrv-fresh.yaml`); run it before a release, and a drift there
-  blocks the release.
+  Cargo, then the same four rows — runs on request and at every release
+  (`.github/workflows/msrv-fresh.yaml`, which also runs weekly; nothing relies on
+  that), and a drift there blocks the release.
 - **The previous minor line** gets security, data-loss, and corruption fixes for
   6 months after a raise, where the fix does not itself need the raise.
 
@@ -150,7 +150,7 @@ It is still so for `rusqlite 0.40.2`. Its release notes say "Lower MSRV to
 1.88.0", but its manifest declares no `rust-version`, and the declared-MSRV rows
 (`cargo make gate-msrv`) and the fresh-resolution check both pass on Rust 1.85.0
 with it. What upstream states and what the build needs are not the same thing,
-which is why the weekly fresh-resolution run stays.
+which is why the fresh-resolution check exists, and why a release runs it again.
 
 We have not filed an upstream issue. Doing so would open a conversation this project
 would need to sustain, and the constraint is documented here regardless. If you have hit
@@ -221,18 +221,61 @@ Tell us. A short note describing which side you are on, and what your own MSRV f
 actually is, is more useful than a patch — the two cases above needed opposite fixes,
 and neither was the one first proposed.
 
+## How freshness is controlled
+
+No schedule of any period is what this project depends on. Freshness matters at two moments, and each
+has a control that does not need anyone to remember to look.
+
+**When we release** (what users and deps.rs see). `cargo make gate-requirements`
+(`scripts/check_requirements.py`) compares every dependency requirement that any workspace member declares
+(normal, build and development, optional and target-specific ones included; workspace members excluded) with
+the newest version on the crates.io index that is not yanked and not a pre-release. A dependency passes if its
+requirement admits that version, or if `requirements-held.toml` has a row for it that says why it is held and
+what ends the hold, and names the newest version it was written against. When a newer version is published the
+row fails, so an upstream event, not a date, brings the decision back. A row for a requirement that now passes,
+or that no workspace member declares any more, fails too: the release that ends a hold deletes its row. The gate
+fails closed: an index that cannot be fetched or parsed, a requirement that names a pre-release or has a form the
+script does not understand, a crate with no stable version. There is no cached copy and no fallback. The `Release`
+workflow's `Gate` job runs it, so a release stops until every line is decided. It is deliberately not in `ci.yaml`:
+an upstream publication between two pushes must not turn an unrelated push red.
+
+**When an advisory is published against what we ship.** GitHub Dependabot alerts for Cargo dependencies are
+**enabled** (the owner enabled them on 2026-11-07): GitHub tells the owner when an advisory is published against
+the locked graph. Dependabot *security updates* stay off, because an automatic bump does not know the MSRV, the
+`links` constraint or the exact `localcache-format` pin. The workflows `advisories.yaml` and `msrv-fresh.yaml` exist
+and run weekly, and a release runs them again; nothing relies on their having run.
+
+**Limits, stated.** Nothing detects staleness in a repository that is idle and silent; that costs nothing until a
+release, which the gate stops. And the advisory sources list vulnerabilities **by crate**: RustSec (which
+`cargo deny` reads) and GitHub's reviewed advisories (which Dependabot alerts read). A vulnerability in the C source
+that a `-sys` crate bundles reaches them only when someone maps it to the crate. For CVE-2026-119375 in SQLite,
+bundled by `libsqlite3-sys`, nobody had, as of 2026-11-07: OSV and GitHub publish the CVE itself, without a package,
+and neither lists it against `libsqlite3-sys` or `rusqlite`. So neither the advisory gate nor Dependabot alerts would
+have said anything about it; it is described under "Known issue: the bundled SQLite" in
+[Security Model](./security.md). This says nothing about how often that happens in general, or about what the alerts
+will do later.
+
 ## Requirements held back
 
-A declared requirement that is not the latest line is a decision, and this is where each
-one is recorded, with the reason and what would end it (checked against crates.io on
-2026-11-07). The MSRV is 1.85 (RFC 023): it is raised only for a named necessity, and a
+A declared requirement that does not admit the newest stable version on crates.io is a decision,
+and this is where each one is recorded, with the reason and what would end it. The record is the file
+`requirements-held.toml` at the repository root; the table below is generated from it and checked against
+it (`scripts/check_requirements.py`), so the two cannot differ. How the file is used is described under
+"How freshness is controlled". The MSRV is 1.85 (RFC 023): it is raised only for a named necessity, and a
 development tool never justifies a raise.
 
-| Requirement | Latest | Why it is held | What ends the hold |
+<!-- requirements-held:begin (generated from requirements-held.toml by scripts/check_requirements.py --write-book) -->
+
+| Requirement | Newest seen | Why it is held | What ends the hold |
 |---|---|---|---|
-| `rusqlite 0.40.2` (bundles SQLite 3.53.2) | `0.41.1` (bundles 3.54.1) | `rusqlite 0.41.1` declares Rust 1.89.0 and `libsqlite3-sys 0.39.1` 1.88.0, above the MSRV; see the section above | An MSRV raise authorized under RFC 023 R3 (a named necessity such as a security fix in the bundled SQLite that reaches this crate's use of it; the case in view is the one under "Known issue: the bundled SQLite" in [Security Model](./security.md)), or an upstream release of the 0.41 line that builds on 1.85 |
-| `criterion 0.7` (development only: the `cache_bench` benchmark) | `0.8.2` (Rust 1.86) | A development dependency whose newer line needs a newer toolchain than the MSRV | The MSRV reaches 1.86 for another reason, or the benchmark stops using `criterion` |
-| `sha2 0.10` (development only: the digest checks of the committed fixtures) | `0.11.1` (Rust 1.88) | The same | The MSRV reaches 1.88 for another reason, or the checks stop needing SHA-256 from a library |
+| `aes-gcm ^0.10.3` | `0.11.1` | aes-gcm 0.11 needs a dependency, ctutils, that needs Rust 1.87 or newer, and the ctutils releases that build on 1.85 carry RUSTSEC-2026-0385 (non-constant-time operations in a cryptographic layer). | The MSRV is at least 1.87. It is then adopted in its own patch release, with the proof that the ciphertext format is unchanged. |
+| `criterion ^0.7` | `0.8.2` | criterion 0.8 needs Rust 1.86. It is a development-only dependency (the cache_bench benchmark), and a development tool never justifies an MSRV raise. | The MSRV reaches 1.86 for another reason (the rusqlite row), or the benchmark stops using criterion. |
+| `opentelemetry ^0.32` | `0.33.1` | The opentelemetry feature is removed in v0.26.0 (announced in v0.25.1). A bump of a dependency that is about to leave the tree is not worth a release. | The removal of the opentelemetry feature lands. The row is deleted with the dependency. |
+| `rusqlite ^0.40.2` | `0.41.1` | rusqlite 0.41 (bundled SQLite 3.54.1) declares Rust 1.89, and libsqlite3-sys 0.39 declares 1.88; the MSRV is 1.85. | An MSRV raise authorized under RFC 023 R3.1 for the security fix described under Known issue in docs/src/security.md. No version or date is promised here. |
+| `sha2 ^0.10` | `0.11.1` | sha2 0.11 needs Rust 1.88. It is a development-only dependency (the digest checks of the committed fixtures), and a development tool never justifies an MSRV raise. | The MSRV reaches 1.88 for another reason (the rusqlite row), or the checks stop needing SHA-256 from a library. |
+| `tracing-opentelemetry ^0.33` | `0.34.0` | The opentelemetry feature is removed in v0.26.0 (announced in v0.25.1). A bump of a dependency that is about to leave the tree is not worth a release. | The removal of the opentelemetry feature lands. The row is deleted with the dependency. |
+
+<!-- requirements-held:end -->
 
 ## SQLite compile options we do not use
 
@@ -339,11 +382,12 @@ is gone or fixed, leaving the entry in fails the gate instead (`advisory-not-det
 which is the prompt to delete it.
 
 **When it runs.** In CI on every push and pull request (job "Standard gates
-(dependency security)", required by the release gate), and every Monday in
-`.github/workflows/advisories.yaml`, also on request. The weekly run is the
-point: an advisory is published without any push, and a failure there means a new
-advisory or yank has reached the locked graph. Dependabot alerts for Cargo
-dependencies (a repository setting) back it up between runs.
+(dependency security)", required by the release gate), and again at every release
+(`.github/workflows/advisories.yaml` is called by `Release`). That workflow also runs
+every Monday and on request; that run is a convenience, and nothing relies on it. An
+advisory is published without any push: for a crate of the locked graph it reaches the
+owner through Dependabot alerts, and the release runs this check again (see "How
+freshness is controlled").
 
 **Pinned tool versions.** `cargo-deny` 0.20.2, `cargo-hack` 0.6.45 and
 `cargo-make` 0.37.24, each installed with `cargo install <tool> --version <v>

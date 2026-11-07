@@ -7,6 +7,14 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [Unreleased]
+
+### Internal
+
+- **Dependency freshness is a release gate, not a timer (Q25).** `cargo make gate-requirements` (`scripts/check_requirements.py`) compares every declared dependency requirement of the workspace with the newest stable version on crates.io, and the `Release` workflow's `Gate` job fails unless each requirement admits it or has a row in `requirements-held.toml` with its reason and what ends the hold; a newer upstream version, a requirement that now passes, or a dependency that has left the tree makes its row fail. The book's table of held requirements is generated from that file. It is not part of `ci.yaml` and no schedule is relied on (`docs/src/dependency_security.md`, "How freshness is controlled"). No library change.
+
+---
+
 ## [0.25.1] — 2026-11-07
 
 Authorized by the project owner on 2026-11-07. The source is that of release candidate `f1a0cbe`; after it only a handoff document under `rfcs/` changed, and the release commit changes only this date.
