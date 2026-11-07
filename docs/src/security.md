@@ -94,6 +94,25 @@ anything in it. The rest of this page is mostly about what that can and cannot d
   middle of a large file. `MetadataThenFullHash` and `StrictFullHash` hash the whole file. Choose a full-hash
   mode when the files can be changed by someone who can also set times.
 
+**Known issue: the bundled SQLite (v0.25.x).** The SQLite that `rusqlite 0.40` bundles in this release is
+3.53.2. [CVE-2026-119375](https://nvd.nist.gov/vuln/detail/CVE-2026-119375) (published 2026-10-30, fixed in
+SQLite 3.54.0) lets a crafted database file, together with a sibling `-wal` file, make ordinary queries return
+uninitialized page-cache memory. Its CVSS score is 6.8 (v4) and 5.5 (v3.1), with a local attack vector.
+
+- **Whom it concerns.** A process that opens a database file, with its `-wal`, that a less trusted party could
+  have written: the CLI's `copy --from-db` and any import of a foreign file, a cache in a directory others can
+  write, a cache restored from an untrusted backup. A cache that only your own user can create is outside the
+  model.
+- **What to do now.** Keep the cache directory writable only by the user of the cache (recommendation 1 below),
+  and do not open a database file, or its `-wal`, that someone less trusted could have written.
+- **The fix** is SQLite 3.54.x. It comes with `rusqlite 0.41`, which declares Rust 1.89, above this project's
+  minimum supported Rust version (1.85). The MSRV policy ([RFC 023](https://github.com/nabbisen/localcache-rs/blob/main/rfcs/accepted/023-msrv-policy.md)
+  R3.1) provides for a raise for a security fix, and this page is updated in the release that makes it.
+- **What the schema check does and does not do.** It refuses a database file that holds any application object
+  this crate did not create (a virtual table, a trigger, a view), which closes the extension-table and view
+  vulnerabilities of 2026. It reads through SQLite's own page reader, so it does not protect against a flaw at the
+  page level, which is where this one is.
+
 ## Rejected before any effect
 
 Invalid configuration is refused before the database is created, opened, migrated or
@@ -177,7 +196,9 @@ What it does **not** do:
 
 - **Dependencies** are checked by `cargo deny` on every push and every week: advisories
   (vulnerabilities, unsound and unmaintained crates, yanked versions) and sources (crates.io
-  only, no Git dependencies). A standing exception must carry its reason and the condition
+  only, no Git dependencies). That check reads the RustSec database: a vulnerability in the C source of the SQLite
+  that `libsqlite3-sys` bundles is reported only if RustSec lists it, and the known issue above is not
+  something it reports. A standing exception must carry its reason and the condition
   that ends it; the one current exception is the `async-std` runtime feature (see
   [MSRV & Dependency Security](./dependency_security.md)). The `bincode` exception ended in
   v0.22.1, when the payload format's reader and writer became the project's own code.

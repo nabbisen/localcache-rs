@@ -94,16 +94,21 @@ With `libsqlite3-sys 0.38.2` locked, `rusqlite =0.40.0` and `=0.40.1` still fail
   1.95.
 - **`rusqlite 0.41` is not used.** It declares Rust 1.89 and requires
   `libsqlite3-sys ^0.39`, so adopting it would raise the MSRV, and RFC 023 allows
-  that only for a named necessity; there is none. A crate that depends directly
+  that only for a named necessity; none was known when 0.22 shipped. A security fix
+  that is only in the newer SQLite has since been found (see "Known issue: the bundled
+  SQLite" in [Security Model](./security.md)); the raise is made in a release, and this
+  page is updated then. A crate that depends directly
   on `rusqlite 0.41` therefore cannot be combined with `localcache 0.22`
   (`links`, below).
 - **Consumers who pin `rusqlite 0.40` directly** can use `localcache` from 0.22.0.
 
 The gain was a newer bundled SQLite (3.51.3 → 3.53.2, checked on the built
 crate: `rusqlite::version()` prints `3.53.2`). While `localcache` stayed on
-`^0.39`, no advisory affected the older one, and the advisory check below scans
-`libsqlite3-sys` along with everything else, so a later one would have surfaced
-there.
+`^0.39`, no RustSec advisory affected the older one. The advisory check below reads
+the RustSec database: a vulnerability in the C source of the bundled SQLite appears
+there only if RustSec lists it, and a CVE that it does not list is not reported by the
+gate. One such CVE is described under "Known issue: the bundled SQLite" in
+[Security Model](./security.md).
 
 ### Why this cannot be worked around downstream
 
@@ -225,9 +230,37 @@ development tool never justifies a raise.
 
 | Requirement | Latest | Why it is held | What ends the hold |
 |---|---|---|---|
-| `rusqlite 0.40.2` (bundles SQLite 3.53.2) | `0.41.1` (bundles 3.54.1) | `rusqlite 0.41.1` declares Rust 1.89.0 and `libsqlite3-sys 0.39.1` 1.88.0, above the MSRV; see the section above | An MSRV raise authorized under RFC 023 R3 (a named necessity such as a security fix in the bundled SQLite that reaches this crate's use of it), or an upstream release of the 0.41 line that builds on 1.85 |
+| `rusqlite 0.40.2` (bundles SQLite 3.53.2) | `0.41.1` (bundles 3.54.1) | `rusqlite 0.41.1` declares Rust 1.89.0 and `libsqlite3-sys 0.39.1` 1.88.0, above the MSRV; see the section above | An MSRV raise authorized under RFC 023 R3 (a named necessity such as a security fix in the bundled SQLite that reaches this crate's use of it; the case in view is the one under "Known issue: the bundled SQLite" in [Security Model](./security.md)), or an upstream release of the 0.41 line that builds on 1.85 |
 | `criterion 0.7` (development only: the `cache_bench` benchmark) | `0.8.2` (Rust 1.86) | A development dependency whose newer line needs a newer toolchain than the MSRV | The MSRV reaches 1.86 for another reason, or the benchmark stops using `criterion` |
 | `sha2 0.10` (development only: the digest checks of the committed fixtures) | `0.11.1` (Rust 1.88) | The same | The MSRV reaches 1.88 for another reason, or the checks stop needing SHA-256 from a library |
+
+## SQLite compile options we do not use
+
+The bundled SQLite is built by `libsqlite3-sys` with several optional parts switched on for every user:
+full-text search (FTS3/FTS4 and FTS5), R-Tree, STAT4, the DBSTAT table, SOUNDEX and support for loading
+extensions. **This crate uses none of them**: it uses core SQL and the JSON functions, which are part of the
+core since SQLite 3.38.
+
+**A program that builds its own binary** can remove them. `libsqlite3-sys` has no Cargo feature for it, but its build
+script appends the words of the environment variable `LIBSQLITE3_FLAGS` to the compiler command line, and a
+`-U` word undefines an option:
+
+```sh
+LIBSQLITE3_FLAGS="-USQLITE_ENABLE_FTS3 -USQLITE_ENABLE_FTS3_PARENTHESIS -USQLITE_ENABLE_FTS5 -USQLITE_ENABLE_RTREE -USQLITE_ENABLE_STAT4 -USQLITE_SOUNDEX -USQLITE_ENABLE_DBSTAT_VTAB" cargo build --release
+```
+
+Measured on 2026-11-07 with `rusqlite 0.40.2`: with these words set, `fts3`, `fts5`, `rtree`, `dbstat` and `soundex`
+are gone from a test program (`no such module`, `no such table`, `no such function`) and `json_extract` still works;
+that test program's binary is 22% smaller (2,715,424 to 2,105,232 bytes); and this workspace's own test suite
+(742 tests, all features) passes with the options removed.
+
+What this does and does not do:
+
+- It reaches **only the build where the variable is set**. A user who depends on `localcache` from crates.io gets the
+  default build unless they set the variable in their own build.
+- It does **nothing for CVE-2026-119375**, which is in the core of SQLite (see "Known issue: the bundled SQLite" in
+  [Security Model](./security.md)). It reduces the exposure to future vulnerabilities in the parts it removes.
+- Your own program may use FTS or R-Tree through `rusqlite` in the same binary: check before you remove them.
 
 ## The `zstd` features
 
@@ -249,7 +282,10 @@ cargo deny --locked check -D advisory-not-detected advisories sources
 ```
 
 **What it checks.** The RustSec advisory database is fetched fresh on every run,
-and a failed fetch fails the run: there is no silent fallback to an old copy.
+and a failed fetch fails the run: there is no silent fallback to an old copy. It checks
+that database and nothing else: a vulnerability that is published only in the National
+Vulnerability Database, for example in the C source of the SQLite that `libsqlite3-sys`
+bundles, is not seen by it.
 Against it, the gate denies
 
 - vulnerabilities, unsound reports (`unsound = "all"`, so transitive dependencies
