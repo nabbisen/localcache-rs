@@ -863,7 +863,7 @@ where
     /// reopened with `new_key`; until then it returns
     /// [`LocalFileCacheError::EncryptionError`] on rotated entries. Engines
     /// on other namespaces are unaffected and keep their own key. A
-    /// [`watcher`](Self::watcher) needs no action: it never decodes
+    /// `watcher` (the `watching` feature) needs no action: it never decodes
     /// payloads.
     ///
     /// Returns the number of entries that were re-sealed (every entry of the
