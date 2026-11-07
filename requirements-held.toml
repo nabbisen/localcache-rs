@@ -15,39 +15,11 @@
 # docs/src/dependency_security.md is generated from this file
 # (`python3 scripts/check_requirements.py --write-book`) and checked against it.
 # The MSRV is raised only for a named necessity (RFC 023); a development tool never justifies it.
-
-[[held]]
-crate = "SQLite (bundled)"
-requirement = "3.53.2"
-latest = "3.54.1"
-why = "The fix for CVE-2026-119375 is in SQLite 3.54.0 and later. That comes with rusqlite 0.41, which declares Rust 1.89, above the MSRV 1.85. The bundled version is the one in the locked libsqlite3-sys; the latest release is the source amalgamation on sqlite.org."
-ends = "The same condition as the rusqlite row: an MSRV raise authorized under RFC 023 R3.1, after which the bundled SQLite is updated. No version or date is promised here."
+# An empty file means nothing is held: every declared requirement admits the newest version.
 
 [[held]]
 crate = "aes-gcm"
 requirement = "^0.10.3"
 latest = "0.11.1"
-why = "aes-gcm 0.11 needs a dependency, ctutils, that needs Rust 1.87 or newer, and the ctutils releases that build on 1.85 carry RUSTSEC-2026-0385 (non-constant-time operations in a cryptographic layer)."
-ends = "The MSRV is at least 1.87. It is then adopted in its own patch release, with the proof that the ciphertext format is unchanged."
-
-[[held]]
-crate = "criterion"
-requirement = "^0.7"
-latest = "0.8.2"
-why = "criterion 0.8 needs Rust 1.86. It is a development-only dependency (the cache_bench benchmark), and a development tool never justifies an MSRV raise."
-ends = "The MSRV reaches 1.86 for another reason (the rusqlite row), or the benchmark stops using criterion."
-
-[[held]]
-crate = "rusqlite"
-requirement = "^0.40.2"
-latest = "0.41.1"
-why = "rusqlite 0.41 (bundled SQLite 3.54.1) declares Rust 1.89, and libsqlite3-sys 0.39 declares 1.88; the MSRV is 1.85."
-ends = "An MSRV raise authorized under RFC 023 R3.1 for the security fix described under Known issue in docs/src/security.md. No version or date is promised here."
-
-[[held]]
-crate = "sha2"
-requirement = "^0.10"
-latest = "0.11.1"
-why = "sha2 0.11 needs Rust 1.88. It is a development-only dependency (the digest checks of the committed fixtures), and a development tool never justifies an MSRV raise."
-ends = "The MSRV reaches 1.88 for another reason (the rusqlite row), or the checks stop needing SHA-256 from a library."
-
+why = "aes-gcm 0.11 changes how a nonce is generated and built, which the sealing code uses, so adopting it is a change to the encryption path. It is deliberately its own patch release (v0.26.1), with the proof that the ciphertext format is unchanged: known-answer vectors byte-identical between 0.10.3 and 0.11.1, and every committed encrypted fixture and sealed vector opened by both versions in both directions. Its dependency ctutils needs Rust 1.87 or newer, which the MSRV (1.89) now meets."
+ends = "The adoption release lands (v0.26.1) with that proof; the row is deleted with the old requirement."

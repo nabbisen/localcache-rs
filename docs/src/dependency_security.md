@@ -302,11 +302,7 @@ development tool never justifies a raise.
 
 | Requirement | Newest seen | Why it is held | What ends the hold |
 |---|---|---|---|
-| `SQLite (bundled) 3.53.2` | `3.54.1` | The fix for CVE-2026-119375 is in SQLite 3.54.0 and later. That comes with rusqlite 0.41, which declares Rust 1.89, above the MSRV 1.85. The bundled version is the one in the locked libsqlite3-sys; the latest release is the source amalgamation on sqlite.org. | The same condition as the rusqlite row: an MSRV raise authorized under RFC 023 R3.1, after which the bundled SQLite is updated. No version or date is promised here. |
-| `aes-gcm ^0.10.3` | `0.11.1` | aes-gcm 0.11 needs a dependency, ctutils, that needs Rust 1.87 or newer, and the ctutils releases that build on 1.85 carry RUSTSEC-2026-0385 (non-constant-time operations in a cryptographic layer). | The MSRV is at least 1.87. It is then adopted in its own patch release, with the proof that the ciphertext format is unchanged. |
-| `criterion ^0.7` | `0.8.2` | criterion 0.8 needs Rust 1.86. It is a development-only dependency (the cache_bench benchmark), and a development tool never justifies an MSRV raise. | The MSRV reaches 1.86 for another reason (the rusqlite row), or the benchmark stops using criterion. |
-| `rusqlite ^0.40.2` | `0.41.1` | rusqlite 0.41 (bundled SQLite 3.54.1) declares Rust 1.89, and libsqlite3-sys 0.39 declares 1.88; the MSRV is 1.85. | An MSRV raise authorized under RFC 023 R3.1 for the security fix described under Known issue in docs/src/security.md. No version or date is promised here. |
-| `sha2 ^0.10` | `0.11.1` | sha2 0.11 needs Rust 1.88. It is a development-only dependency (the digest checks of the committed fixtures), and a development tool never justifies an MSRV raise. | The MSRV reaches 1.88 for another reason (the rusqlite row), or the checks stop needing SHA-256 from a library. |
+| `aes-gcm ^0.10.3` | `0.11.1` | aes-gcm 0.11 changes how a nonce is generated and built, which the sealing code uses, so adopting it is a change to the encryption path. It is deliberately its own patch release (v0.26.1), with the proof that the ciphertext format is unchanged: known-answer vectors byte-identical between 0.10.3 and 0.11.1, and every committed encrypted fixture and sealed vector opened by both versions in both directions. Its dependency ctutils needs Rust 1.87 or newer, which the MSRV (1.89) now meets. | The adoption release lands (v0.26.1) with that proof; the row is deleted with the old requirement. |
 
 <!-- requirements-held:end -->
 
@@ -325,10 +321,11 @@ script appends the words of the environment variable `LIBSQLITE3_FLAGS` to the c
 LIBSQLITE3_FLAGS="-USQLITE_ENABLE_FTS3 -USQLITE_ENABLE_FTS3_PARENTHESIS -USQLITE_ENABLE_FTS5 -USQLITE_ENABLE_RTREE -USQLITE_ENABLE_STAT4 -USQLITE_SOUNDEX -USQLITE_ENABLE_DBSTAT_VTAB" cargo build --release
 ```
 
-Measured on 2026-11-07 with `rusqlite 0.40.2`: with these words set, `fts3`, `fts5`, `rtree`, `dbstat` and `soundex`
-are gone from a test program (`no such module`, `no such table`, `no such function`) and `json_extract` still works;
-that test program's binary is 22% smaller (2,715,424 to 2,105,232 bytes); and this workspace's own test suite
-(742 tests, all features) passes with the options removed.
+Measured on 2026-11-07 with `rusqlite 0.41.1` (SQLite 3.54.1; the build script of `libsqlite3-sys 0.39.1` defines the
+same options as 0.38.2's, except that `SQLITE_ENABLE_MEMORY_MANAGEMENT` is no longer defined): with these words set,
+`fts3`, `fts5`, `rtree`, `dbstat` and `soundex` are gone from a test program (`no such module`, `no such table`,
+`no such function`) and `json_extract` still works; that test program's binary is 22% smaller (2,750,768 to
+2,136,136 bytes); and this workspace's own test suite (741 tests, all features) passes with the options removed.
 
 What this does and does not do:
 
