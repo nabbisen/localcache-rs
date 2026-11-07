@@ -57,6 +57,5 @@ smol                    = "2"
 clap                    = { version = "4",    features = ["derive"] }
 # dev / bench
 tempfile                = "3"
-tokio-test              = { version = "1",    features = ["rt", "macros", "rt-multi-thread"] }
 criterion               = { version = "0.7",  features = ["html_reports"] }
 sha2                    = "0.10"
