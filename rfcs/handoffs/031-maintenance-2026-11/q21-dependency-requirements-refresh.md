@@ -1,0 +1,20 @@
+# Q21 Handoff — Declared dependency requirements, brought up to date (what the release preparation will ship)
+
+Origin: the owner (2026-11-07) pointed at https://deps.rs/crate/localcache/0.25.0 : outdated normal dependencies `base64 ^0.22` (latest 0.23.1), `rusqlite ^0.40.2` (0.41.1), `opentelemetry ^0.32` (0.33.1), `tracing-opentelemetry ^0.33` (0.34.0); outdated dev dependencies `criterion ^0.7` (0.8.2), `sha2 ^0.10` (0.11.1). My earlier statement that dependencies were fine rested on `cargo update --dry-run --locked`, which only checks the lockfile; the declared requirements are what library users resolve against (a stale requirement forces a duplicate version into their graph and keeps them off newer releases). Review 099 has the analysis.
+Format of the review request: `rfcs/handoffs/025-error-taxonomy-and-input-validation/implementation-handoff.md` § 6. **Local commits; do not push.** Authorship: high-capability model.
+
+## 1. The change (one commit per dependency, so each can be reverted alone)
+
+1. **`base64 0.22 → 0.23`** (MSRV 1.71, below ours). Check the API changes the crate uses (`base64::engine::general_purpose::STANDARD`, `Engine::encode`/`decode` in the import/export path and the CLI), run the whole suite and the export/import fixtures. Round-trip a database written by v0.25.0 through export and import with the new build (Base64 output must be byte-identical: show it).
+2. **`opentelemetry`, `tracing-opentelemetry`:** **do not bump.** The owner and the architect are deciding whether the `opentelemetry` feature is removed (review 099 § 3); a version bump of dependencies about to be removed is churn. Leave them and say so.
+3. **`rusqlite 0.41`** needs Rust 1.89 and `libsqlite3-sys 0.39` 1.88; the MSRV is 1.85 and RFC 023 R3 permits a raise only for a named necessity. **Do not change the MSRV or `rusqlite`.** Instead report, with evidence: (a) the SQLite version bundled by `libsqlite3-sys 0.38.2` and by 0.39.1 (read it from the crate's `sqlite3/sqlite3.h`/`bindgen` header of each `.crate`); (b) the changelog of rusqlite 0.41 and 0.40.x that matters to us (a fix we need? a deprecation?); (c) the SQLite compile options our `bundled` build sets (read `libsqlite3-sys/build.rs`; in particular whether `SQLITE_ENABLE_FTS5`, `SQLITE_ENABLE_SESSION` or other extensions with recent CVEs are compiled in, since the 2026 CVEs I found (FTS5, the Session extension) are in extensions); (d) whether anything in July to November 2026 advisories (RustSec, SQLite release notes at sqlite.org/changes.html) affects the 3.53.2 we bundle. This is input for an owner decision, not a change.
+4. **`criterion 0.8` (1.86) and `sha2 0.11` (1.88)** are development-only and need a newer toolchain than the MSRV; RFC 023 R3 says a development tool's requirement never justifies a raise. Hold them. Report what each would need to move without raising the MSRV (for `sha2`: its only use is the digest test of the format crate's fixtures; is an equivalent check possible with a dependency already in the tree? State, do not change: the recorded digests in the READMEs are SHA-256).
+5. Every other declared requirement (`tokio 1.23`, `zstd 0.14`, `aes-gcm 0.10.3`, `notify 8`, `notify-debouncer-mini 0.7`, `metrics 0.24`, `smol 2`, `clap 4`, `tempfile 3`, `serde`, `serde_json`, `blake3`, `thiserror`, `zeroize`, `tracing`): confirm against crates.io that each is the latest major line, with its MSRV, in a table.
+
+## 2. Gates and the request
+
+All gates (`gate-msrv` as `rustup run 1.85.0 cargo make gate-msrv`), `cargo make gate-deny`, and `gate-docs`/`gate-archive` on the committed tree. Add to `docs/src/dependency_security.md` the holds that stay (criterion, sha2, rusqlite with the reason and the condition that ends each), in the page's existing style and only after the numbers of item 3 are in. One request with the table of item 5, the evidence of item 3 and the commits.
+
+## 3. Not yours
+
+The version, the CHANGELOG, an MSRV change, `opentelemetry`/`async-std` (undecided).
