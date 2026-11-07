@@ -7,6 +7,38 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.25.1] — Unreleased
+
+*Date set at owner authorization.*
+
+**A patch. There is nothing to do when you upgrade. Two features, `opentelemetry` and `async-std`, will be removed in the next minor release (v0.26.0).** No public API, behaviour, stored byte, feature name or MSRV (1.85) differs from 0.25.0, except what is listed below: one third-party error text (see *Dependencies*).
+
+### Notice
+
+Nothing is removed, deprecated in code or warned about at build time in this release.
+
+- **The `opentelemetry` feature will be removed in v0.26.0**, together with its two optional dependencies, `opentelemetry` and `tracing-opentelemetry`. The feature only pulled those crates in: the spans come from the `tracing` feature, which stays. **What to do now:** keep the `tracing` feature and add `tracing-opentelemetry` to your own program's subscriber (cookbook Recipe 9 shows it; it works with `features = ["tracing"]` because the recipe already depends on `tracing-opentelemetry` itself).
+- **The `async-std` feature will be removed in v0.26.0**, with its runtime module and the two `deny.toml` exceptions that exist only because of it (`RUSTSEC-2025-0052`, `RUSTSEC-2026-0441`): the runtime is unmaintained and its advisory could only ever be excused. **What to do now:** use `async` (Tokio) or `smol`; the public API of `AsyncCacheEngine` is the same on each.
+
+### Performance
+
+- **Large writes are faster, and no longer depend on where the input sits in memory.** The payload encoder's 21 per-element writers are now `#[inline]`, so a downstream crate no longer calls each as a function once per element. On the measured host (AMD Ryzen 9 9950X, paired runs, quiet): a 1 MiB `Vec<u8>` `set` **about 4.2× faster** (1465 → 347 µs at the default profile; 2.4× with `codegen-units = 1`), a `Vec<f32>` of 1 MiB 0.5 to 0.7× of its former time, a 4,096-float `set` about 10% faster; a 768-float `set`, a small struct and a nested payload unchanged within the spread (0.97 to 1.02×). Before, the same 1 MiB took 1.1, 1.4 or 1.6 ms depending on the address of the input (4K aliasing). The bytes written are identical (golden vectors, the digest test, ten minutes of fuzzing for each target). Build time and binary size are unchanged within the spread. These are bounds from one host, not promises: see [Performance](docs/src/performance.md).
+- **Reading is unchanged.** A large `get` is limited by the decoder's element loop and by your release profile: `codegen-units = 1` in your own `[profile.release]` halves a `Vec<u8>` `get` of 1 MiB and up and does nothing measurable for an embedding. The page "Large payloads and your release profile" has the figures and their limits.
+
+### Dependencies
+
+- **`base64` 0.22 → 0.23.** Nothing that is encoded or decoded changes (355 differential checks against 0.22.1; a v0.25.0 database exported by the published crate and by this tree is byte-identical). **One text changes:** for an import record whose base64 text ends in a symbol with non-zero unused bits, the tail of the error message is now the one `base64` 0.23 writes: `Invalid last symbol 0x42 ('B') at offset 1, decoded as 0b00000001.` where 0.22 wrote `Invalid last symbol 66, offset 1.` It reaches one place only: `import_entries` (the async wrapper and the CLI's import command call it) puts the library's `Display` into `LocalFileCacheError::InvalidArgument { argument: "records", reason }`, after `invalid argument: records: base64 decode error for '<path>': `. The prefix, the variant, the argument name and the texts for an invalid symbol, an invalid length and invalid padding are unchanged (run against both versions in `.git-exclude/tmp/q26/logs/probe-{old,new}.txt`), and the pinned error table is unchanged. We do not re-format third-party text.
+- The unused `tokio-test` line is removed from the workspace manifest (no effect on a build).
+
+### Documentation
+
+- **`docs/src/security.md`: a known issue.** The SQLite that `rusqlite 0.40` bundles in this release is 3.53.2; CVE-2026-119375 (fixed in SQLite 3.54.0) concerns a process that opens a database file, with its `-wal`, that a less trusted party could have written. The page says who is concerned, what to do now (keep the cache directory writable only by the user of the cache) and why the fix is not in this release. The schema check does not protect against it. A cache that only your own user can create is outside the model.
+- **`docs/src/dependency_security.md`:** the SQLite compile options this crate does not use and how a program that builds its own binary can remove them (`LIBSQLITE3_FLAGS`; it does nothing for the issue above); the sentences that said the advisory check would have surfaced a bundled-SQLite CVE are corrected (the check reads the RustSec database only).
+- **`docs/src/performance.md`:** "Large payloads and your release profile".
+- A rustdoc sentence of `rotate_encryption_key` linked to a method that exists only with the `watching` feature, which broke `cargo doc --no-default-features --features encryption`; it is a code span now.
+
+---
+
 ## [0.25.0] — 2026-11-07
 
 Authorized by the project owner on 2026-11-07. The source is that of release candidate `19e478d`; the release
@@ -1854,7 +1886,8 @@ Namespaces, batch ops, TTL, PRAGMAs, schema migration.
 ## [0.1.0] — 2026-05-03
 Initial release.
 
-[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/0.25.0...HEAD
+[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/0.25.1...HEAD
+[0.25.1]: https://github.com/nabbisen/localcache-rs/compare/0.25.0...0.25.1
 [0.25.0]: https://github.com/nabbisen/localcache-rs/compare/0.24.0...0.25.0
 [0.24.0]: https://github.com/nabbisen/localcache-rs/compare/0.23.1...0.24.0
 [0.23.1]: https://github.com/nabbisen/localcache-rs/compare/0.23.0...0.23.1
