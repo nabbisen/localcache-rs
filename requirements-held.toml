@@ -16,10 +16,3 @@
 # (`python3 scripts/check_requirements.py --write-book`) and checked against it.
 # The MSRV is raised only for a named necessity (RFC 023); a development tool never justifies it.
 # An empty file means nothing is held: every declared requirement admits the newest version.
-
-[[held]]
-crate = "aes-gcm"
-requirement = "^0.10.3"
-latest = "0.11.1"
-why = "aes-gcm 0.11 changes how a nonce is generated and built, which the sealing code uses, so adopting it is a change to the encryption path. It is deliberately its own patch release (v0.26.1), with the proof that the ciphertext format is unchanged: known-answer vectors byte-identical between 0.10.3 and 0.11.1, and every committed encrypted fixture and sealed vector opened by both versions in both directions. Its dependency ctutils needs Rust 1.87 or newer, which the MSRV (1.89) now meets."
-ends = "The adoption release lands (v0.26.1) with that proof; the row is deleted with the old requirement."

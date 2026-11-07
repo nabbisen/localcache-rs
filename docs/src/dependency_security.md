@@ -59,7 +59,7 @@ R3.1 provides for a security necessity:
 - **The age floor** (12 months) is met anyway: Rust 1.89.0 is dated 2025-08-07, fifteen months before this
   release; for a security necessity it is waived in any case.
 - **What else it allows:** `sha2 0.11` and `criterion 0.8` (development only), which were held back by the MSRV
-  alone. `aes-gcm 0.11` becomes possible and is adopted separately, in its own patch release.
+  alone. `aes-gcm 0.11` became possible and was adopted separately, in its own patch release (v0.26.1).
 
 ## Why the `rusqlite` requirement is `0.41.1` (and was `0.40.2`)
 
@@ -302,7 +302,7 @@ development tool never justifies a raise.
 
 | Requirement | Newest seen | Why it is held | What ends the hold |
 |---|---|---|---|
-| `aes-gcm ^0.10.3` | `0.11.1` | aes-gcm 0.11 changes how a nonce is generated and built, which the sealing code uses, so adopting it is a change to the encryption path. It is deliberately its own patch release (v0.26.1), with the proof that the ciphertext format is unchanged: known-answer vectors byte-identical between 0.10.3 and 0.11.1, and every committed encrypted fixture and sealed vector opened by both versions in both directions. Its dependency ctutils needs Rust 1.87 or newer, which the MSRV (1.89) now meets. | The adoption release lands (v0.26.1) with that proof; the row is deleted with the old requirement. |
+| *(none)* | | | |
 
 <!-- requirements-held:end -->
 
