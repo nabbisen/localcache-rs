@@ -94,24 +94,25 @@ anything in it. The rest of this page is mostly about what that can and cannot d
   middle of a large file. `MetadataThenFullHash` and `StrictFullHash` hash the whole file. Choose a full-hash
   mode when the files can be changed by someone who can also set times.
 
-**Known issue: the bundled SQLite (v0.25.x).** The SQLite that `rusqlite 0.40` bundles in this release is
-3.53.2. [CVE-2026-119375](https://nvd.nist.gov/vuln/detail/CVE-2026-119375) (published 2026-10-30, fixed in
+**Fixed in v0.26.0: the bundled SQLite (record).** Versions of `localcache` through 0.25.1 bundle SQLite 3.53.2 (through
+`rusqlite 0.40`). [CVE-2026-119375](https://nvd.nist.gov/vuln/detail/CVE-2026-119375) (published 2026-10-30, fixed in
 SQLite 3.54.0) lets a crafted database file, together with a sibling `-wal` file, make ordinary queries return
-uninitialized page-cache memory. Its CVSS score is 6.8 (v4) and 5.5 (v3.1), with a local attack vector.
+uninitialized page-cache memory; its CVSS score is 6.8 (v4) and 5.5 (v3.1), with a local attack vector. Those
+versions are affected as described. **v0.26.0 bundles SQLite 3.54.1, which fixes it**, and raised the minimum supported
+Rust version to 1.89 to do so ([RFC 023](https://github.com/nabbisen/localcache-rs/blob/main/rfcs/accepted/023-msrv-policy.md)
+R3.1: the fix exists only in a SQLite that needs the newer toolchain). The v0.25 line gets no backport, because the fix
+itself needs the raise.
 
-- **Whom it concerns.** A process that opens a database file, with its `-wal`, that a less trusted party could
-  have written: the CLI's `copy --from-db` and any import of a foreign file, a cache in a directory others can
-  write, a cache restored from an untrusted backup. A cache that only your own user can create is outside the
-  model.
-- **What to do now.** Keep the cache directory writable only by the user of the cache (recommendation 1 below),
-  and do not open a database file, or its `-wal`, that someone less trusted could have written.
-- **The fix** is SQLite 3.54.x. It comes with `rusqlite 0.41`, which declares Rust 1.89, above this project's
-  minimum supported Rust version (1.85). The MSRV policy ([RFC 023](https://github.com/nabbisen/localcache-rs/blob/main/rfcs/accepted/023-msrv-policy.md)
-  R3.1) provides for a raise for a security fix, and this page is updated in the release that makes it.
-- **What the schema check does and does not do.** It refuses a database file that holds any application object
+- **Whom it concerned.** A process that opens a database file, with its `-wal`, that a less trusted party could have
+  written: the CLI's `copy --from-db` and any import of a foreign file, a cache in a directory others can write, a cache
+  restored from an untrusted backup. A cache that only your own user can create was outside the model.
+- **What to do.** Upgrade to v0.26.0 or later (Rust 1.89 or newer is needed). Until you can, the advice stands: keep the
+  cache directory writable only by the user of the cache (recommendation 1 below), and do not open a database file, or its
+  `-wal`, that someone less trusted could have written.
+- **What the schema check does and does not do** (unchanged). It refuses a database file that holds any application object
   this crate did not create (a virtual table, a trigger, a view), which closes the extension-table and view
   vulnerabilities of 2026. It reads through SQLite's own page reader, so it does not protect against a flaw at the
-  page level, which is where this one is.
+  page level, which is where this one was.
 
 ## Rejected before any effect
 

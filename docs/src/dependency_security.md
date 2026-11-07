@@ -49,7 +49,7 @@ v0.26.0 raised the MSRV from 1.85 to **1.89**, announced in the release that mad
 R3.1 provides for a security necessity:
 
 - **The necessity.** CVE-2026-119375 is in the core of SQLite and is fixed only in SQLite 3.54.0 and later
-  (see "Known issue: the bundled SQLite" in [Security Model](./security.md)). SQLite 3.54.x comes with
+  (see "Fixed in v0.26.0: the bundled SQLite" in [Security Model](./security.md)). SQLite 3.54.x comes with
   `rusqlite 0.41` (`libsqlite3-sys 0.39`), which declares Rust 1.89.0. There is no way to take 3.54 inside the
   `rusqlite 0.40` line.
 - **No further than needed.** 1.89 is the version `rusqlite 0.41.0` and `0.41.1` declare and Cargo enforces. The
@@ -129,7 +129,7 @@ crate: `rusqlite::version()` printed `3.53.2`); v0.26.0 bundles 3.54.1. While `l
 `^0.39`, no RustSec advisory affected the older one. The advisory check below reads
 the RustSec database: a vulnerability in the C source of the bundled SQLite appears
 there only if RustSec lists it, and a CVE that it does not list is not reported by the
-gate. One such CVE is described under "Known issue: the bundled SQLite" in
+gate. One such CVE is described under "Fixed in v0.26.0: the bundled SQLite" in
 [Security Model](./security.md).
 
 ### Why this cannot be worked around downstream
@@ -280,7 +280,7 @@ release, which the gate stops. And the advisory sources list vulnerabilities **b
 that a `-sys` crate bundles reaches them only when someone maps it to the crate. For CVE-2026-119375 in SQLite,
 bundled by `libsqlite3-sys`, nobody had, as of 2026-11-07: OSV and GitHub publish the CVE itself, without a package,
 and neither lists it against `libsqlite3-sys` or `rusqlite`. So neither the advisory gate nor Dependabot alerts would
-have said anything about it; it is described under "Known issue: the bundled SQLite" in
+have said anything about it; it is described under "Fixed in v0.26.0: the bundled SQLite" in
 [Security Model](./security.md). This says nothing about how often that happens in general, or about what the alerts
 will do later.
 
@@ -331,8 +331,8 @@ What this does and does not do:
 
 - It reaches **only the build where the variable is set**. A user who depends on `localcache` from crates.io gets the
   default build unless they set the variable in their own build.
-- It does **nothing for CVE-2026-119375**, which is in the core of SQLite (see "Known issue: the bundled SQLite" in
-  [Security Model](./security.md)). It reduces the exposure to future vulnerabilities in the parts it removes.
+- It does **nothing for a flaw in the core of SQLite**, such as CVE-2026-119375 (fixed in v0.26.0 by bundling SQLite 3.54.1; see
+  "Fixed in v0.26.0: the bundled SQLite" in [Security Model](./security.md)). It reduces the exposure to future vulnerabilities in the parts it removes.
 - Your own program may use FTS or R-Tree through `rusqlite` in the same binary: check before you remove them.
 
 ## The `zstd` features
