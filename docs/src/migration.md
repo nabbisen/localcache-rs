@@ -1,5 +1,20 @@
 # Migration Guide
 
+## 0.25.x → 0.26.0
+
+A minor release under the 0.x policy, so it may break. **Databases need no migration**: the stored format, the schema
+and the wire format are unchanged, a database written by 0.25.x is read by 0.26.0 and the reverse. What may need your
+action, in this order:
+
+1. **Use Rust 1.89 or newer.** The minimum supported Rust version was 1.85. The raise is a security necessity (the fix for
+   CVE-2026-119375 exists only in SQLite 3.54.x, which comes with `rusqlite 0.41`, which declares Rust 1.89); see
+   [MSRV & Dependency Security](./dependency_security.md).
+2. **Remove the `opentelemetry` and `async-std` features** from your `localcache` dependency (announced in 0.25.1). For
+   OpenTelemetry keep the `tracing` feature and install a `tracing-opentelemetry` layer in your own program (cookbook
+   Recipe 9); for async-std use `async` (Tokio) or `smol`.
+3. **A direct `rusqlite` dependency of your own must be `0.41.1` or later in the 0.41 line**: Cargo allows one SQLite line
+   per dependency graph, and `localcache 0.26` uses `rusqlite 0.41`.
+
 ## 0.13.1 → 0.13.2 (bincode 1.x → 2.x)
 
 `localcache 0.13.2` upgraded `bincode` from 1.3.3 to 2.0.1.  The new version

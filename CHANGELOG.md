@@ -7,11 +7,46 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [Unreleased]
+## [0.26.0] — Unreleased
+
+*Date set at owner authorization.*
+
+**Breaking (a minor release under the 0.x policy). Three things may need your action: the `opentelemetry` and `async-std` features are removed (announced in 0.25.1); the minimum supported Rust version is now 1.89; and a `rusqlite` dependency of your own must be 0.41.1 or later in the 0.41 line.** This release also fixes CVE-2026-119375 by bundling SQLite 3.54.1. Nothing changes in the stored format, the schema, the wire format or the public API apart from the two removed features.
+
+### Upgrading from 0.25.x, in this order
+
+1. **Use Rust 1.89 or newer** (`rustup update`). On an older Rust, Cargo refuses to build `localcache 0.26` (with MSRV-aware resolution it keeps `localcache 0.25.x` instead); a lockfile that keeps `localcache 0.25.x` is unaffected. See *Changed*.
+2. **Remove `features = ["opentelemetry"]` and `features = ["async-std"]`** from your `localcache` dependency; Cargo now says the package "does not have that feature". For OpenTelemetry keep the `tracing` feature and add `tracing-opentelemetry` to your own program's subscriber (cookbook Recipe 9 shows it, compiled and run). For async-std use `async` (Tokio) or `smol`: the API of `AsyncCacheEngine` is the same.
+3. **If your own crate depends directly on `rusqlite`, move it to `0.41.1` or later in the 0.41 line.** `libsqlite3-sys` allows one SQLite line per dependency graph (`links`), so `rusqlite 0.40` cannot be combined with `localcache 0.26`, and no lockfile entry at your end can resolve it (`docs/src/dependency_security.md`).
+
+Databases written by 0.25.x are read by 0.26.0 and the reverse; there is nothing to migrate (`docs/src/migration.md`).
+
+### Security
+
+- **CVE-2026-119375 is fixed.** Versions through 0.25.1 bundle SQLite 3.53.2, in which a crafted database file together with a sibling `-wal` file could make ordinary queries return uninitialized page-cache memory (fixed upstream in SQLite 3.54.0); 0.26.0 bundles SQLite 3.54.1 (`rusqlite 0.41`, `libsqlite3-sys 0.39`). It concerned a process that opens a database file, with its `-wal`, that a less trusted party could have written; a cache only your own user can create was outside the model.
+- The v0.25 line gets no backport: the fix is SQLite 3.54.x, which needs the Rust version below. Until you can upgrade, the advice of `docs/src/security.md` stands (keep the cache directory writable only by the cache's user).
+
+### Removed
+
+- **The `opentelemetry` feature**, with its optional dependencies `opentelemetry` and `tracing-opentelemetry`. The `tracing` feature, which emits the spans, stays; exporting them is your program's own `tracing-opentelemetry` layer.
+- **The `async-std` feature**, its runtime backend and its dependency. `async` (Tokio) and `smol` stay; Tokio has priority when both are enabled, as before. The two `cargo deny` exceptions that existed only because of it (`RUSTSEC-2025-0052` for `async-std`, `RUSTSEC-2026-0441` for `pin-utils`) are deleted: no advisory is accepted any more. 21 packages left the lockfile with the two features.
+
+### Changed
+
+- **The minimum supported Rust version is raised from 1.85 to 1.89** (RFC 023 R3.1, announced in this release: a security necessity, since the fix for CVE-2026-119375 exists only in SQLite 3.54.x, which comes with `rusqlite 0.41`, which declares Rust 1.89; the lowest honest value, because a user on 1.88 could not build `rusqlite 0.41`). Rust 1.89.0 is dated 2025-08-07, fifteen months before this release, so the 12-month age floor is met anyway. The v0.25 line receives no backport of the fix, because the fix itself needs the raise.
+- **Dependencies:** `rusqlite 0.41.1` (bundled SQLite 3.53.2 → 3.54.1; no source change was needed, and the schema classifier and the WAL tests behave the same). Development only: `sha2 0.11` (four test lines) and `criterion 0.8`.
+- **`LocalFileCacheError::AsyncTaskPanicked` is available with `async` or `smol`** (it was `async`, `async-std` or `smol`). The variant, its `Display` text and its position are unchanged; the feature gate named in its rustdoc and in the pinned error table (`crates/localcache/src/error/golden.rs`) changes as one deliberate edit.
 
 ### Internal
 
-- **Dependency freshness is a release gate, not a timer (Q25).** `cargo make gate-requirements` (`scripts/check_requirements.py`) compares every declared dependency requirement of the workspace with the newest stable version on crates.io, and the `Release` workflow's `Gate` job fails unless each requirement admits it or has a row in `requirements-held.toml` with its reason and what ends the hold; a newer upstream version, a requirement that now passes, or a dependency that has left the tree makes its row fail. The book's table of held requirements is generated from that file. The same gate compares the bundled SQLite with the latest SQLite release on sqlite.org. It is not part of `ci.yaml` and no schedule is relied on (`docs/src/dependency_security.md`, "How freshness is controlled"). No library change.
+- **Dependency freshness is a release gate, not a timer (Q25).** `cargo make gate-requirements` (`scripts/check_requirements.py`) compares every declared dependency requirement of the workspace with the newest stable version on crates.io, and the `Release` workflow's `Gate` job fails unless each requirement admits it or has a row in `requirements-held.toml` with its reason and what ends the hold; a newer upstream version, a requirement that now passes, or a dependency that has left the tree makes its row fail. The same gate compares the bundled SQLite with the latest SQLite release on sqlite.org. The book's table of held requirements is generated from that file. It is not part of `ci.yaml` and no schedule is relied on (`docs/src/dependency_security.md`, "How freshness is controlled"). No library change. After this release one row is left: `aes-gcm`.
+- With the MSRV at 1.89 clippy asks for let chains, `is_multiple_of` and `as_chunks`: nine mechanical changes in five files, no behaviour change.
+
+### Documentation
+
+- `docs/src/security.md`: the known issue of 0.25.x is now a record ("Fixed in v0.26.0: the bundled SQLite").
+- `docs/src/dependency_security.md`: "The raise to 1.89"; the sections about the `rusqlite 0.40` line read as history; no advisory exception remains; the compile-options measurement is repeated on `rusqlite 0.41.1` (SQLite 3.54.1).
+- `docs/src/cookbook.md` Recipe 9 is the way to bridge `tracing` to OpenTelemetry; `docs/src/migration.md` has a "0.25.x → 0.26.0" section.
 
 ---
 
@@ -1894,7 +1929,8 @@ Namespaces, batch ops, TTL, PRAGMAs, schema migration.
 ## [0.1.0] — 2026-05-03
 Initial release.
 
-[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/0.25.1...HEAD
+[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/0.26.0...HEAD
+[0.26.0]: https://github.com/nabbisen/localcache-rs/compare/0.25.1...0.26.0
 [0.25.1]: https://github.com/nabbisen/localcache-rs/compare/0.25.0...0.25.1
 [0.25.0]: https://github.com/nabbisen/localcache-rs/compare/0.24.0...0.25.0
 [0.24.0]: https://github.com/nabbisen/localcache-rs/compare/0.23.1...0.24.0
