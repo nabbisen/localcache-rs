@@ -133,7 +133,7 @@ jobs:
         run: cargo make bench-compile
 
   msrv:
-    name: MSRV (declared Rust 1.85)
+    name: MSRV (declared Rust 1.89)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -141,7 +141,7 @@ jobs:
         id: msrv
         run: |
           MSRV=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["rust-version"])')
-          test "$MSRV" = "1.85"
+          test "$MSRV" = "1.89"
           echo "toolchain=${MSRV}.0" >> "$GITHUB_OUTPUT"
       - name: Install declared MSRV
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable

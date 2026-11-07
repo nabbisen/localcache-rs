@@ -1,7 +1,7 @@
 # MSRV and Dependency Security
 
-The workspace declares and tests Rust 1.85 as its minimum supported Rust
-version (MSRV). A successful build on current stable Rust does not substitute
+The workspace declares and tests Rust 1.89 as its minimum supported Rust
+version (MSRV); it was 1.85 until v0.26.0 (see "The raise to 1.89" below). A successful build on current stable Rust does not substitute
 for this contract. Dependency changes must preserve all three locked MSRV rows:
 
 ```sh
@@ -10,8 +10,8 @@ cargo check -p localcache --all-targets --no-default-features --features smol --
 cargo check -p localcache-cli --all-targets --all-features --locked
 ```
 
-They are one task, run on the declared toolchain: `rustup run 1.85.0 cargo make
-gate-msrv`. CI runs the same task on Rust 1.85.0.
+They are one task, run on the declared toolchain: `rustup run 1.89.0 cargo make
+gate-msrv`. CI runs the same task on Rust 1.89.0.
 
 The separate smol row is required because enabling all
 features selects Tokio by runtime priority. `--all-targets` also keeps
@@ -32,18 +32,40 @@ The declared MSRV changes only under a written rule
 - **Notice one release ahead** in `CHANGELOG.md` and on this page; a security
   raise is announced in the release that makes it, and says so.
 - **Verification:** the three locked rows above (`gate-msrv`) in CI on every push,
-  and after each publication a fresh consumer crate with `rust-version = "1.85"`
+  and after each publication a fresh consumer crate with `rust-version = "1.89"`
   builds the published version on the declared toolchain. A fresh-resolution check —
   the tracked tree without its lockfile, resolved by the declared toolchain's
   Cargo, then the same three rows — runs on request and at every release
   (`.github/workflows/msrv-fresh.yaml`, which also runs weekly; nothing relies on
   that), and a drift there blocks the release.
 - **The previous minor line** gets security, data-loss, and corruption fixes for
-  6 months after a raise, where the fix does not itself need the raise.
+  6 months after a raise, where the fix does not itself need the raise. The v0.25 line
+  therefore gets **no backport** of the fix for CVE-2026-119375: the fix is SQLite 3.54.x,
+  which needs the raise.
 
-## Why the `rusqlite` requirement is `0.40.2`
+## The raise to 1.89 (v0.26.0)
 
-`localcache` 0.22 requires `rusqlite 0.40.2`, not `0.40` and not the newer
+v0.26.0 raised the MSRV from 1.85 to **1.89**, announced in the release that made it as RFC 023
+R3.1 provides for a security necessity:
+
+- **The necessity.** CVE-2026-119375 is in the core of SQLite and is fixed only in SQLite 3.54.0 and later
+  (see "Known issue: the bundled SQLite" in [Security Model](./security.md)). SQLite 3.54.x comes with
+  `rusqlite 0.41` (`libsqlite3-sys 0.39`), which declares Rust 1.89.0. There is no way to take 3.54 inside the
+  `rusqlite 0.40` line.
+- **No further than needed.** 1.89 is the version `rusqlite 0.41.0` and `0.41.1` declare and Cargo enforces. The
+  workspace also builds and passes its tests on 1.88 if the declared requirement is overridden
+  (`--ignore-rust-version`), but a user on 1.88 could not build `rusqlite 0.41`, so 1.88 would not be an honest MSRV.
+  On 1.87 and below `libsqlite3-sys 0.39`'s build script fails (it uses `let` chains).
+- **The age floor** (12 months) is met anyway: Rust 1.89.0 is dated 2025-08-07, fifteen months before this
+  release; for a security necessity it is waived in any case.
+- **What else it allows:** `sha2 0.11` and `criterion 0.8` (development only), which were held back by the MSRV
+  alone. `aes-gcm 0.11` becomes possible and is adopted separately, in its own patch release.
+
+## Why the `rusqlite` requirement is `0.41.1` (and was `0.40.2`)
+
+`localcache` 0.26 requires `rusqlite 0.41.1` (bundled SQLite 3.54.1), which declares Rust 1.89 and is the reason the MSRV
+is 1.89. The rest of this section is the record of the 0.40 line, which `localcache` 0.22 to 0.25 used and which needed care
+with the toolchain. `localcache` 0.22 required `rusqlite 0.40.2`, not `0.40` and not the newer
 `0.41`; `localcache` 0.21.x required `rusqlite ^0.39`. In Cargo's notation
 `0.40.2` means at least that patch release and below 0.41, so it is a floor
 inside the 0.40 line. Both choices were deliberate, they are the constraint most
@@ -91,18 +113,19 @@ With `libsqlite3-sys 0.38.2` locked, `rusqlite =0.40.0` and `=0.40.1` still fail
   1.85. The requirement names `0.40.2`, not a bare `0.40`, so that no lockfile can
   keep `rusqlite 0.40.0`/`0.40.1` and `libsqlite3-sys 0.38.0`/`0.38.1`, which need
   1.95.
-- **`rusqlite 0.41` is not used.** It declares Rust 1.89 and requires
-  `libsqlite3-sys ^0.39`, so adopting it would raise the MSRV, and RFC 023 allows
+- **`rusqlite 0.41` was not used until v0.26.0.** It declares Rust 1.89 and requires
+  `libsqlite3-sys ^0.39`, so adopting it raised the MSRV, and RFC 023 allows
   that only for a named necessity; none was known when 0.22 shipped. A security fix
-  that is only in the newer SQLite has since been found (see "Known issue: the bundled
-  SQLite" in [Security Model](./security.md)); the raise is made in a release, and this
-  page is updated then. A crate that depends directly
-  on `rusqlite 0.41` therefore cannot be combined with `localcache 0.22`
-  (`links`, below).
-- **Consumers who pin `rusqlite 0.40` directly** can use `localcache` from 0.22.0.
+  that is only in the newer SQLite was found later (see "Known issue: the bundled
+  SQLite" in [Security Model](./security.md)), and **`localcache 0.26.0` moved to
+  `rusqlite 0.41.1` and raised the MSRV to 1.89** ("The raise to 1.89" above). A crate that depends
+  directly on `rusqlite 0.41` could not be combined with `localcache 0.22` to `0.25`, and a crate that
+  depends directly on `rusqlite 0.40` cannot be combined with `localcache 0.26` (`links`, below).
+- **Consumers who pin `rusqlite 0.40` directly** can use `localcache` from 0.22.0 to 0.25.x; from 0.26.0 their
+  own `rusqlite` must be `0.41.1` or later in the 0.41 line.
 
-The gain was a newer bundled SQLite (3.51.3 → 3.53.2, checked on the built
-crate: `rusqlite::version()` prints `3.53.2`). While `localcache` stayed on
+The gain of v0.22.0 was a newer bundled SQLite (3.51.3 → 3.53.2, checked on the built
+crate: `rusqlite::version()` printed `3.53.2`); v0.26.0 bundles 3.54.1. While `localcache` stayed on
 `^0.39`, no RustSec advisory affected the older one. The advisory check below reads
 the RustSec database: a vulnerability in the C source of the bundled SQLite appears
 there only if RustSec lists it, and a CVE that it does not list is not reported by the
@@ -118,8 +141,8 @@ therefore not a tolerable duplicate — they are a hard resolution failure.
 The practical consequence: a crate depending directly on a different `rusqlite`
 line than `localcache` cannot be combined with it, and **no lockfile entry,
 `--precise` pin, or feature flag at the consumer's end can resolve it**. With
-`localcache 0.22` your own `rusqlite`, if you depend on it directly, must be
-`0.40.2` or later in the 0.40 line. On `localcache 0.21.x` or earlier, which
+`localcache 0.26` your own `rusqlite`, if you depend on it directly, must be
+`0.41.1` or later in the 0.41 line (with `localcache 0.22` to `0.25`, `0.40.2` or later in the 0.40 line). On `localcache 0.21.x` or earlier, which
 required `^0.39`, a crate on `rusqlite 0.40` had to move its own `rusqlite` to
 0.39 or wait for 0.22.0. You can also tell us — see below.
 
@@ -190,7 +213,7 @@ all of which need Rust 1.95. They are the only published versions that require
 `rusqlite ^0.40`. Every other release requires an earlier line (`^0.32` up to
 `0.13.0`, `^0.39` otherwise), so none of them is affected.
 
-**Today, a fresh resolution builds on 1.85.** Resolving either version from
+**As checked on 2026-09-24, a fresh resolution built on 1.85.** Resolving either version from
 scratch now selects `rusqlite 0.40.2` and `libsqlite3-sys 0.38.2`, and builds on
 Rust 1.85.0 (checked 2026-09-24 with a new crate declaring `rust-version = "1.85"`
 and depending on `=0.19.1` and on `=0.20.0`). A build from an **existing lockfile**
@@ -272,7 +295,7 @@ A declared requirement that does not admit the newest stable version on crates.i
 and this is where each one is recorded, with the reason and what would end it. The record is the file
 `requirements-held.toml` at the repository root; the table below is generated from it and checked against
 it (`scripts/check_requirements.py`), so the two cannot differ. How the file is used is described under
-"How freshness is controlled". The MSRV is 1.85 (RFC 023): it is raised only for a named necessity, and a
+"How freshness is controlled". The MSRV is 1.89 (RFC 023): it is raised only for a named necessity, and a
 development tool never justifies a raise.
 
 <!-- requirements-held:begin (generated from requirements-held.toml by scripts/check_requirements.py --write-book) -->

@@ -16,7 +16,7 @@ default-members = [
 [workspace.package]
 version         = "0.25.1"
 edition         = "2024"
-rust-version    = "1.85"
+rust-version    = "1.89"
 license         = "Apache-2.0"
 authors         = ["nabbisen"]
 repository      = "https://github.com/nabbisen/localcache-rs"
