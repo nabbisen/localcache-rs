@@ -558,12 +558,13 @@ fn decompress_bytes(data: &[u8], limit: usize) -> Result<Vec<u8>, FormatError> {
 fn encrypt_bytes(plaintext: &[u8], key: &[u8; 32], aad: &[u8]) -> Result<Vec<u8>, FormatError> {
     use aes_gcm::{
         Aes256Gcm, KeyInit,
-        aead::{Aead, AeadCore, OsRng, Payload},
+        aead::{Aead, Generate, Nonce, Payload},
     };
 
     let cipher = Aes256Gcm::new_from_slice(key)
         .map_err(|e| FormatError::EncryptionError(format!("key init failed: {e}")))?;
-    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+    let nonce = Nonce::<Aes256Gcm>::try_generate()
+        .map_err(|e| FormatError::EncryptionError(format!("nonce generation failed: {e}")))?;
     let ciphertext = cipher
         .encrypt(
             &nonce,
@@ -584,8 +585,8 @@ fn encrypt_bytes(plaintext: &[u8], key: &[u8; 32], aad: &[u8]) -> Result<Vec<u8>
 #[cfg(feature = "encryption")]
 fn decrypt_bytes(data: &[u8], key: &[u8; 32], aad: &[u8]) -> Result<Vec<u8>, FormatError> {
     use aes_gcm::{
-        Aes256Gcm, KeyInit, Nonce,
-        aead::{Aead, Payload},
+        Aes256Gcm, KeyInit,
+        aead::{Aead, Nonce, Payload},
     };
 
     const NONCE_LEN: usize = 12;
@@ -598,10 +599,11 @@ fn decrypt_bytes(data: &[u8], key: &[u8; 32], aad: &[u8]) -> Result<Vec<u8>, For
     let (nonce_bytes, ciphertext) = data.split_at(NONCE_LEN);
     let cipher = Aes256Gcm::new_from_slice(key)
         .map_err(|e| FormatError::EncryptionError(format!("key init failed: {e}")))?;
-    let nonce = Nonce::from_slice(nonce_bytes);
+    let nonce = Nonce::<Aes256Gcm>::try_from(nonce_bytes)
+        .map_err(|_| FormatError::EncryptionError("nonce has the wrong length".into()))?;
     cipher
         .decrypt(
-            nonce,
+            &nonce,
             Payload {
                 msg: ciphertext,
                 aad,
