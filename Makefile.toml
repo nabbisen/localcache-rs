@@ -26,6 +26,14 @@
 [config]
 default_to_workspace = false
 
+# The features the gate rows name (see `gate-features-assert`, which fails if
+# either list differs from the crate's own `Cargo.toml`). `gate-docs` builds the
+# rustdoc of each one alone from these same lists, so a new feature cannot be
+# forgotten by one gate and named by the other.
+[env]
+GATE_LIBRARY_FEATURES = "async async-std smol compression json encryption tracing watching metrics opentelemetry"
+GATE_FORMAT_FEATURES = "compression encryption json"
+
 # ---------------------------------------------------------------------------
 # Formatting & linting
 # ---------------------------------------------------------------------------
@@ -98,7 +106,6 @@ description = "Fail if a localcache Cargo feature is missing from the list the g
 # Every library feature. `--each-feature` below covers each one alone; the two
 # suite rows combine the runtime features with the companions named in them.
 # Adding a feature means adding it here and deciding whether the suites need it.
-env = { GATE_LIBRARY_FEATURES = "async async-std smol compression json encryption tracing watching metrics opentelemetry", GATE_FORMAT_FEATURES = "compression encryption json" }
 script = [
     '''
     declared=$(python3 -c "import tomllib; print(*sorted(tomllib.load(open('crates/localcache/Cargo.toml','rb'))['features']))")
@@ -198,6 +205,14 @@ script = [
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features --locked
     RUSTDOCFLAGS="-D warnings" cargo doc -p localcache-format --no-deps --no-default-features --locked
     RUSTDOCFLAGS="-D warnings" cargo doc -p localcache --no-deps --no-default-features --locked
+    # Each feature alone: an intra-doc link from an item of one feature to an
+    # item of another resolves under --all-features and breaks here.
+    for f in $GATE_FORMAT_FEATURES; do
+        RUSTDOCFLAGS="-D warnings" cargo doc -p localcache-format --no-deps --no-default-features --features "$f" --locked
+    done
+    for f in $GATE_LIBRARY_FEATURES; do
+        RUSTDOCFLAGS="-D warnings" cargo doc -p localcache --no-deps --no-default-features --features "$f" --locked
+    done
     mdbook build docs
     cargo package --workspace --locked
     '''
