@@ -963,12 +963,12 @@ fn path_filter_clauses(
     }
 
     // path_glob — one SQLite GLOB term per brace-expanded alternative, OR-combined.
-    if let Some(globs) = path_glob {
-        if !globs.is_empty() {
-            let terms: Vec<String> = globs.iter().map(|_| "path GLOB ?".to_owned()).collect();
-            clauses.push(format!("({})", terms.join(" OR ")));
-            params.extend(globs.iter().cloned());
-        }
+    if let Some(globs) = path_glob
+        && !globs.is_empty()
+    {
+        let terms: Vec<String> = globs.iter().map(|_| "path GLOB ?".to_owned()).collect();
+        clauses.push(format!("({})", terms.join(" OR ")));
+        params.extend(globs.iter().cloned());
     }
 
     (clauses, params)

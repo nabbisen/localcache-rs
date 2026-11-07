@@ -27,7 +27,10 @@ impl zoo::ZooCodec for Owned {
 }
 
 fn from_hex(text: &str) -> Vec<u8> {
-    assert!(text.len() % 2 == 0, "odd number of hex digits in {text:?}");
+    assert!(
+        text.len().is_multiple_of(2),
+        "odd number of hex digits in {text:?}"
+    );
     (0..text.len())
         .step_by(2)
         .map(|at| {

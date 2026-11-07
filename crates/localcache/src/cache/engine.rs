@@ -1629,10 +1629,10 @@ fn walk_dir_filtered(
                 }
             }
             // Glob filter (matched against file name, not full path).
-            if let Some(pat) = glob {
-                if !pat.matches(name) {
-                    continue;
-                }
+            if let Some(pat) = glob
+                && !pat.matches(name)
+            {
+                continue;
             }
             files.push(path);
         } else if ft.is_dir() {

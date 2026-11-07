@@ -222,24 +222,24 @@ where
         let mut registration_errors = Vec::new();
         if watch_dirs {
             for dir in unique_parent_dirs(&paths) {
-                if dir.exists() {
-                    if let Err(e) = os_watcher.watch(&dir, RecursiveMode::Recursive) {
-                        #[cfg(feature = "tracing")]
-                        tracing::warn!(path = %dir.display(), error = %e, "watch registration failed");
-                        registration_errors
-                            .push(PathRegistrationError::new(dir.clone(), e.to_string()));
-                    }
+                if dir.exists()
+                    && let Err(e) = os_watcher.watch(&dir, RecursiveMode::Recursive)
+                {
+                    #[cfg(feature = "tracing")]
+                    tracing::warn!(path = %dir.display(), error = %e, "watch registration failed");
+                    registration_errors
+                        .push(PathRegistrationError::new(dir.clone(), e.to_string()));
                 }
             }
         } else {
             for path in &paths {
-                if path.exists() {
-                    if let Err(e) = os_watcher.watch(path, RecursiveMode::NonRecursive) {
-                        #[cfg(feature = "tracing")]
-                        tracing::warn!(path = %path.display(), error = %e, "watch registration failed");
-                        registration_errors
-                            .push(PathRegistrationError::new(path.clone(), e.to_string()));
-                    }
+                if path.exists()
+                    && let Err(e) = os_watcher.watch(path, RecursiveMode::NonRecursive)
+                {
+                    #[cfg(feature = "tracing")]
+                    tracing::warn!(path = %path.display(), error = %e, "watch registration failed");
+                    registration_errors
+                        .push(PathRegistrationError::new(path.clone(), e.to_string()));
                 }
             }
         }
@@ -523,24 +523,24 @@ where
             let mut registration_errors = Vec::new();
             if watch_dirs {
                 for dir in unique_parent_dirs(&paths) {
-                    if dir.exists() {
-                        if let Err(e) = deb.watcher().watch(&dir, RecursiveMode::Recursive) {
-                            #[cfg(feature = "tracing")]
-                            tracing::warn!(path = %dir.display(), error = %e, "watch registration failed");
-                            registration_errors
-                                .push(PathRegistrationError::new(dir.clone(), e.to_string()));
-                        }
+                    if dir.exists()
+                        && let Err(e) = deb.watcher().watch(&dir, RecursiveMode::Recursive)
+                    {
+                        #[cfg(feature = "tracing")]
+                        tracing::warn!(path = %dir.display(), error = %e, "watch registration failed");
+                        registration_errors
+                            .push(PathRegistrationError::new(dir.clone(), e.to_string()));
                     }
                 }
             } else {
                 for path in &paths {
-                    if path.exists() {
-                        if let Err(e) = deb.watcher().watch(path, RecursiveMode::NonRecursive) {
-                            #[cfg(feature = "tracing")]
-                            tracing::warn!(path = %path.display(), error = %e, "watch registration failed");
-                            registration_errors
-                                .push(PathRegistrationError::new(path.clone(), e.to_string()));
-                        }
+                    if path.exists()
+                        && let Err(e) = deb.watcher().watch(path, RecursiveMode::NonRecursive)
+                    {
+                        #[cfg(feature = "tracing")]
+                        tracing::warn!(path = %path.display(), error = %e, "watch registration failed");
+                        registration_errors
+                            .push(PathRegistrationError::new(path.clone(), e.to_string()));
                     }
                 }
             }
