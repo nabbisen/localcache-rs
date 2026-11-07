@@ -1,13 +1,15 @@
 name: Dependency advisories
 
-# The weekly run of the same gate CI runs on every push (`cargo make
-# gate-deny`, `deny.toml`). A new advisory appears without any push, so an
-# advisory published against the locked graph between two pushes would go
-# unnoticed until someone ran the gate by hand.
+# The same gate CI runs on every push (`cargo make gate-deny`, `deny.toml`), as
+# a workflow of its own. The release runs it again (`workflow_call`), and it also
+# runs on a weekly schedule and on request. The project does not depend on the
+# schedule: an advisory published against a crate of the locked graph reaches the
+# owner through Dependabot alerts, and a release runs this check again
+# (docs/src/dependency_security.md, "How freshness is controlled").
 #
 # This is its own workflow, not a `schedule:` on ci.yaml: a failure caused by
 # an upstream publication must not turn unrelated pushes red, and must not run
-# the whole CI weekly. A failure here means a new advisory or a yank has
+# the whole CI weekly. A failure here means an advisory or a yank has
 # reached the locked graph, or a stale `ignore` entry needs retiring. The gate
 # fails closed (there is no `continue-on-error`), and GitHub then notifies the
 # repository owner.

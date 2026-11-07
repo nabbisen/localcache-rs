@@ -3,7 +3,9 @@ name: MSRV fresh resolution
 # RFC 023 R6.2: does what a new consumer does -- resolve with no Cargo.lock
 # under the declared-MSRV Cargo, then build the declared-MSRV rows -- so that an
 # upstream crate that declares no `rust-version` and raises its real floor
-# is noticed here, before a consumer notices it.
+# is noticed here, before a consumer notices it. It runs on request and at every
+# release (`workflow_call`), and also weekly; the project does not depend on the
+# schedule (docs/src/dependency_security.md, "How freshness is controlled").
 #
 # This is its own workflow, not a `schedule:` on ci.yaml: a failure caused by
 # an upstream publication must not turn unrelated pushes red, and must not run

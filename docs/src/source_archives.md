@@ -52,6 +52,10 @@ which the project owner starts by hand. No registry token is stored in the
 repository or in CI: the workflow exchanges a short-lived GitHub identity for a
 crates.io token (Trusted Publishing). GitHub records who started each run.
 
+### Before the tag
+
+Run `cargo make gate-requirements` (it needs the network). If it fails, each line names the dependency, the declared requirement, the newest version and the next step: update the requirement, or add a row to `requirements-held.toml` saying why it is held and what ends the hold; a row whose dependency has left the tree, or whose requirement now passes, is deleted. Then `python3 scripts/check_requirements.py --write-book` regenerates the table in [MSRV & Dependency Security](./dependency_security.md). The `Gate` job runs the same check, so a release does not proceed without it.
+
 ### Steps for the owner
 
 1. Push a signed, annotated tag named exactly like the version in `Cargo.toml`,
@@ -68,8 +72,8 @@ crates.io token (Trusted Publishing). GitHub records who started each run.
 
 | Job | What it does |
 |---|---|
-| `Gate` | Fails unless: the run is from a tag (a branch is accepted only for a dry run from `main`); the tag is annotated and equals the workspace version exactly (a `v` prefix can never equal it); the commit is reachable from `main`; the newest `ci.yaml` run on the commit is `completed` with `success`; and `scripts/check_versions.py --expect <version>` passes (it also checks that the exact pin of `localcache-format` in `Cargo.toml` is that version) |
-| `Advisories`, `MSRV fresh resolution` | The weekly checks, run again at the moment of release, because an advisory or a new upstream release appears without any push |
+| `Gate` | Fails unless: the run is from a tag (a branch is accepted only for a dry run from `main`); the tag is annotated and equals the workspace version exactly (a `v` prefix can never equal it); the commit is reachable from `main`; the newest `ci.yaml` run on the commit is `completed` with `success`; `scripts/check_versions.py --expect <version>` passes (it also checks that the exact pin of `localcache-format` in `Cargo.toml` is that version); and `scripts/check_requirements.py` passes: every declared dependency requirement admits the newest stable version on crates.io or has a row in `requirements-held.toml` with its reason (it needs the network and fails closed without it) |
+| `Advisories`, `MSRV fresh resolution` | The two checks that also run weekly, run again at the moment of release, because an advisory or a new upstream release can appear without any push. The release does not rely on their having run before |
 | `Source archive` | `git archive` of the commit as `localcache-vX.Y.Z.tar.gz`, its SHA-256, and a build-provenance attestation |
 | `Publish` | The only job that asks crates.io for a registry token; it runs in the `release` Environment. It runs `cargo publish --workspace --locked` (with `--dry-run` for a dry run) and records the three `.crate` digests, in the order `localcache-format`, `localcache`, `localcache-cli` |
 | `GitHub release` | Only when `dry_run` is off: a release named by the tag, with the version's `CHANGELOG.md` section, the archive, and the archive and three `.crate` SHA-256 digests |

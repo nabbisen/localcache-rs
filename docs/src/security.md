@@ -194,7 +194,7 @@ What it does **not** do:
 
 ## Supply chain and releases
 
-- **Dependencies** are checked by `cargo deny` on every push and every week: advisories
+- **Dependencies** are checked by `cargo deny` on every push and again at every release: advisories
   (vulnerabilities, unsound and unmaintained crates, yanked versions) and sources (crates.io
   only, no Git dependencies). That check reads the RustSec database: a vulnerability in the C source of the SQLite
   that `libsqlite3-sys` bundles is reported only if RustSec lists it, and the known issue above is not

@@ -1,7 +1,8 @@
 # cargo-deny policy: `cargo deny check advisories sources` (RFC 027 R2)
 #
-# Run it with `cargo make gate-deny`. CI runs it on every push and weekly
-# (`.github/workflows/advisories.yaml`). This file is the one place a
+# Run it with `cargo make gate-deny`. CI runs it on every push, and the release
+# runs it again (`.github/workflows/advisories.yaml`, which also runs weekly; the
+# project does not depend on that). This file is the one place a
 # dependency-security disposition lives: see docs/src/dependency_security.md.
 # Pinned cargo-deny: 0.20.2 (Makefile.toml header and the CI workflows).
 
