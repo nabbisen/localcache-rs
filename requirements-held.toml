@@ -3,7 +3,8 @@
 #
 # `cargo make gate-requirements` (scripts/check_requirements.py) fails the release
 # unless every declared requirement admits the newest version or has a row here:
-#   crate        the dependency
+#   crate        the dependency (or `SQLite (bundled)`: the SQLite inside the locked libsqlite3-sys, compared with
+#                the latest SQLite release; its `requirement` is the bundled version, e.g. "3.53.2")
 #   requirement  exactly as `cargo metadata` prints the declared requirement ("^0.40.2")
 #   latest       the newest stable version this row was written against; when a newer
 #                one is published the row fails, so the decision is made again
@@ -14,6 +15,13 @@
 # docs/src/dependency_security.md is generated from this file
 # (`python3 scripts/check_requirements.py --write-book`) and checked against it.
 # The MSRV is raised only for a named necessity (RFC 023); a development tool never justifies it.
+
+[[held]]
+crate = "SQLite (bundled)"
+requirement = "3.53.2"
+latest = "3.54.1"
+why = "The fix for CVE-2026-119375 is in SQLite 3.54.0 and later. That comes with rusqlite 0.41, which declares Rust 1.89, above the MSRV 1.85. The bundled version is the one in the locked libsqlite3-sys; the latest release is the source amalgamation on sqlite.org."
+ends = "The same condition as the rusqlite row: an MSRV raise authorized under RFC 023 R3.1, after which the bundled SQLite is updated. No version or date is promised here."
 
 [[held]]
 crate = "aes-gcm"

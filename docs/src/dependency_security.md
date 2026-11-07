@@ -239,6 +239,13 @@ script does not understand, a crate with no stable version. There is no cached c
 workflow's `Gate` job runs it, so a release stops until every line is decided. It is deliberately not in `ci.yaml`:
 an upstream publication between two pushes must not turn an unrelated push red.
 
+**The bundled SQLite.** The same gate also compares the SQLite inside the locked `libsqlite3-sys` (the `SQLITE_VERSION` of its
+`sqlite3/sqlite3.h`, read as text; nothing is compiled) with the latest SQLite release on sqlite.org (the source amalgamation
+line of the page's machine-readable block). If they differ, the release stops until a row `SQLite (bundled)` in
+`requirements-held.toml` says why and what ends the hold; a newer upstream release makes the row fail, like any other row. A
+bundled version newer than the latest release is an error. It fails closed: a page without the block, a line it cannot read, a
+header without the version, sources that are not on disk.
+
 **When an advisory is published against what we ship.** GitHub Dependabot alerts for Cargo dependencies are
 **enabled** (the owner enabled them on 2026-11-07): GitHub tells the owner when an advisory is published against
 the locked graph. Dependabot *security updates* stay off, because an automatic bump does not know the MSRV, the
@@ -255,6 +262,11 @@ have said anything about it; it is described under "Known issue: the bundled SQL
 [Security Model](./security.md). This says nothing about how often that happens in general, or about what the alerts
 will do later.
 
+The SQLite comparison is the answer to that gap that exists today: because SQLite fixes land only in new releases, a bundled
+SQLite that is not the latest release makes a release stop until the decision is written down, even if no advisory feed maps
+the fix to the crate. What it cannot do: it sees a SQLite *release*, not a vulnerability that has no release yet, and not
+SQLite's own opinion of which release matters. It says nothing about the past.
+
 ## Requirements held back
 
 A declared requirement that does not admit the newest stable version on crates.io is a decision,
@@ -268,6 +280,7 @@ development tool never justifies a raise.
 
 | Requirement | Newest seen | Why it is held | What ends the hold |
 |---|---|---|---|
+| `SQLite (bundled) 3.53.2` | `3.54.1` | The fix for CVE-2026-119375 is in SQLite 3.54.0 and later. That comes with rusqlite 0.41, which declares Rust 1.89, above the MSRV 1.85. The bundled version is the one in the locked libsqlite3-sys; the latest release is the source amalgamation on sqlite.org. | The same condition as the rusqlite row: an MSRV raise authorized under RFC 023 R3.1, after which the bundled SQLite is updated. No version or date is promised here. |
 | `aes-gcm ^0.10.3` | `0.11.1` | aes-gcm 0.11 needs a dependency, ctutils, that needs Rust 1.87 or newer, and the ctutils releases that build on 1.85 carry RUSTSEC-2026-0385 (non-constant-time operations in a cryptographic layer). | The MSRV is at least 1.87. It is then adopted in its own patch release, with the proof that the ciphertext format is unchanged. |
 | `criterion ^0.7` | `0.8.2` | criterion 0.8 needs Rust 1.86. It is a development-only dependency (the cache_bench benchmark), and a development tool never justifies an MSRV raise. | The MSRV reaches 1.86 for another reason (the rusqlite row), or the benchmark stops using criterion. |
 | `opentelemetry ^0.32` | `0.33.1` | The opentelemetry feature is removed in v0.26.0 (announced in v0.25.1). A bump of a dependency that is about to leave the tree is not worth a release. | The removal of the opentelemetry feature lands. The row is deleted with the dependency. |

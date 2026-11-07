@@ -60,6 +60,32 @@ def fetcher(**indexes):
     return fetch
 
 
+def sqlite_header(version):
+    major, minor, patch = (int(x) for x in version.split("."))
+    return (
+        "/* a sqlite3.h */\n"
+        f'#define SQLITE_VERSION        "{version}"\n'
+        f"#define SQLITE_VERSION_NUMBER {major * 1000000 + minor * 1000 + patch}\n"
+        '#define SQLITE_SOURCE_ID      "2026-06-03 19:12:13 abc"\n'
+    )
+
+
+def sqlite_page(version="3.54.1", *, lines=None, header="PRODUCT,VERSION,RELATIVE-URL,SIZE-IN-BYTES,SHA3-HASH"):
+    major, minor, patch = (int(x) for x in version.split("."))
+    digits = f"{major}{minor:02d}{patch:02d}00"
+    if lines is None:
+        lines = [
+            f"PRODUCT,{version},2026/sqlite-src-{digits}.zip,1,aa",
+            f"PRODUCT,{version},2026/sqlite-amalgamation-{digits}.zip,2,bb",
+            f"PRODUCT,{version},2026/sqlite-tools-linux-x64-{digits}.zip,3,cc",
+        ]
+    return "<html>\n<!-- Download product data for scripts to read\n" + header + "\n" + "\n".join(lines) + "\n -->\n</html>\n"
+
+
+def sqlite_row(bundled, latest):
+    return {(CR.SQLITE_ROW, bundled): {"crate": CR.SQLITE_ROW, "requirement": bundled, "latest": latest, "why": "w", "ends": "e"}}
+
+
 def run_gate(meta, indexes, held_rows):
     return CR.evaluate(CR.declared_requirements(meta), fetcher(**indexes), held_rows)
 
@@ -197,6 +223,127 @@ class GateTests(unittest.TestCase):
             CR.declared_requirements({"packages": []})
 
 
+class SqliteTests(unittest.TestCase):
+    """Q25 § 9: the bundled SQLite against the latest SQLite release."""
+
+    def test_the_header_version_is_read_as_text(self):
+        self.assertEqual(CR.bundled_sqlite_version(sqlite_header("3.53.2")), "3.53.2")
+
+    def test_a_header_without_sqlite_version_fails(self):
+        for text in ["", "#define SQLITE_VERSION_NUMBER 3053002\n", '#define SQLITE_VERSION "3.53.2"\n']:
+            with self.subTest(text=text), self.assertRaises(CR.RequirementError):
+                CR.bundled_sqlite_version(text)
+
+    def test_a_header_whose_two_macros_disagree_or_repeat_fails(self):
+        with self.assertRaisesRegex(CR.RequirementError, "does not agree"):
+            CR.bundled_sqlite_version(sqlite_header("3.53.2").replace("3053002", "3054001"))
+        with self.assertRaises(CR.RequirementError):
+            CR.bundled_sqlite_version(sqlite_header("3.53.2") * 2)
+
+    def test_the_latest_release_is_the_amalgamation_line(self):
+        self.assertEqual(CR.latest_sqlite_release(sqlite_page("3.54.1")), "3.54.1")
+
+    def test_a_page_without_the_block_fails(self):
+        with self.assertRaisesRegex(CR.RequirementError, "no 'Download product data"):
+            CR.latest_sqlite_release("<html>nothing</html>")
+        with self.assertRaises(CR.RequirementError):  # a block that never closes
+            CR.latest_sqlite_release("<!-- Download product data for scripts to read\nPRODUCT,...")
+
+    def test_an_unexpected_header_fails(self):
+        with self.assertRaisesRegex(CR.RequirementError, "column header"):
+            CR.latest_sqlite_release(sqlite_page(header="PRODUCT,VERSION,URL"))
+
+    def test_an_unparsable_line_fails(self):
+        for line in ["PRODUCT,3.54.1,only-three", "OTHER,3.54.1,2026/sqlite-amalgamation-3540100.zip,2,bb", "garbage"]:
+            with self.subTest(line=line), self.assertRaisesRegex(CR.RequirementError, "cannot be parsed"):
+                CR.latest_sqlite_release(sqlite_page(lines=[line]))
+
+    def test_no_or_several_amalgamation_lines_fail(self):
+        with self.assertRaisesRegex(CR.RequirementError, "exactly one"):
+            CR.latest_sqlite_release(sqlite_page(lines=["PRODUCT,3.54.1,2026/sqlite-src-3540100.zip,1,aa"]))
+        two = ["PRODUCT,3.54.1,2026/sqlite-amalgamation-3540100.zip,2,bb", "PRODUCT,3.54.2,2026/sqlite-amalgamation-3540200.zip,2,bb"]
+        with self.assertRaisesRegex(CR.RequirementError, "exactly one"):
+            CR.latest_sqlite_release(sqlite_page(lines=two))
+
+    def test_a_version_that_disagrees_with_the_file_name_fails(self):
+        with self.assertRaisesRegex(CR.RequirementError, "does not agree"):
+            CR.latest_sqlite_release(sqlite_page(lines=["PRODUCT,3.54.1,2026/sqlite-amalgamation-3540200.zip,2,bb"]))
+
+    def test_new_columns_on_the_right_are_accepted(self):
+        page = sqlite_page(header="PRODUCT,VERSION,RELATIVE-URL,SIZE-IN-BYTES,SHA3-HASH,NEW", lines=["PRODUCT,3.54.1,2026/sqlite-amalgamation-3540100.zip,2,bb,x"])
+        self.assertEqual(CR.latest_sqlite_release(page), "3.54.1")
+
+    def test_the_page_fetch_turns_every_failure_into_an_error(self):
+        with mock.patch.object(CR.urllib.request, "urlopen", side_effect=urllib.error.URLError("down")):
+            with self.assertRaisesRegex(CR.RequirementError, "cannot fetch https://sqlite.org"):
+                CR.fetch_sqlite_page_live()
+
+    # --- the rule ---
+    def test_bundled_equal_to_latest_passes(self):
+        self.assertEqual(CR.evaluate_sqlite("3.54.1", "3.54.1", {}), [])
+
+    def test_bundled_behind_with_no_row_fails(self):
+        failures = CR.evaluate_sqlite("3.53.2", "3.54.1", {})
+        self.assertEqual(len(failures), 1)
+        self.assertIn("latest SQLite release is 3.54.1", failures[0])
+        self.assertIn('crate = "SQLite (bundled)"', failures[0])
+
+    def test_bundled_behind_with_the_current_row_passes(self):
+        self.assertEqual(CR.evaluate_sqlite("3.53.2", "3.54.1", sqlite_row("3.53.2", "3.54.1")), [])
+
+    def test_a_row_with_an_older_latest_fails(self):
+        failures = CR.evaluate_sqlite("3.53.2", "3.54.2", sqlite_row("3.53.2", "3.54.1"))
+        self.assertEqual(len(failures), 1)
+        self.assertIn("written against 3.54.1", failures[0])
+
+    def test_a_row_though_they_are_equal_fails(self):
+        failures = CR.evaluate_sqlite("3.54.1", "3.54.1", sqlite_row("3.54.1", "3.54.1"))
+        self.assertEqual(len(failures), 1)
+        self.assertIn("delete the row", failures[0])
+
+    def test_a_row_for_another_bundled_version_fails(self):
+        failures = CR.evaluate_sqlite("3.54.1", "3.54.1", sqlite_row("3.53.2", "3.54.1"))
+        self.assertEqual(len(failures), 1)
+        self.assertIn("not the bundled one", failures[0])
+
+    def test_bundled_newer_than_latest_is_an_error(self):
+        with self.assertRaisesRegex(CR.RequirementError, "newer than the latest release"):
+            CR.evaluate_sqlite("3.55.0", "3.54.1", {})
+
+    def test_no_libsqlite3_sys_means_nothing_to_compare_but_a_stale_row_fails(self):
+        self.assertEqual(CR.evaluate_sqlite(None, None, {}), [])
+        failures = CR.evaluate_sqlite(None, None, sqlite_row("3.53.2", "3.54.1"))
+        self.assertEqual(len(failures), 1)
+        self.assertIn("not in the lockfile", failures[0])
+
+    def test_the_sqlite_row_is_not_judged_as_a_crate(self):
+        # evaluate() must not report the SQLite row as "declared by no member"
+        rows = sqlite_row("3.53.2", "3.54.1")
+        self.assertEqual(run_gate(metadata(("serde", "^1")), {"serde": index_text("1.0.1")}, rows), [])
+
+    def test_the_lockfile_decides_whether_libsqlite3_sys_is_there(self):
+        with tempfile.TemporaryDirectory() as directory:
+            lock = Path(directory) / "Cargo.lock"
+            lock.write_text('[[package]]\nname = "a"\nversion = "1.0.0"\n', encoding="utf-8")
+            self.assertFalse(CR.lock_has_package(lock, CR.SQLITE_SYS))
+            lock.write_text(f'[[package]]\nname = "{CR.SQLITE_SYS}"\nversion = "0.1.0"\n', encoding="utf-8")
+            self.assertTrue(CR.lock_has_package(lock, CR.SQLITE_SYS))
+            lock.write_text("", encoding="utf-8")
+            with self.assertRaises(CR.RequirementError):  # an empty lockfile is a failure, not a removal
+                CR.lock_has_package(lock, CR.SQLITE_SYS)
+            lock.write_text("not toml [", encoding="utf-8")
+            with self.assertRaises(CR.RequirementError):
+                CR.lock_has_package(lock, CR.SQLITE_SYS)
+
+    def test_the_sqlite_row_needs_a_plain_version_as_its_requirement(self):
+        text = HELD_OK.replace('crate = "rusqlite"', f'crate = "{CR.SQLITE_ROW}"').replace('"^0.40.2"', '"3.x"')
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "requirements-held.toml"
+            path.write_text(text, encoding="utf-8")
+            with self.assertRaises(CR.RequirementError):
+                CR.load_held(path)
+
+
 HELD_OK = """\
 [[held]]
 crate = "rusqlite"
@@ -295,18 +442,32 @@ class BookTests(unittest.TestCase):
 class MainTests(unittest.TestCase):
     """The command line, end to end, on a temporary repository root and a fixture index."""
 
-    def tree(self, directory, *, held_text, deps, indexes):
+    def tree(self, directory, *, held_text, deps, indexes, sqlite=None):
+        """sqlite: (bundled version, page text) or None for a tree without libsqlite3-sys."""
         root = Path(directory)
         (root / "docs/src").mkdir(parents=True)
         (root / CR.HELD_FILE).write_text(held_text, encoding="utf-8")
         rows = CR.load_held(root / CR.HELD_FILE)
         (root / CR.BOOK_FILE).write_text(f"x\n{CR.render_book_block(rows)}\ny\n", encoding="utf-8")
-        (root / "meta.json").write_text(json.dumps(metadata(*deps)), encoding="utf-8")
+        meta = metadata(*deps)
+        lock = '[[package]]\nname = "localcache"\nversion = "1.0.0"\n'
+        args = ["--root", str(root), "--metadata", str(root / "meta.json"), "--index-dir", str(root / "index")]
+        if sqlite is not None:
+            version, page = sqlite
+            header = root / "sys" / "sqlite3" / "sqlite3.h"
+            header.parent.mkdir(parents=True)
+            header.write_text(sqlite_header(version), encoding="utf-8")
+            meta["packages"].append({"id": "registry+x#sys", "name": CR.SQLITE_SYS, "dependencies": [], "manifest_path": str(root / "sys" / "Cargo.toml")})
+            lock += f'\n[[package]]\nname = "{CR.SQLITE_SYS}"\nversion = "0.1.0"\n'
+            (root / "page.html").write_text(page, encoding="utf-8")
+            args += ["--sqlite-page", str(root / "page.html")]
+        (root / "Cargo.lock").write_text(lock, encoding="utf-8")
+        (root / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
         for name, text in indexes.items():
             path = root / "index" / CR.index_path(name)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text, encoding="utf-8")
-        return ["--root", str(root), "--metadata", str(root / "meta.json"), "--index-dir", str(root / "index")]
+        return args
 
     def run_main(self, args):
         out, err = io.StringIO(), io.StringIO()
@@ -332,6 +493,48 @@ class MainTests(unittest.TestCase):
             code, _, err = self.run_main(args)
             self.assertEqual(code, 1)
             self.assertIn("FAILED", err)
+
+    def test_main_compares_the_bundled_sqlite_with_the_latest_release(self):
+        row = '[[held]]\ncrate = "SQLite (bundled)"\nrequirement = "3.53.2"\nlatest = "3.54.1"\nwhy = "w"\nends = "e"\n'
+        cases = [
+            ("equal, no row", "", "3.54.1", "3.54.1", 0),
+            ("behind, row", row, "3.53.2", "3.54.1", 0),
+            ("behind, no row", "", "3.53.2", "3.54.1", 1),
+            ("row though equal", row.replace("3.53.2", "3.54.1"), "3.54.1", "3.54.1", 1),
+            ("bundled newer", "", "3.55.0", "3.54.1", 1),
+        ]
+        for label, held_text, bundled, latest, expected in cases:
+            with self.subTest(label), tempfile.TemporaryDirectory() as directory:
+                args = self.tree(directory, held_text=held_text, deps=[("serde", "^1")], indexes={"serde": index_text("1.0.1")}, sqlite=(bundled, sqlite_page(latest)))
+                code, out, err = self.run_main(args)
+                self.assertEqual(code, expected, out + err)
+
+    def test_main_without_libsqlite3_sys_passes_and_a_row_for_it_fails(self):
+        row = '[[held]]\ncrate = "SQLite (bundled)"\nrequirement = "3.53.2"\nlatest = "3.54.1"\nwhy = "w"\nends = "e"\n'
+        for held_text, expected in [("", 0), (row, 1)]:
+            with self.subTest(held=bool(held_text)), tempfile.TemporaryDirectory() as directory:
+                args = self.tree(directory, held_text=held_text, deps=[("serde", "^1")], indexes={"serde": index_text("1.0.1")})
+                code, out, err = self.run_main(args)
+                self.assertEqual(code, expected, out + err)
+
+    def test_main_fails_when_the_header_cannot_be_read(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args = self.tree(directory, held_text="", deps=[("serde", "^1")], indexes={"serde": index_text("1.0.1")}, sqlite=("3.54.1", sqlite_page("3.54.1")))
+            (Path(directory) / "sys" / "sqlite3" / "sqlite3.h").unlink()
+            code, _, err = self.run_main(args)
+            self.assertEqual(code, 1)
+            self.assertIn("cargo fetch --locked", err)
+
+    def test_main_fails_when_the_lockfile_and_the_metadata_disagree(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args = self.tree(directory, held_text="", deps=[("serde", "^1")], indexes={"serde": index_text("1.0.1")}, sqlite=("3.54.1", sqlite_page("3.54.1")))
+            (Path(directory) / "Cargo.lock").write_text('[[package]]\nname = "localcache"\nversion = "1.0.0"\n', encoding="utf-8")
+            self.assertEqual(self.run_main(args)[0], 1)
+
+    def test_main_fails_closed_on_a_bad_page(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args = self.tree(directory, held_text="", deps=[("serde", "^1")], indexes={"serde": index_text("1.0.1")}, sqlite=("3.54.1", "<html>no block</html>"))
+            self.assertEqual(self.run_main(args)[0], 1)
 
     def test_book_only_needs_no_metadata_and_no_index(self):
         with tempfile.TemporaryDirectory() as directory:

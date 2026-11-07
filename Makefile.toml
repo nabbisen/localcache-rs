@@ -9,7 +9,7 @@
 #   cargo make gate-msrv      — declared-MSRV check (rustup run 1.85 cargo make gate-msrv)
 #   cargo make gate-deny      — advisories and sources (deny.toml)
 #   cargo make gate-versions  — script tests; install examples and CHANGELOG name the version; the book's table of held requirements matches requirements-held.toml (offline)
-#   cargo make gate-requirements — every declared requirement admits the newest crates.io version or has a row in requirements-held.toml (needs the network; required by the Release workflow, not by CI)
+#   cargo make gate-requirements — every declared requirement admits the newest crates.io version, and the bundled SQLite is the latest SQLite release, or has a row in requirements-held.toml (needs the network; required by the Release workflow, not by CI)
 #   cargo make gate-docs      — rustdoc, mdBook, cargo package (needs a committed tree)
 #   cargo make gate-archive   — the source archive, checked and built (needs a committed tree)
 #   cargo make fmt-check      — formatting
@@ -197,10 +197,11 @@ script = [
 ]
 
 [tasks.gate-requirements]
-description = "Every declared dependency requirement admits the newest stable crates.io version, or has a row in requirements-held.toml with its reason (Q25). Needs the network; no cached copy."
+description = "Every declared dependency requirement admits the newest stable crates.io version, and the bundled SQLite is the latest SQLite release, or has a row in requirements-held.toml with its reason (Q25). Needs the network; no cached copy."
 script = [
     '''
     set -e
+    cargo fetch --locked
     python3 scripts/check_requirements.py
     '''
 ]

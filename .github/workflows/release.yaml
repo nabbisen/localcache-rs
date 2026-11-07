@@ -14,7 +14,8 @@ name: Release
 # (docs/src/source_archives.md).
 #
 # Jobs: `gate` checks the tag, the commit and that every declared dependency
-# requirement admits the newest crates.io version or is held with a reason
+# requirement admits the newest crates.io version, and the bundled SQLite is the
+# latest SQLite release, or each is held with a reason
 # (`requirements-held.toml`, Q25: freshness is a gate at release, not a timer);
 # `advisories` and `msrv-fresh` are two further checks, run again at the moment of release; `archive` builds
 # and attests the source archive; `publish` is the only job that asks crates.io
@@ -121,8 +122,12 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: python3 scripts/check_versions.py --expect "$VERSION"
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
-      - name: Check every declared requirement admits the newest version, or is held with a reason
-        # Needs the network (the crates.io index) and fails closed without it: no cached copy.
+      - name: Fetch the locked dependencies
+        # The requirements check reads the SQLite header shipped inside the locked libsqlite3-sys
+        # (as text; nothing is compiled), so the sources must be on disk.
+        run: cargo fetch --locked
+      - name: Check every declared requirement and the bundled SQLite are current, or held with a reason
+        # Needs the network (the crates.io index, sqlite.org) and fails closed without it: no cached copy.
         run: python3 scripts/check_requirements.py
 
   advisories:

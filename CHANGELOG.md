@@ -11,7 +11,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Internal
 
-- **Dependency freshness is a release gate, not a timer (Q25).** `cargo make gate-requirements` (`scripts/check_requirements.py`) compares every declared dependency requirement of the workspace with the newest stable version on crates.io, and the `Release` workflow's `Gate` job fails unless each requirement admits it or has a row in `requirements-held.toml` with its reason and what ends the hold; a newer upstream version, a requirement that now passes, or a dependency that has left the tree makes its row fail. The book's table of held requirements is generated from that file. It is not part of `ci.yaml` and no schedule is relied on (`docs/src/dependency_security.md`, "How freshness is controlled"). No library change.
+- **Dependency freshness is a release gate, not a timer (Q25).** `cargo make gate-requirements` (`scripts/check_requirements.py`) compares every declared dependency requirement of the workspace with the newest stable version on crates.io, and the `Release` workflow's `Gate` job fails unless each requirement admits it or has a row in `requirements-held.toml` with its reason and what ends the hold; a newer upstream version, a requirement that now passes, or a dependency that has left the tree makes its row fail. The book's table of held requirements is generated from that file. The same gate compares the bundled SQLite with the latest SQLite release on sqlite.org. It is not part of `ci.yaml` and no schedule is relied on (`docs/src/dependency_security.md`, "How freshness is controlled"). No library change.
 
 ---
 
