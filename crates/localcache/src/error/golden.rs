@@ -21,7 +21,7 @@ use localcache_format::FormatError;
 
 /// variant, feature gate (`-` for none; `a|b` is any of), `Display`.
 const GOLDEN: &str = "\
-AsyncTaskPanicked\tasync|async-std|smol\tasync blocking task panicked
+AsyncTaskPanicked\tasync|smol\tasync blocking task panicked
 Database\t-\tdatabase error: Query returned no rows
 DatabaseState\t-\tdatabase state: state
 EncryptionError\tencryption\tencryption error: detail
@@ -49,7 +49,6 @@ fn gate_is_on(gate: &str) -> bool {
         "compression" => cfg!(feature = "compression"),
         "watching" => cfg!(feature = "watching"),
         "async" => cfg!(feature = "async"),
-        "async-std" => cfg!(feature = "async-std"),
         "smol" => cfg!(feature = "smol"),
         other => panic!("the golden table names an unknown gate `{other}`"),
     })
@@ -70,7 +69,7 @@ fn variant_name(error: &E) -> &'static str {
         E::Poisoned { .. } => "Poisoned",
         #[cfg(feature = "encryption")]
         E::EncryptionError(_) => "EncryptionError",
-        #[cfg(any(feature = "async", feature = "async-std", feature = "smol"))]
+        #[cfg(any(feature = "async", feature = "smol"))]
         E::AsyncTaskPanicked => "AsyncTaskPanicked",
         E::InvalidConfiguration { .. } => "InvalidConfiguration",
         E::InvalidArgument { .. } => "InvalidArgument",
@@ -122,7 +121,7 @@ fn every_variant() -> Vec<E> {
         E::MissingEncryptionKey,
         #[cfg(feature = "encryption")]
         E::UnsealedEntry,
-        #[cfg(any(feature = "async", feature = "async-std", feature = "smol"))]
+        #[cfg(any(feature = "async", feature = "smol"))]
         E::AsyncTaskPanicked,
         #[cfg(feature = "watching")]
         E::Watcher("detail".to_owned()),

@@ -1009,7 +1009,7 @@ fn main() {
 
     // §4.4 — concurrent access. Deliberately scoped down to `ReadPool` under
     // `std::thread`, against the primary (already-populated) database. Async
-    // backends (tokio/async-std/smol) are explicitly out of scope for this
+    // backends (tokio/smol) are explicitly out of scope for this
     // pass: wiring an async runtime into a `harness = false` bench binary for
     // three backends is disproportionate to the value here, and `ReadPool`
     // already isolates the contended resource (connection checkout) that a
@@ -1050,7 +1050,7 @@ fn main() {
     );
     println!(
         "      → {CONCURRENT_THREADS} threads × {CONCURRENT_OPS_PER_THREAD} calls = {total_ops} total; \
-         async runtime backends (tokio/async-std/smol) not measured this pass — scoped out, see review request"
+         async runtime backends (tokio/smol) not measured this pass — scoped out, see review request"
     );
 
     println!("\n=== end of profile ({scale} entries) ===\n");

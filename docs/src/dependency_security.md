@@ -2,11 +2,10 @@
 
 The workspace declares and tests Rust 1.85 as its minimum supported Rust
 version (MSRV). A successful build on current stable Rust does not substitute
-for this contract. Dependency changes must preserve all four locked MSRV rows:
+for this contract. Dependency changes must preserve all three locked MSRV rows:
 
 ```sh
 cargo check -p localcache-format -p localcache --all-targets --all-features --locked
-cargo check -p localcache --all-targets --no-default-features --features async-std --locked
 cargo check -p localcache --all-targets --no-default-features --features smol --locked
 cargo check -p localcache-cli --all-targets --all-features --locked
 ```
@@ -14,7 +13,7 @@ cargo check -p localcache-cli --all-targets --all-features --locked
 They are one task, run on the declared toolchain: `rustup run 1.85.0 cargo make
 gate-msrv`. CI runs the same task on Rust 1.85.0.
 
-The separate async-std and smol rows are required because enabling all
+The separate smol row is required because enabling all
 features selects Tokio by runtime priority. `--all-targets` also keeps
 benchmarks and development dependencies within the MSRV contract.
 
@@ -32,11 +31,11 @@ The declared MSRV changes only under a written rule
 - **A 12-month age floor** on the new MSRV, waived for security necessities.
 - **Notice one release ahead** in `CHANGELOG.md` and on this page; a security
   raise is announced in the release that makes it, and says so.
-- **Verification:** the four locked rows above (`gate-msrv`) in CI on every push,
+- **Verification:** the three locked rows above (`gate-msrv`) in CI on every push,
   and after each publication a fresh consumer crate with `rust-version = "1.85"`
   builds the published version on the declared toolchain. A fresh-resolution check —
   the tracked tree without its lockfile, resolved by the declared toolchain's
-  Cargo, then the same four rows — runs on request and at every release
+  Cargo, then the same three rows — runs on request and at every release
   (`.github/workflows/msrv-fresh.yaml`, which also runs weekly; nothing relies on
   that), and a drift there blocks the release.
 - **The previous minor line** gets security, data-loss, and corruption fixes for
@@ -283,10 +282,8 @@ development tool never justifies a raise.
 | `SQLite (bundled) 3.53.2` | `3.54.1` | The fix for CVE-2026-119375 is in SQLite 3.54.0 and later. That comes with rusqlite 0.41, which declares Rust 1.89, above the MSRV 1.85. The bundled version is the one in the locked libsqlite3-sys; the latest release is the source amalgamation on sqlite.org. | The same condition as the rusqlite row: an MSRV raise authorized under RFC 023 R3.1, after which the bundled SQLite is updated. No version or date is promised here. |
 | `aes-gcm ^0.10.3` | `0.11.1` | aes-gcm 0.11 needs a dependency, ctutils, that needs Rust 1.87 or newer, and the ctutils releases that build on 1.85 carry RUSTSEC-2026-0385 (non-constant-time operations in a cryptographic layer). | The MSRV is at least 1.87. It is then adopted in its own patch release, with the proof that the ciphertext format is unchanged. |
 | `criterion ^0.7` | `0.8.2` | criterion 0.8 needs Rust 1.86. It is a development-only dependency (the cache_bench benchmark), and a development tool never justifies an MSRV raise. | The MSRV reaches 1.86 for another reason (the rusqlite row), or the benchmark stops using criterion. |
-| `opentelemetry ^0.32` | `0.33.1` | The opentelemetry feature is removed in v0.26.0 (announced in v0.25.1). A bump of a dependency that is about to leave the tree is not worth a release. | The removal of the opentelemetry feature lands. The row is deleted with the dependency. |
 | `rusqlite ^0.40.2` | `0.41.1` | rusqlite 0.41 (bundled SQLite 3.54.1) declares Rust 1.89, and libsqlite3-sys 0.39 declares 1.88; the MSRV is 1.85. | An MSRV raise authorized under RFC 023 R3.1 for the security fix described under Known issue in docs/src/security.md. No version or date is promised here. |
 | `sha2 ^0.10` | `0.11.1` | sha2 0.11 needs Rust 1.88. It is a development-only dependency (the digest checks of the committed fixtures), and a development tool never justifies an MSRV raise. | The MSRV reaches 1.88 for another reason (the rusqlite row), or the checks stop needing SHA-256 from a library. |
-| `tracing-opentelemetry ^0.33` | `0.34.0` | The opentelemetry feature is removed in v0.26.0 (announced in v0.25.1). A bump of a dependency that is about to leave the tree is not worth a release. | The removal of the opentelemetry feature lands. The row is deleted with the dependency. |
 
 <!-- requirements-held:end -->
 
@@ -362,26 +359,17 @@ entry is the advisory id and a `reason` that says why it is accepted *and* the
 condition that would change the decision, because an `ignore` has no expiry date:
 
 ```toml
-{ id = "RUSTSEC-2025-0052", reason = "Preserve the advertised async-std runtime feature. Follow-up: Reassess if a maintained fork of async-std gains adoption, or if any vulnerability or unsound advisory is published against async-std at the locked version." },
+{ id = "RUSTSEC-2025-0141", reason = "<why it is accepted>. Follow-up: <the condition that ends it>." },
 ```
 
-Two unmaintained-crate findings are accepted this way today, both behind the one
-optional `async-std` runtime feature, which is removed in v0.26.0 (announced in v0.25.1);
-both entries are deleted with it:
+**No finding is accepted today.** `ignore` in `deny.toml` is empty. Two unmaintained-crate findings were
+accepted until v0.26.0, both behind the one optional `async-std` runtime feature: `RUSTSEC-2025-0052` for `async-std` and
+`RUSTSEC-2026-0441` for `pin-utils` (archived upstream on 2026-10-01, no vulnerability or unsound advisory),
+which only `async-std` depended on. They ended in v0.26.0 with the removal of the feature (announced in v0.25.1): the
+`advisory-not-detected` rule meant `gate-deny` failed until both entries were deleted, which is how the removal was
+shown to be complete.
 
-- `RUSTSEC-2025-0052` for `async-std`, preserving the advertised optional runtime
-  feature.
-- `RUSTSEC-2026-0441` for `pin-utils` (archived upstream on 2026-10-01, no
-  vulnerability or unsound advisory), which only `async-std` depends on. The entry
-  ends with the `async-std` entry: when `async-std` drops `pin-utils`, or the
-  feature is removed, it is deleted.
-
-It stays visible as a note on every run (`cargo deny -L info check advisories
-sources`). A newly published vulnerability or unsound advisory against that crate
-has a different id, so no existing entry covers it and the gate fails the day it
-appears.
-
-A second entry, `RUSTSEC-2025-0141` for `bincode`, preserved the legacy payload
+An earlier entry, `RUSTSEC-2025-0141` for `bincode`, preserved the legacy payload
 wire format until v0.22.1. `bincode` is unmaintained and its decoder could not be
 made to check a claimed length against the input (RFC 028), so the format's reader
 and writer now live in this crate, checked against `bincode`'s own output (golden

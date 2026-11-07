@@ -199,10 +199,9 @@ What it does **not** do:
   only, no Git dependencies). That check reads the RustSec database: a vulnerability in the C source of the SQLite
   that `libsqlite3-sys` bundles is reported only if RustSec lists it, and the known issue above is not
   something it reports. A standing exception must carry its reason and the condition
-  that ends it; the two current exceptions (`RUSTSEC-2025-0052` for `async-std` and
-  `RUSTSEC-2026-0441` for `pin-utils`, which only `async-std` depends on) both sit behind the one
-  optional `async-std` runtime feature, which is removed in v0.26.0 (announced in v0.25.1), and they
-  are deleted with it (see [MSRV & Dependency Security](./dependency_security.md)). The `bincode` exception ended in
+  that ends it; there is none at present (see [MSRV & Dependency Security](./dependency_security.md)). The two that
+  existed ended in v0.26.0 with the removal of the `async-std` feature (`RUSTSEC-2025-0052` for `async-std` and
+  `RUSTSEC-2026-0441` for `pin-utils`, which only `async-std` depended on), and the `bincode` exception ended in
   v0.22.1, when the payload format's reader and writer became the project's own code.
 - **Releases** are published by one GitHub Actions workflow, not from a workstation, through
   crates.io Trusted Publishing: the workflow exchanges a short-lived GitHub identity for a

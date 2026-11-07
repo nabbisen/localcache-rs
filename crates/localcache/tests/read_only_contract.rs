@@ -482,7 +482,7 @@ fn pool_escape_hatches_keep_original_guard() {
     assert_read_only(pool.with_mut(|engine| engine.remove(&missing)).unwrap_err());
 }
 
-#[cfg(any(feature = "async", feature = "async-std", feature = "smol"))]
+#[cfg(any(feature = "async", feature = "smol"))]
 async fn async_read_only_parity() {
     use localcache::AsyncCacheEngine;
 
@@ -531,13 +531,7 @@ async fn tokio_read_only_contract_matches_sync() {
     async_read_only_parity().await;
 }
 
-#[cfg(all(not(feature = "async"), feature = "async-std"))]
-#[test]
-fn async_std_read_only_contract_matches_sync() {
-    async_std::task::block_on(async_read_only_parity());
-}
-
-#[cfg(all(not(feature = "async"), not(feature = "async-std"), feature = "smol"))]
+#[cfg(all(not(feature = "async"), feature = "smol"))]
 #[test]
 fn smol_read_only_contract_matches_sync() {
     smol::block_on(async_read_only_parity());

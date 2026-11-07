@@ -7,7 +7,7 @@
 # Pinned cargo-deny: 0.20.2 (Makefile.toml header and the CI workflows).
 
 [graph]
-# Every optional dependency (async-std, smol, notify, ...) must be in
+# Every optional dependency (smol, notify, ...) must be in
 # the graph, so all features are on. The graph is what can be built: all
 # targets, dev-dependencies included.
 all-features = true
@@ -19,10 +19,10 @@ yanked = "deny"
 # dependencies too. The default scope hides most of them.
 unmaintained = "all"
 unsound = "all"
-ignore = [
-    { id = "RUSTSEC-2025-0052", reason = "Preserve the advertised async-std runtime feature. Follow-up: Reassess if a maintained fork of async-std gains adoption, or if any vulnerability or unsound advisory is published against async-std at the locked version. The removal of the async-std feature is announced for v0.26.0, and this entry is deleted with it." },
-    { id = "RUSTSEC-2026-0441", reason = "pin-utils is reached only through async-std, whose feature is preserved by the entry above; it is a small helper crate (pin macros) with no vulnerability or unsound advisory. Follow-up: Remove this entry when async-std no longer depends on pin-utils or the async-std feature is removed (announced for v0.26.0), or reassess if any vulnerability or unsound advisory is published against pin-utils at the locked version." },
-]
+# No advisory is accepted: the two exceptions that existed (RUSTSEC-2025-0052 for async-std and
+# RUSTSEC-2026-0441 for pin-utils, which only async-std depended on) ended in v0.26.0 with the
+# removal of the async-std feature. A new exception needs its reason and the condition that ends it.
+ignore = []
 
 [sources]
 unknown-registry = "deny"

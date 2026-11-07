@@ -586,11 +586,11 @@ mod rotation_tests {
     // suite runs. Mirrors the block_on/tokio macro split in
     // `pool_observe.rs`'s `panic_inside_blocking_closure_yields_async_task_panicked_test!`
     // (RFC 005 / RFC 015): the bodies below are identical, module for
-    // module, across async-std, smol, and Tokio -- only the test-harness
+    // module, across smol and Tokio -- only the test-harness
     // shape differs.
     // ----------------------------------------------------------------
 
-    #[cfg(any(feature = "async", feature = "async-std", feature = "smol"))]
+    #[cfg(any(feature = "async", feature = "smol"))]
     macro_rules! rotation_async_tests {
         (block_on = $block_on_fn:path) => {
             fn block_on<F: std::future::Future>(f: F) -> F::Output {
@@ -766,15 +766,7 @@ mod rotation_tests {
         };
     }
 
-    #[cfg(all(not(feature = "async"), feature = "async-std"))]
-    mod rotation_async_std {
-        use super::*;
-        use localcache::AsyncCacheEngine;
-
-        rotation_async_tests!(block_on = async_std::task::block_on);
-    }
-
-    #[cfg(all(not(feature = "async"), not(feature = "async-std"), feature = "smol"))]
+    #[cfg(all(not(feature = "async"), feature = "smol"))]
     mod rotation_smol {
         use super::*;
         use localcache::AsyncCacheEngine;

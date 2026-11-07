@@ -454,7 +454,7 @@ fn sync_pools_preserve_exact_deleted_key_outcomes() {
     assert!(pool.remove(&source).unwrap());
 }
 
-#[cfg(any(feature = "async", feature = "async-std", feature = "smol"))]
+#[cfg(any(feature = "async", feature = "smol"))]
 async fn assert_async_deleted_key_outcomes(
     engine: &localcache::AsyncCacheEngine<Vec<u8>>,
     directory: &TempDir,
@@ -524,33 +524,7 @@ async fn tokio_wrapper_shares_terminal_glob_validation() {
     assert_async_deleted_key_outcomes(&engine, &directory).await;
 }
 
-#[cfg(all(not(feature = "async"), feature = "async-std"))]
-#[test]
-fn async_std_wrapper_shares_terminal_glob_validation() {
-    async_std::task::block_on(async {
-        let directory = TempDir::new().unwrap();
-        let engine = localcache::AsyncCacheEngine::<Vec<u8>>::open(CacheOptions {
-            database_path: ":memory:".into(),
-            ..CacheOptions::default()
-        })
-        .await
-        .unwrap();
-        assert_malformed(
-            engine
-                .query_run::<_, Vec<u8>>(|query| query.path_glob("}"))
-                .await,
-        );
-        assert_malformed(engine.query_dry_run(|query| query.path_glob("}")).await);
-        assert_safety(
-            engine
-                .query_run::<_, Vec<u8>>(|query| query.path_glob("a".repeat(16_385)))
-                .await,
-        );
-        assert_async_deleted_key_outcomes(&engine, &directory).await;
-    });
-}
-
-#[cfg(all(not(feature = "async"), not(feature = "async-std"), feature = "smol"))]
+#[cfg(all(not(feature = "async"), feature = "smol"))]
 #[test]
 fn smol_wrapper_shares_terminal_glob_validation() {
     smol::block_on(async {

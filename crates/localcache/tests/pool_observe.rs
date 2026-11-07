@@ -810,9 +810,9 @@ mod async_phase13_tests {
 // Phase 14 — preload()
 
 // ============================================================
-// RFC 003 — OpenTelemetry Spans
-// Tests the namespace field added to tracing spans; the full
-// OTel bridge is a caller responsibility (no new span sites).
+// RFC 003 — the namespace field of the tracing spans. (The `opentelemetry`
+// feature of RFC 003 was removed in v0.26.0: bridging the spans to an
+// OpenTelemetry pipeline is the application's own `tracing-opentelemetry` layer.)
 // ============================================================
 
 #[cfg(feature = "tracing")]
@@ -881,23 +881,6 @@ mod rfc003_opentelemetry_spans {
             recorded.iter().any(|n| n == "localcache::check_status"),
             "expected localcache::check_status span; got: {recorded:?}"
         );
-    }
-
-    // Verify the opentelemetry feature compiles alongside tracing.
-    #[cfg(feature = "opentelemetry")]
-    #[test]
-    fn opentelemetry_feature_compiles() {
-        // The opentelemetry feature's main job is to pull compatible deps
-        // into the build graph so callers can install OpenTelemetryLayer.
-        // This test verifies the feature compiles without any engine-side
-        // API changes or panics.
-        let dir = TempDir::new().unwrap();
-        let engine: CacheEngine<Vec<f32>> =
-            CacheEngine::builder().database(":memory:").build().unwrap();
-        let path = write_file(&dir, "otel2.txt", b"data");
-        engine.set(&path, &vec![2.0_f32]).unwrap();
-        let v = engine.get(&path).unwrap();
-        assert!(v.is_some());
     }
 }
 
@@ -1030,28 +1013,28 @@ mod rfc004_shared_cache {
 }
 
 // ============================================================
-// RFC 005 — async-std / smol Feature Variants
+// RFC 005 — the smol Feature Variant (the async-std variant was removed in v0.26.0)
 // ============================================================
 
 // `panic_inside_blocking_closure_yields_async_task_panicked` is identical,
-// module for module, across the async-std, smol, and Tokio runtime test
+// module for module, across the smol and Tokio runtime test
 // modules below (RFC 005 / RFC 015) -- only each runtime's own test-harness
 // shape differs (a `#[test]` wrapping `block_on(async { .. })` for
-// async-std/smol, `#[tokio::test] async fn` directly for Tokio). Generated
-// here (Phase 23 P0 Part E) so the three modules don't hand-maintain three
-// copies of the same assertion.
+// smol, `#[tokio::test] async fn` directly for Tokio). Generated
+// here (Phase 23 P0 Part E) so the modules don't hand-maintain copies
+// of the same assertion.
 //
 // `poisoned_mutex_recovers_on_subsequent_calls` is deliberately NOT
 // generated: Tokio's version asserts a *third* subsequent `contains` call
-// that the async-std and smol versions do not (compare each module's own
+// that the smol version does not (compare each module's own
 // copy) -- a genuine behavioral difference between runtimes, not
 // incidental drift, so unifying it would either weaken Tokio's coverage or
 // silently add an untested assertion to the other two. Left alone and
 // reported rather than forced into the macro.
-#[cfg(any(feature = "async", feature = "async-std", feature = "smol"))]
+#[cfg(any(feature = "async", feature = "smol"))]
 macro_rules! panic_inside_blocking_closure_yields_async_task_panicked_test {
     (block_on = $block_on_fn:path) => {
-        // async-std/smol provide their own #[async_std::test]/#[smol::test]
+        // smol provides its own #[smol::test]
         // but a simple block_on works too, since these tests don't need the
         // full runtime loop.
         fn block_on<F: std::future::Future>(f: F) -> F::Output {
@@ -1105,11 +1088,11 @@ macro_rules! panic_inside_blocking_closure_yields_async_task_panicked_test {
 // `Serialize` is a normal derive: writing never panics, only decoding does,
 // which is what forces the panic to happen inside `batch_get`'s blocking
 // closure, at the choke point RFC 022 R8's test needs.
-#[cfg(any(feature = "async", feature = "async-std", feature = "smol"))]
+#[cfg(any(feature = "async", feature = "smol"))]
 #[derive(Debug, Clone, serde::Serialize)]
 struct PanicOnDeserialize;
 
-#[cfg(any(feature = "async", feature = "async-std", feature = "smol"))]
+#[cfg(any(feature = "async", feature = "smol"))]
 impl<'de> serde::Deserialize<'de> for PanicOnDeserialize {
     fn deserialize<D>(_deserializer: D) -> Result<Self, D::Error>
     where
@@ -1124,7 +1107,7 @@ impl<'de> serde::Deserialize<'de> for PanicOnDeserialize {
 // never a single `Err` for the whole call. Same generation rationale as
 // `panic_inside_blocking_closure_yields_async_task_panicked_test!` above:
 // identical bodies, only the harness shape differs per runtime.
-#[cfg(any(feature = "async", feature = "async-std", feature = "smol"))]
+#[cfg(any(feature = "async", feature = "smol"))]
 macro_rules! rfc022_r8_batch_results_test {
     (block_on = $block_on_fn:path) => {
         // Must fail on v0.21.3: each batch method returned 1 result, not 3.
@@ -1326,7 +1309,7 @@ macro_rules! rfc022_r8_batch_results_test {
 // debounced_watcher}`. The bodies are shared; the macro below wraps each one
 // in the harness shape of the active runtime, as the other RFC-numbered
 // macros in this file do.
-#[cfg(any(feature = "async", feature = "async-std", feature = "smol"))]
+#[cfg(any(feature = "async", feature = "smol"))]
 mod rfc024_async_bodies {
     use localcache::{AsyncCacheEngine, CacheEngine, CacheOptions, ScanOptions};
     use tempfile::TempDir;
@@ -1496,7 +1479,7 @@ mod rfc024_async_bodies {
     }
 }
 
-#[cfg(any(feature = "async", feature = "async-std", feature = "smol"))]
+#[cfg(any(feature = "async", feature = "smol"))]
 macro_rules! rfc024_async_delegation_tests {
     (block_on = $block_on_fn:path) => {
         #[test]
@@ -1560,82 +1543,8 @@ macro_rules! rfc024_async_delegation_tests {
     };
 }
 
-// async-std backend tests (only when async-std is the active runtime,
-// i.e. async-std is enabled but Tokio is not).
-#[cfg(all(not(feature = "async"), feature = "async-std"))]
-mod rfc005_async_std {
-    use localcache::{AsyncCacheEngine, CacheOptions, LocalFileCacheError};
-
-    use super::write_file;
-    use tempfile::TempDir;
-
-    panic_inside_blocking_closure_yields_async_task_panicked_test!(
-        block_on = async_std::task::block_on
-    );
-    rfc022_r8_batch_results_test!(block_on = async_std::task::block_on);
-    rfc024_async_delegation_tests!(block_on = async_std::task::block_on);
-
-    #[test]
-    fn async_std_engine_set_get() {
-        let dir = TempDir::new().unwrap();
-        block_on(async {
-            let engine = AsyncCacheEngine::<Vec<f32>>::open(CacheOptions {
-                database_path: ":memory:".into(),
-                ..CacheOptions::default()
-            })
-            .await
-            .unwrap();
-
-            let path = write_file(&dir, "as_test.txt", b"async-std payload");
-            engine
-                .set(path.clone(), vec![1.0_f32, 2.0_f32])
-                .await
-                .unwrap();
-
-            let entry = engine.get(path).await.unwrap();
-            assert!(
-                entry.is_some(),
-                "async-std get must return the stored entry"
-            );
-        });
-    }
-
-    // RFC 015 R2/R3 interlock.
-    #[test]
-    fn poisoned_mutex_recovers_on_subsequent_calls() {
-        block_on(async {
-            let engine = AsyncCacheEngine::<Vec<f32>>::open(CacheOptions {
-                database_path: ":memory:".into(),
-                ..CacheOptions::default()
-            })
-            .await
-            .unwrap();
-
-            let _ = engine
-                .query_run::<_, Vec<f32>>(|_q| panic!("intentional test panic"))
-                .await;
-
-            let path = std::path::PathBuf::from("does-not-matter.txt");
-            let first = engine.contains(path.clone()).await;
-            assert!(matches!(
-                first,
-                Err(LocalFileCacheError::Poisoned {
-                    resource: "AsyncCacheEngine"
-                })
-            ));
-            let second = engine.contains(path).await;
-            assert!(matches!(
-                second,
-                Err(LocalFileCacheError::Poisoned {
-                    resource: "AsyncCacheEngine"
-                })
-            ));
-        });
-    }
-}
-
 // smol backend tests (only when smol is the active runtime).
-#[cfg(all(not(feature = "async"), not(feature = "async-std"), feature = "smol"))]
+#[cfg(all(not(feature = "async"), feature = "smol"))]
 mod rfc005_smol {
     use localcache::{AsyncCacheEngine, CacheOptions, LocalFileCacheError};
 

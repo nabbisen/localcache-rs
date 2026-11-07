@@ -38,13 +38,6 @@ why = "criterion 0.8 needs Rust 1.86. It is a development-only dependency (the c
 ends = "The MSRV reaches 1.86 for another reason (the rusqlite row), or the benchmark stops using criterion."
 
 [[held]]
-crate = "opentelemetry"
-requirement = "^0.32"
-latest = "0.33.1"
-why = "The opentelemetry feature is removed in v0.26.0 (announced in v0.25.1). A bump of a dependency that is about to leave the tree is not worth a release."
-ends = "The removal of the opentelemetry feature lands. The row is deleted with the dependency."
-
-[[held]]
 crate = "rusqlite"
 requirement = "^0.40.2"
 latest = "0.41.1"
@@ -58,9 +51,3 @@ latest = "0.11.1"
 why = "sha2 0.11 needs Rust 1.88. It is a development-only dependency (the digest checks of the committed fixtures), and a development tool never justifies an MSRV raise."
 ends = "The MSRV reaches 1.88 for another reason (the rusqlite row), or the checks stop needing SHA-256 from a library."
 
-[[held]]
-crate = "tracing-opentelemetry"
-requirement = "^0.33"
-latest = "0.34.0"
-why = "The opentelemetry feature is removed in v0.26.0 (announced in v0.25.1). A bump of a dependency that is about to leave the tree is not worth a release."
-ends = "The removal of the opentelemetry feature lands. The row is deleted with the dependency."

@@ -1049,22 +1049,13 @@ mod async_phase11_tests {
     }
 }
 
-#[cfg(all(not(feature = "async"), feature = "async-std"))]
-#[test]
-fn async_std_index_lifecycle_matches_sync_contract() {
-    async_std::task::block_on(async_index_parity());
-}
-
-#[cfg(all(not(feature = "async"), not(feature = "async-std"), feature = "smol"))]
+#[cfg(all(not(feature = "async"), feature = "smol"))]
 #[test]
 fn smol_index_lifecycle_matches_sync_contract() {
     smol::block_on(async_index_parity());
 }
 
-#[cfg(any(
-    all(not(feature = "async"), feature = "async-std"),
-    all(not(feature = "async"), not(feature = "async-std"), feature = "smol")
-))]
+#[cfg(all(not(feature = "async"), feature = "smol"))]
 #[allow(deprecated)]
 async fn async_index_parity() {
     use localcache::{AsyncCacheEngine, CacheOptions};

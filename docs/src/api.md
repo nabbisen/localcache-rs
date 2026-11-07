@@ -101,7 +101,7 @@ the batch methods, one such error per requested path. See
 
 | Type | Feature | Description |
 |---|---|---|
-| `AsyncCacheEngine<T>` | `async` / `async-std` / `smol` | Async wrapper (runtime-selectable) |
+| `AsyncCacheEngine<T>` | `async` / `smol` | Async wrapper (runtime-selectable) |
 | `SyncCacheEngine<T>` | *(none)* | Thread-safe sync engine (one engine behind a mutex) |
 | `ReadPool<T>` | *(none)* | Thread-safe sync pool of N read-only connections |
 | `CacheWatcher<T>` | `watching` | OS-native file-system watcher |

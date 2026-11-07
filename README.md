@@ -83,7 +83,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | Cargo feature | Description |
 |---|---|
 | `async` | `AsyncCacheEngine` backed by Tokio's `spawn_blocking` |
-| `async-std` | `AsyncCacheEngine` backed by `async_std::task::spawn_blocking` — **removed in v0.26.0** (use `async` or `smol`) |
 | `smol` | `AsyncCacheEngine` backed by `smol::unblock` |
 | `compression` | Transparent `zstd` payload compression |
 | `json` | `Json` codec + payload field queries in `QueryBuilder` |
@@ -91,7 +90,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 | `tracing` | `tracing` instrumentation on hot paths (zero-cost when disabled) |
 | `watching` | OS-native file-system watching — `CacheWatcher`, `CacheEngine::watcher()`/`debounced_watcher()`; starts one background thread |
 | `metrics` | `metrics` counters/histograms for `get`/`set` and hit/miss events |
-| `opentelemetry` | Bridges existing `tracing` spans to an OTel-compatible backend; implies `tracing` — **removed in v0.26.0** (keep `tracing` and add `tracing-opentelemetry` to your own subscriber) |
 
 ---
 

@@ -1,17 +1,17 @@
 //! Internal async executor abstraction for [`super::async_engine::AsyncCacheEngine`].
 //!
-//! This module implements RFC 005: *async-std / smol Feature Variants*.
+//! This module implements RFC 005: *the smol Feature Variant* (the `async-std` variant it
+//! introduced was removed in v0.26.0).
 //!
 //! # Feature priority
 //!
 //! Cargo features must be **additive** — enabling multiple features
 //! simultaneously (e.g. `--all-features`, docs.rs) must not cause a
-//! compile error.  When more than one async-runtime feature is enabled,
+//! compile error.  When both async-runtime features are enabled,
 //! this module selects **one backend** using the following priority order:
 //!
 //! 1. `async` (Tokio) — highest priority
-//! 2. `async-std`
-//! 3. `smol`
+//! 2. `smol`
 //!
 //! Callers that need a specific runtime should enable only that feature.
 
@@ -55,53 +55,27 @@ impl SpawnBlocking for TokioRuntime {
 }
 
 // ---------------------------------------------------------------------------
-// async-std backend
-// ---------------------------------------------------------------------------
-
-// Only compiled when `async` (Tokio) is NOT active, giving Tokio priority.
-#[cfg(all(not(feature = "async"), feature = "async-std"))]
-pub(crate) struct AsyncStdRuntime;
-
-#[cfg(all(not(feature = "async"), feature = "async-std"))]
-impl SpawnBlocking for AsyncStdRuntime {
-    async fn spawn<F, R>(f: F) -> Result<R, LocalFileCacheError>
-    where
-        F: FnOnce() -> Result<R, LocalFileCacheError> + Send + 'static,
-        R: Send + 'static,
-    {
-        // `async_std::task::spawn_blocking` yields `R` directly rather than
-        // `Result<R, JoinError>`, so a panicking closure would otherwise
-        // propagate as a raw unwind through this `.await` instead of
-        // becoming `AsyncTaskPanicked`. Catch it on the blocking thread,
-        // before it is handed to the runtime, so it never crosses the
-        // `.await` at all — this holds only under Rust's default unwinding
-        // panic strategy; under `panic = "abort"` no backend catches
-        // anything and the process aborts identically across all three.
-        let guarded = move || {
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
-                .unwrap_or(Err(LocalFileCacheError::AsyncTaskPanicked))
-        };
-        async_std::task::spawn_blocking(guarded).await
-    }
-}
-
-// ---------------------------------------------------------------------------
 // smol backend
 // ---------------------------------------------------------------------------
 
-// Compiled only when neither `async` nor `async-std` is active.
-#[cfg(all(not(feature = "async"), not(feature = "async-std"), feature = "smol"))]
+// Compiled only when `async` (Tokio) is not active.
+#[cfg(all(not(feature = "async"), feature = "smol"))]
 pub(crate) struct SmolRuntime;
 
-#[cfg(all(not(feature = "async"), not(feature = "async-std"), feature = "smol"))]
+#[cfg(all(not(feature = "async"), feature = "smol"))]
 impl SpawnBlocking for SmolRuntime {
     async fn spawn<F, R>(f: F) -> Result<R, LocalFileCacheError>
     where
         F: FnOnce() -> Result<R, LocalFileCacheError> + Send + 'static,
         R: Send + 'static,
     {
-        // `smol::unblock` also yields `R` directly; wrap the closure for the
-        // same reason as the async-std backend above.
+        // `smol::unblock` yields `R` directly rather than `Result<R, JoinError>`,
+        // so a panicking closure would otherwise propagate as a raw unwind
+        // through this `.await` instead of becoming `AsyncTaskPanicked`. Catch
+        // it on the blocking thread, before it is handed to the runtime, so it
+        // never crosses the `.await` at all — this holds only under Rust's
+        // default unwinding panic strategy; under `panic = "abort"` no backend
+        // catches anything and the process aborts identically for both.
         let guarded = move || {
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
                 .unwrap_or(Err(LocalFileCacheError::AsyncTaskPanicked))
@@ -118,8 +92,8 @@ impl SpawnBlocking for SmolRuntime {
 
 /// Run `f` on a blocking thread pool using whichever async runtime is active.
 ///
-/// Priority: Tokio → async-std → smol (see module docs).
-#[cfg(any(feature = "async", feature = "async-std", feature = "smol"))]
+/// Priority: Tokio → smol (see module docs).
+#[cfg(any(feature = "async", feature = "smol"))]
 pub(crate) async fn spawn_blocking<F, R>(f: F) -> Result<R, LocalFileCacheError>
 where
     F: FnOnce() -> Result<R, LocalFileCacheError> + Send + 'static,
@@ -131,11 +105,7 @@ where
     {
         TokioRuntime::spawn(f).await
     }
-    #[cfg(all(not(feature = "async"), feature = "async-std"))]
-    {
-        AsyncStdRuntime::spawn(f).await
-    }
-    #[cfg(all(not(feature = "async"), not(feature = "async-std"), feature = "smol"))]
+    #[cfg(all(not(feature = "async"), feature = "smol"))]
     {
         SmolRuntime::spawn(f).await
     }

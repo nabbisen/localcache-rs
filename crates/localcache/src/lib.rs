@@ -30,7 +30,7 @@ mod path;
 mod pool;
 mod read_pool;
 
-#[cfg(any(feature = "async", feature = "async-std", feature = "smol"))]
+#[cfg(any(feature = "async", feature = "smol"))]
 pub use cache::async_engine::AsyncCacheEngine;
 pub use cache::builder::CacheEngineBuilder;
 pub use cache::engine::{BatchSetReport, CacheEngine};

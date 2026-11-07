@@ -150,7 +150,7 @@ fn sync_engine_open(database: &Path, rejection: Rejection) -> Result<(), LocalFi
     SyncCacheEngine::<Vec<f32>>::open(rejection.options(database)).map(drop)
 }
 
-#[cfg(any(feature = "async", feature = "async-std", feature = "smol"))]
+#[cfg(any(feature = "async", feature = "smol"))]
 fn async_engine_open(database: &Path, rejection: Rejection) -> Result<(), LocalFileCacheError> {
     let open = async {
         localcache::AsyncCacheEngine::<Vec<f32>>::open(rejection.options(database))
@@ -164,11 +164,7 @@ fn async_engine_open(database: &Path, rejection: Rejection) -> Result<(), LocalF
             .unwrap()
             .block_on(open)
     }
-    #[cfg(all(not(feature = "async"), feature = "async-std"))]
-    {
-        async_std::task::block_on(open)
-    }
-    #[cfg(all(not(feature = "async"), not(feature = "async-std"), feature = "smol"))]
+    #[cfg(all(not(feature = "async"), feature = "smol"))]
     {
         smol::block_on(open)
     }
@@ -185,7 +181,7 @@ fn cases() -> Vec<(String, EntryPoint, Rejection)> {
         ),
         ("ReadPool::open", read_pool_open),
         ("SyncCacheEngine::open", sync_engine_open),
-        #[cfg(any(feature = "async", feature = "async-std", feature = "smol"))]
+        #[cfg(any(feature = "async", feature = "smol"))]
         ("AsyncCacheEngine::open", async_engine_open),
     ];
     let mut cases = Vec::new();

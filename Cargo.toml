@@ -47,11 +47,7 @@ tracing                 = "0.1"
 notify                  = "8"
 notify-debouncer-mini   = "0.7"
 metrics                 = "0.24"
-# opentelemetry bridge (RFC 003)
-opentelemetry           = { version = "0.32", default-features = false, features = ["trace"] }
-tracing-opentelemetry   = { version = "0.33", default-features = false }
-# alternative async runtimes (RFC 005)
-async-std               = { version = "1.13", features = ["attributes"] }
+# alternative async runtime (RFC 005)
 smol                    = "2"
 # cli
 clap                    = { version = "4",    features = ["derive"] }

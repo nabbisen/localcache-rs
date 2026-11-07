@@ -2,7 +2,7 @@
 
 ## `AsyncCacheEngine<T>`
 
-Available with the `async` (Tokio), `async-std`, or `smol` Cargo features.
+Available with the `async` (Tokio) or `smol` Cargo features.
 Every blocking operation runs on a `spawn_blocking`-equivalent from the
 active runtime, ensuring the async executor thread is never blocked by
 SQLite I/O.  The default and most-documented backend is Tokio — see
@@ -177,28 +177,26 @@ has unless you choose one with `journal_mode(JournalMode::Wal)` or `Delete` (see
 
 ## Alternative async runtimes
 
-`AsyncCacheEngine` is no longer tied to Tokio.  Enable one of the
-alternative runtime features instead:
-
-> **`async-std` is removed in v0.26.0** (announced in v0.25.1): use `async` (Tokio) or `smol`.
-> The public API of `AsyncCacheEngine` is the same on each.
+`AsyncCacheEngine` is not tied to Tokio.  Enable the alternative runtime
+feature instead:
 
 ```toml
-# async-std backend (removed in v0.26.0)
-localcache = { version = "0.25.1", features = ["async-std"] }
-
 # smol backend
 localcache = { version = "0.25.1", features = ["smol"] }
 ```
 
 The public API of `AsyncCacheEngine` is identical regardless of which
-runtime is active.  When multiple runtime features are enabled, the
-active backend is selected by priority: **Tokio (`async`) > async-std > smol**.
+runtime is active.  When both runtime features are enabled, the
+active backend is selected by priority: **Tokio (`async`) > smol**.
+(The `async-std` feature of earlier versions was removed in v0.26.0.)
 
 ```rust
-// async-std example
-#[async_std::main]
-async fn main() -> Result<(), localcache::LocalFileCacheError> {
+// smol example
+fn main() -> Result<(), localcache::LocalFileCacheError> {
+    smol::block_on(run())
+}
+
+async fn run() -> Result<(), localcache::LocalFileCacheError> {
     let engine = AsyncCacheEngine::<Vec<f32>>::open(CacheOptions {
         database_path: "cache.sqlite3".into(),
         ..CacheOptions::default()
@@ -215,7 +213,6 @@ async fn main() -> Result<(), localcache::LocalFileCacheError> {
 |---|---|
 | Single-threaded / simple scripts | `CacheEngine<T>` |
 | Async (Tokio) | `AsyncCacheEngine<T>` with `async` feature |
-| Async (async-std) | `AsyncCacheEngine<T>` with `async-std` feature (removed in v0.26.0) |
 | Async (smol) | `AsyncCacheEngine<T>` with `smol` feature |
 | Sync multi-threaded — mixed reads and writes | `SyncCacheEngine<T>` |
 | Sync multi-threaded — read-heavy, separate writer | `ReadPool<T>` (N concurrent connections) |

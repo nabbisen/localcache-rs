@@ -263,7 +263,7 @@ the cheapest structural improvement available.
   filesystem events, not one-shot timing — a fundamentally different harness shape
   from everything else on this page.
 - **Async-runtime backends under concurrent load.** `ReadPool` under 8 threads was
-  measured (aggregate ~2.6 µs/call at 1M); tokio, async-std, and smol under
+  measured (aggregate ~2.6 µs/call at 1M); tokio and smol under
   concurrent access were not.
 
 Two more operations have been measured, as single-run figures — treat them as

@@ -45,13 +45,13 @@ engine.set("document.txt", &embedding)?;
 | Works offline, no services | ✅ single SQLite file |
 | Thread-safe sharing | ✅ `SyncCacheEngine<T>` |
 | Concurrent read-heavy workloads | ✅ `ReadPool<T>` (N read-only connections) |
-| Async runtimes (Tokio / async-std / smol) | ✅ `AsyncCacheEngine<T>` (`async-std` is removed in v0.26.0) |
+| Async runtimes (Tokio / smol) | ✅ `AsyncCacheEngine<T>` |
 | React to file changes | ✅ `CacheWatcher<T>` (OS events, per-file or per-directory) |
 | Bulk-cache a directory | ✅ `engine.preload(dir, opts, ...)` |
 | Encrypt payloads at rest | ✅ AES-256-GCM |
 | Compress payloads | ✅ zstd |
 | Query by path or payload content | ✅ `QueryBuilder` — path, glob, directory scope, payload predicates |
-| Distributed tracing | ✅ `opentelemetry` feature (bridges `tracing` spans to OTel; removed in v0.26.0, the `tracing` feature stays) |
+| Distributed tracing | ✅ `tracing` feature (export to OpenTelemetry with your own `tracing-opentelemetry` layer: cookbook Recipe 9) |
 | Production observability | ✅ `tracing` + `metrics` features |
 | Read-only shared-cache mode | ✅ `shared_cache()` builder option |
 | Wire-format stability guarantee | ✅ `Bincode` codec layout documented and test-enforced |

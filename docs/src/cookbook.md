@@ -244,16 +244,12 @@ let engine = CacheEngine::<Vec<f32>>::builder()
 
 ## Recipe 9 — Distributed tracing with OpenTelemetry
 
-> **The `opentelemetry` feature is removed in v0.26.0** (announced in v0.25.1). This recipe
-> works with `features = ["tracing"]` instead: `tracing-opentelemetry` is already a
-> dependency of your own program below.
-
-Enable the `opentelemetry` feature to export `localcache` spans to any
-OTel-compatible backend:
+Enable the `tracing` feature and install a `tracing-opentelemetry` layer in your own
+program to export `localcache` spans to any OTel-compatible backend:
 
 ```toml
 [dependencies]
-localcache          = { version = "0.25.1", features = ["opentelemetry"] }
+localcache          = { version = "0.25.1", features = ["tracing"] }
 opentelemetry       = { version = "0.32", features = ["trace"] }
 tracing-opentelemetry = "0.33"
 tracing-subscriber  = { version = "0.3", features = ["registry"] }
@@ -286,9 +282,8 @@ fn init_tracing() {
 //   localcache::set  { path = "…", namespace = "embeddings" }
 ```
 
-`localcache` never calls OTel APIs directly; it only emits `tracing` spans.
-The `opentelemetry` feature simply ensures compatible dependency versions
-are in scope.
+`localcache` never calls OTel APIs directly; it only emits `tracing` spans. The OpenTelemetry
+crates and their versions are your program's own choice.
 
 ## Recipe 10 — Read-only shared-cache for worker fleets
 
