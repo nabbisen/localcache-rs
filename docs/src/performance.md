@@ -35,6 +35,9 @@ not scale.
 - **A JSON field query sorted by `SortKey::Field` is the most expensive query shape** —
   roughly 2.1 seconds per million entries, even with a small `limit`, because
   every candidate's field must still be extracted.
+- **For payloads of 1 MiB and up, your release profile matters.** `codegen-units = 1` halves a large
+  `Vec<u8>` `get` and does nothing measurable for an embedding — see "Large payloads and your release
+  profile".
 - **`cleanup_missing_files` and `cleanup_expired` scale linearly** and are now fast
   enough at 1M to no longer dominate a maintenance pass — see below.
 
@@ -194,6 +197,57 @@ the namespace, in pages of 1,000 rows or 8 MiB. At 1,000,000 entries of 64 bytes
 at 4 KiB entries); the write-ahead log still grows by about the size of the namespace's payloads. Its
 pages are read by `(namespace, path)`, which SQLite serves from the unique index in order; paging by
 row id instead scans the whole namespace for every page, and was about 300 times slower for pages of 100 rows in the same test.
+
+## Large payloads and your release profile (v0.25.1)
+
+This section is about payloads of about 1 MiB and up, such as a large `Vec<u8>` blob or a `Vec<f32>` of
+a quarter of a million elements. It does not apply to an embedding of 768 to 4,096 `f32` (3 to 16 KiB), or to a
+small struct; those are discussed at the end.
+
+**Reading.** Decoding is the cost of a large `get`: **80 to 93%** of a 1 MiB `Vec<u8>` `get`, which takes
+about 650 µs with the profile Cargo gives a dependency by default (16 code-generation units, no LTO). The rest is
+SQLite reading the blob (about 90 µs) and one copy (about 20 µs). How fast the decoder's element loop runs
+depends on how your compiler splits the program into code-generation units, so **your release profile
+matters**. Paired runs on one host, a downstream crate built with the profile named in the first row, against
+the default (a value below 1 is faster):
+
+| `get` of | `codegen-units = 1` | `lto = "fat"` | `lto = "thin"` |
+|---|---|---|---|
+| `Vec<u8>`, 1 to 4 MiB | **0.50×** (654 → 324 µs at 1 MiB) | 0.88 to 0.90× | no gain (1.0 to 1.3× of the default) |
+| `Vec<f32>`, 1 to 4 MiB | **0.80×** | 0.73 to 0.74× | no gain (1.0 to 1.3× of the default) |
+| `Vec<f32>`, 768 to 4,096 elements | 0.94 to 0.97× (not worth a change) | 0.91 to 0.97× | no gain |
+| a `String` of 1 MiB, a small struct | 1.0× | 1.0× | 1.0× |
+
+```toml
+# in the downstream application's Cargo.toml: only if you read blobs of 1 MiB and up
+[profile.release]
+codegen-units = 1
+```
+
+`codegen-units = 1` costs build time (each crate is compiled as one unit, with less parallelism); the
+build time was not measured here. `lto = "fat"` costs more. **Do not change a profile for small payloads**: for
+768 to 4,096 `f32` the difference is a few percent, inside the spread of the runs.
+
+**Writing (v0.25.1).** Before v0.25.1 a `set` of a large `Vec<u8>` took a time that depended on where the
+input buffer sat in memory: the same 1 MiB took 1.1, 1.4 or 1.6 ms in different processes (the input and the
+output buffer were at addresses that differ by a multiple of 4 KiB, which the CPU's memory-ordering check mistakes for an overlap).
+The cause was that the encoder's primitive writers were called as functions, once per element, instead of
+compiled into the caller; they are now `#[inline]`. A 1 MiB `Vec<u8>` `set` takes **about 0.36 to 0.5 ms**
+(0.24 to 0.28× of the former median at the default profile, 0.41× with `codegen-units = 1`), and a `Vec<f32>` of 1 MiB
+0.5 to 0.7× of its former time; a 4,096-float `set` is about 10% faster, a 768-float or small-struct `set` is unchanged
+(0.97 to 1.02×, inside the spread of the runs). The bytes written are identical.
+
+**Embeddings (768 to 4,096 `f32`).** A `get` takes 7 to 10 µs on a quiet host, and decoding the vector is **6 to
+22% of it** (0.4 to 2.2 µs). The rest is fixed per call; in a sampling profile of a 4,096-float `get` (a few
+hundred samples, so roughly) resolving the path took about a fifth, SQLite's file locks about an eighth, and the write
+that records the use about a sixth. A profile change cannot
+reach those, which is why it does nothing here.
+
+**Limits.** These are bounds from one host (AMD Ryzen 9 9950X, Linux, `rustc` 1.99.1, the database on a local
+filesystem), not promises. The split of *your* crate into code-generation units moves these results by itself: one
+`Vec<f32>` 1 MiB `get` measured 185 µs and 263 µs (a 42% difference) in two builds of the same source that differed
+only in unrelated code of the benchmark program.
+Measure with your own payloads and your own profile before relying on a figure here.
 
 ## Namespaces are the main scaling lever
 
