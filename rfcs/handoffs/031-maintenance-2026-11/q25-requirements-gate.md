@@ -51,3 +51,14 @@ One review request (step 0 may be reported first as its own request, so the arch
 ## 7. Not yours
 
 The Dependabot settings, any change to workflow permissions, the date, tags and publication, `ROADMAP.md`, `docs/src/roadmap.md`, any removal of a feature (v0.26.0 is separate).
+
+## 8. Answers to step 0 (request 081, review 103)
+
+1. **Item 1.** The book may say what request 081 § 1 supports and no more: the advisory sources we use list vulnerabilities by crate; a vulnerability in the C source that a `-sys` crate bundles reaches them only when someone maps it to the crate; for CVE-2026-119375 nobody had, as of 2026-11-07, in RustSec, OSV or GitHub's reviewed database (Dependabot alerts read GitHub's reviewed database, so on this evidence they would have had nothing to say either). Nothing about how often that happens, nothing about what Dependabot will do later.
+2. **Item 3.** (b), a script. `cargo-outdated` answered "all up to date" on a tree with six stale requirements: not a gate.
+3. **The rows.** The gate is first required by the release after v0.25.1 (your assumption is right: v0.25.1 is prepared without it). When it lands, the tree still has the six stale requirements, so `requirements-held.toml` starts with six rows, `latest` as in request 081 § 2, and each later release deletes the rows it ends:
+   * `rusqlite ^0.40.2`, `sha2 ^0.10`, `criterion ^0.7`: `ends` = an MSRV raise authorized under RFC 023 R3.1 (point at the known issue in the Security Model); **name no version or date** (a security raise is announced in the release that makes it).
+   * `aes-gcm ^0.10.3`: held because `aes-gcm 0.11` needs a dependency (`ctutils`) that needs Rust 1.87 or newer and carries RUSTSEC-2026-0385 below it; `ends` = the MSRV is at least 1.87, and it is then adopted in its own patch release.
+   * `opentelemetry ^0.32`, `tracing-opentelemetry ^0.33`: `ends` = the removal of the `opentelemetry` feature, announced for v0.26.0.
+   A row for a dependency that has left the tree fails the gate as a row for a satisfied one does: the release that removes a dependency deletes its row.
+4. **Housekeeping.** You may delete, exact paths only: `.git-exclude/tmp/q26/target-*`, `q26/miri-target`, `q26/fuzz-target`, `q26/clean`, `q26/old`; `.git-exclude/tmp/q27/target-outdated`, `q27/outdated-root`; and `cargo uninstall cargo-outdated` (you installed it for the test). Keep logs, scripts and the prototype.
