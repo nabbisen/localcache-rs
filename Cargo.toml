@@ -36,7 +36,7 @@ rusqlite                = { version = "0.40.2", features = ["bundled", "limits"]
 serde                   = { version = "1",    features = ["derive"] }
 blake3                  = "1"
 thiserror               = "2"
-base64                  = "0.22"
+base64                  = "0.23"
 # optional features
 tokio                   = { version = "1.23",  features = ["rt"] }   # < 1.23.0 affected by RUSTSEC-2023-0001
 zstd                    = { version = "0.14", default-features = false }
