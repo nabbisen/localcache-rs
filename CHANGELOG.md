@@ -7,9 +7,9 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [0.25.1] — Unreleased
+## [0.25.1] — 2026-11-07
 
-*Date set at owner authorization.*
+Authorized by the project owner on 2026-11-07. The source is that of release candidate `f1a0cbe`; after it only a handoff document under `rfcs/` changed, and the release commit changes only this date.
 
 **A patch. There is nothing to do when you upgrade. Two features, `opentelemetry` and `async-std`, will be removed in the next minor release (v0.26.0).** No public API, behaviour, stored byte, feature name or MSRV (1.85) differs from 0.25.0, except what is listed below: one third-party error text (see *Dependencies*).
 
