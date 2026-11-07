@@ -1769,6 +1769,8 @@ Accepted on the evidence of reviews 099 to 102 (requests 075 to 079):
 
 7. **v0.26.0 authorized by the owner 2026-11-07**, with a RustSec advisory mapping CVE-2026-119375 to `libsqlite3-sys` to be **drafted by the dev team and submitted by the owner** (`rfcs/handoffs/031-maintenance-2026-11/q27-rustsec-advisory-draft.md`); no advisory for `localcache` itself.
 
+8. **v0.26.1 is handed off** (`rfcs/handoffs/031-maintenance-2026-11/q28-v0.26.1-aes-gcm-0.11.md`, 2026-11-07): `aes-gcm 0.11`, a patch, with the proof that the stored format is unchanged both ways; the date is authorized separately after the release candidate.
+
 Closed at the same date: RFC 030's decision point 2 (the storage crate): **no**, storage stays a module (see the RFC). **1.0:** not planned; it requires the owner's explicit confirmation.
 
 ### v0.25.0 — released 2026-11-07
