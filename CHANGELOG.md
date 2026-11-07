@@ -7,6 +7,28 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.26.1] — Unreleased
+
+*Date set at owner authorization.*
+
+**A patch. There is nothing to do when you upgrade.** The cipher library behind the `encryption` feature moved from `aes-gcm` 0.10 to its 0.11 line. No public API, feature name, error text, stored byte or MSRV (1.89) differs from 0.26.0; entries sealed by 0.26.0 are opened by 0.26.1 and the reverse. One corner is different and listed below.
+
+### Dependencies
+
+- **`aes-gcm` 0.10.3 → 0.11.1**, with what it brings (`aes` 0.9, `cipher` 0.5, `ghash` 0.6, `polyval` 0.7, `ctr` 0.10, `universal-hash` 0.6, `crypto-common` 0.2, `rand_core` 0.10, `ctutils` 0.4.8; `subtle`, `generic-array`, `opaque-debug`, the old `getrandom` 0.2 and others leave the graph). The sealing code changed by fourteen lines. **Proof that nothing stored changes:** the AES-256-GCM output is byte-identical between the two libraries on four published test vectors and on 2,120 random (key, nonce, associated data, plaintext) tuples from 0 bytes to 1 MiB; 0.26.0 and 0.26.1 open each other's sealed entries under all four bound tags, after a key rotation and through a keyed import; and a flipped bit in the nonce, the ciphertext or the tag, a changed path and a wrong key are refused with the same error and the same text by both (5,312 checks, 0 failures).
+- **The one difference:** if the operating system's random number generator fails while an entry is being sealed, `set` now returns `EncryptionError("nonce generation failed: …")`; 0.26.0 panicked. No other behaviour differs.
+- The constant-time helper `ctutils` that `aes-gcm 0.11` depends on resolves to 0.4.8, past RUSTSEC-2026-0385 (fixed in 0.4.4); it needs Rust 1.87, which the MSRV (1.89) meets.
+
+### Performance
+
+- Measured on one host with paired runs, keyed entries: a 1 MiB `set` took about 0.69× and a `get` about 0.87× the time of 0.26.0; a 64-byte `set` and `get` did not change (1.00×). These are bounds from one machine, not promises.
+
+### Internal
+
+- `requirements-held.toml` is empty: nothing is held back any more, and the book's table says so.
+
+---
+
 ## [0.26.0] — 2026-11-07
 
 Authorized by the project owner on 2026-11-07. The source is that of release candidate `b499ce5`; the release commit changes only this date.
@@ -1929,7 +1951,8 @@ Namespaces, batch ops, TTL, PRAGMAs, schema migration.
 ## [0.1.0] — 2026-05-03
 Initial release.
 
-[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/0.26.0...HEAD
+[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/0.26.1...HEAD
+[0.26.1]: https://github.com/nabbisen/localcache-rs/compare/0.26.0...0.26.1
 [0.26.0]: https://github.com/nabbisen/localcache-rs/compare/0.25.1...0.26.0
 [0.25.1]: https://github.com/nabbisen/localcache-rs/compare/0.25.0...0.25.1
 [0.25.0]: https://github.com/nabbisen/localcache-rs/compare/0.24.0...0.25.0
