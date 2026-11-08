@@ -4,10 +4,14 @@
 //! engine. It is not `Copy` and not `Clone`, erases its bytes when it is
 //! dropped, prints `[redacted]`, and hands its bytes out by reference only.
 //!
-//! What this is **not**: a promise that the key cannot leak. It does not erase
-//! the caller's own copy of the key, a register, the stack frames of other
-//! code, the cipher library's per-call key schedule, or the swap file. It is
-//! "the crate does not keep its own copies of the key after they are dropped".
+//! What this is **not**: a promise that the key cannot leak. The cipher object
+//! that holds the key schedule is overwritten when it is dropped (the `zeroize`
+//! feature of `aes-gcm`; best effort, as Rust does not promise that no other
+//! copy was made). The crate does not control the caller's own copy of the key,
+//! the 32-byte array the key was copied from, copies the compiler or the CPU
+//! may have made (a register, a stack temporary), the stack frames of other
+//! code, or the swap file. It is "the crate does not keep its own copies of the
+//! key after they are dropped".
 
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
