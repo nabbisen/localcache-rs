@@ -182,7 +182,7 @@ feature instead:
 
 ```toml
 # smol backend
-localcache = { version = "0.26.1", features = ["smol"] }
+localcache = { version = "0.26.2", features = ["smol"] }
 ```
 
 The public API of `AsyncCacheEngine` is identical regardless of which

@@ -7,7 +7,9 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [Unreleased]
+## [0.26.2] — Unreleased
+
+*Date set at owner authorization.*
 
 **A patch. There is nothing to do when you upgrade.**
 
@@ -1965,7 +1967,8 @@ Namespaces, batch ops, TTL, PRAGMAs, schema migration.
 ## [0.1.0] — 2026-05-03
 Initial release.
 
-[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/0.26.1...HEAD
+[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/0.26.2...HEAD
+[0.26.2]: https://github.com/nabbisen/localcache-rs/compare/0.26.1...0.26.2
 [0.26.1]: https://github.com/nabbisen/localcache-rs/compare/0.26.0...0.26.1
 [0.26.0]: https://github.com/nabbisen/localcache-rs/compare/0.25.1...0.26.0
 [0.25.1]: https://github.com/nabbisen/localcache-rs/compare/0.25.0...0.25.1
