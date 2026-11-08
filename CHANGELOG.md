@@ -7,9 +7,9 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [0.26.2] — Unreleased
+## [0.26.2] — 2026-11-08
 
-*Date set at owner authorization.*
+Authorized by the project owner on 2026-11-08. The source is that of release candidate `c13bcd8`; the release commit changes only this date.
 
 **A patch. There is nothing to do when you upgrade.**
 
