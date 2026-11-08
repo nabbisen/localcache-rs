@@ -7,9 +7,9 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [0.26.1] — Unreleased
+## [0.26.1] — 2026-11-08
 
-*Date set at owner authorization.*
+Authorized by the project owner on 2026-11-08. The source is that of release candidate `d404c71`; the release commit changes only this date.
 
 **A patch. There is nothing to do when you upgrade.** The cipher library behind the `encryption` feature moved from `aes-gcm` 0.10 to its 0.11 line. No public API, feature name, error text, stored byte or MSRV (1.89) differs from 0.26.0; entries sealed by 0.26.0 are opened by 0.26.1 and the reverse. One corner is different and listed below.
 
