@@ -41,7 +41,7 @@ base64                  = "0.23"
 tokio                   = { version = "1.23",  features = ["rt"] }   # < 1.23.0 affected by RUSTSEC-2023-0001
 zstd                    = { version = "0.14", default-features = false }
 serde_json              = "1"
-aes-gcm                 = "0.11.1"    # the version the port was made and proved against; 0.10.x < 0.10.3 was affected by RUSTSEC-2023-0096
+aes-gcm                 = { version = "0.11.1", features = ["zeroize"] }  # `zeroize`: the cipher erases its key schedule when dropped (Q30). 0.11.1 is the version the port was proved against; 0.10.x < 0.10.3 was affected by RUSTSEC-2023-0096
 zeroize                 = "1"         # RFC 029 R5: erases the copies of the key the crate holds
 tracing                 = "0.1"
 notify                  = "8"
