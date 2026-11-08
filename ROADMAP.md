@@ -1724,6 +1724,21 @@ A fix release under the SemVer policy by the owner's decision on RFC 028: a stor
 v0.22.0 Known issue and a stack overflow found while fixing it), `bincode` and its advisory exception left the tree, and two inputs
 that v0.22.0 accepted are refused (a count above the remaining bytes, nesting beyond 128 levels). No known issue is open.
 
+### v0.26.1 — released 2026-11-08
+
+| | |
+|---|---|
+| Release candidate | `d404c71` (review 107: Go) |
+| Release commit | `e037bf4` (`docs: set the v0.26.1 release date`); changes `CHANGELOG.md` only |
+| Tag | `0.26.1`, GPG-signed and annotated (tag object `fd45191…`), on the release commit, pushed |
+| CI on the release commit | CI run 42429412578 and Docs run 42429412539 green |
+| `Release` workflow | dry run from the tag, run 42430129808: all jobs green; real run, run 42430286577: all six jobs green |
+| Published | `localcache-format 0.26.1` (checksum `cfbc34584971ec79814a70e878e7631f6bf0ce70e0d4eace1e239cdffc07d3ab`), `localcache 0.26.1` (`00e726a2aea329f04a2b125ea2cd90a697ac36eed300661a00b6e515fd0a9c26`) and `localcache-cli 0.26.1` (`303e1b739987620127b66ef5ab1bdc66e57ee4cd39bf3f6670dca7cca4ca6968`) on crates.io, 2026-11-08 00:35 UTC, none yanked, `rust-version` 1.89; the downloaded `.crate` files hash to the registry checksums, which equal the dry run's digests |
+| GitHub release | `0.26.1`, asset `localcache-v0.26.1.tar.gz` (1,063,029 bytes, SHA-256 `04ffe567a180cce52f01fbf3511b106e64208d2fd405e4a2bb3ca328e7af91c1`); `gh attestation verify` exits 0 (output empty here) |
+| Fresh consumer | `rust-version = "1.89"`, `localcache = "0.26.1"` with `encryption`, `compression`, `json`: `cargo +1.89.0 run --release` exits 0; `aes-gcm 0.11.1`, `ctutils 0.4.8`, `localcache-format 0.26.1` in the graph |
+
+A patch: the cipher library behind `encryption` moved from `aes-gcm` 0.10 to 0.11.1 (`ctutils` past RUSTSEC-2026-0385). Proof that nothing stored changes: byte-identical AES-256-GCM output on the specification's test vectors and on 2,120 random tuples, 4,428 checks through the published 0.26.0 format crate and 884 through the engine, 0 failures, rotation and keyed import both ways, 500 tampering cases refused with the same public error. The one difference: if the operating system's random-number generator fails while sealing, `set` returns `EncryptionError` where 0.26.0 panicked. A 1 MiB keyed `set` took about 0.69× and a `get` about 0.87× the time of 0.26.0 on the measured host. `requirements-held.toml` is empty.
+
 ### v0.26.0 — released 2026-11-07
 
 | | |
@@ -1770,6 +1785,8 @@ Accepted on the evidence of reviews 099 to 102 (requests 075 to 079):
 7. **v0.26.0 authorized by the owner 2026-11-07**, with a RustSec advisory mapping CVE-2026-119375 to `libsqlite3-sys` to be **drafted by the dev team and submitted by the owner** (`rfcs/handoffs/031-maintenance-2026-11/q27-rustsec-advisory-draft.md`); no advisory for `localcache` itself.
 
 8. **v0.26.1 is handed off** (`rfcs/handoffs/031-maintenance-2026-11/q28-v0.26.1-aes-gcm-0.11.md`, 2026-11-07): `aes-gcm 0.11`, a patch, with the proof that the stored format is unchanged both ways; the date is authorized separately after the release candidate.
+
+9. **Decisions of 2026-11-08 (after v0.26.0, v0.26.1 authorized and released).** (a) The RustSec advisory for `libsqlite3-sys` waits for an **upstream issue on `rusqlite/rusqlite`** (RustSec asks that upstream be told first), opened by the owner after the dev team drafts it; the architect checked that no issue, discussion, pull request or advisory about CVE-2026-119375 exists there (`q27-rustsec-advisory-draft.md` § 5). (b) **`aes-gcm`'s `zeroize` feature** is authorized after the architect's review of the crate sources (`q30-cipher-key-schedule-erased.md`): erasure of the cipher's key schedule on drop, stated as best effort, with a test that fails without the feature. (c) **Found while checking the `rusqlite` tracker:** issue #1931 reports that SQLite 3.54.1 may re-prepare cached statements on every use; `localcache` bundles 3.54.1 since v0.26.0 and uses `prepare_cached` at 15 sites. It is **measured first** (`q29-sqlite-3.54.1-reprepare.md`), no change before the numbers. v0.26.2 will contain what Q29 and Q30 decide.
 
 Closed at the same date: RFC 030's decision point 2 (the storage crate): **no**, storage stays a module (see the RFC). **1.0:** not planned; it requires the owner's explicit confirmation.
 
