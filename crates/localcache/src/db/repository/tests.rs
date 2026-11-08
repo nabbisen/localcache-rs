@@ -486,3 +486,73 @@ fn the_rotation_page_is_a_range_on_the_unique_autoindex_with_no_sort() {
     assert!(!plan.contains("TEMP B-TREE"), "{plan}");
     assert!(!plan.contains("SCAN"), "{plan}");
 }
+
+/// reprepare-workaround (Q31): the six cached statements that compare `namespace` are not compiled
+/// again on every use.
+///
+/// SQLite 3.54.0 and 3.54.1 expire a cached statement whenever `sqlite3_clear_bindings` runs after
+/// the planner read a bare parameter, and `rusqlite`'s statement cache clears the bindings of every
+/// statement it takes back. The statements below are written `namespace = CAST(?N AS TEXT)`, which
+/// is not a bare parameter, so each is compiled once. Without the cast, on 3.54.1, each of them is
+/// compiled again on about every use (about 300 of 300 here); this test then fails, and that is the
+/// negative control. On SQLite 3.53.2 and earlier it passes with or without the cast (the count is
+/// 0 either way), so it guards the workaround, not a property of the old library; it also fails the
+/// day a SQLite release starts to see through the cast.
+///
+/// The statements are named through the constants the code itself uses, not a copy of the SQL.
+/// Not covered, on purpose: the four statements with `LIMIT ?`, which every SQLite 3.x since the
+/// feature was added compiles again on each use.
+#[test]
+fn the_namespace_statements_are_not_recompiled_on_every_use() {
+    use super::{
+        COUNT_BY_VERSION_SQL, ENCODING_BREAKDOWN_SQL, LIST_ENTRIES_SQL, LOAD_ALL_FULL_SQL,
+        UPSERT_SQL, count_by_version, encoding_breakdown, list_entries, load_all_full,
+    };
+    use rusqlite::StatementStatus;
+
+    /// More than this many recompilations of one statement is a failure. The expected number is 0;
+    /// the margin is for a schema change SQLite may legitimately notice once.
+    const BOUND: i32 = 2;
+    const ROUNDS: usize = 300;
+
+    let mut conn = conn_with(&[]);
+    for round in 0..ROUNDS {
+        // A write (UPSERT_SQL), a new row and an overwrite alike, in three namespaces.
+        let namespace = ["ns", "other", "1"][round % 3];
+        let path = format!("/d/{}", round % 20);
+        let tx = conn.transaction().unwrap();
+        let id = upsert_in_tx(&tx, namespace, &path, &metadata(), b"x", "raw", 1).unwrap();
+        tx.commit().unwrap();
+        // A read hit or a `touch` (RECORD_USE_SQL).
+        record_use(&conn, namespace, id).unwrap();
+        // The listings, one of each per round.
+        assert!(!list_entries(&conn, namespace).unwrap().is_empty());
+        assert!(!load_all_full(&conn, namespace).unwrap().is_empty());
+        assert!(!encoding_breakdown(&conn, namespace).unwrap().is_empty());
+        assert!(!count_by_version(&conn, namespace).unwrap().is_empty());
+    }
+
+    let statements = [
+        ("UPSERT_SQL", UPSERT_SQL),
+        ("RECORD_USE_SQL", RECORD_USE_SQL),
+        ("LIST_ENTRIES_SQL", LIST_ENTRIES_SQL),
+        ("LOAD_ALL_FULL_SQL", LOAD_ALL_FULL_SQL),
+        ("ENCODING_BREAKDOWN_SQL", ENCODING_BREAKDOWN_SQL),
+        ("COUNT_BY_VERSION_SQL", COUNT_BY_VERSION_SQL),
+    ];
+    let mut too_many = Vec::new();
+    for (name, sql) in statements {
+        // The cache hands back the statement the code used, with its counters.
+        let statement = conn.prepare_cached(sql).unwrap();
+        let recompiled = statement.get_status(StatementStatus::RePrepare);
+        if recompiled > BOUND {
+            too_many.push(format!("{name}: {recompiled} of about {ROUNDS} uses"));
+        }
+    }
+    assert!(
+        too_many.is_empty(),
+        "cached statements recompiled on use (is `namespace = CAST(?N AS TEXT)` missing, or does \
+         this SQLite see through it? `git grep reprepare-workaround`):\n{}",
+        too_many.join("\n")
+    );
+}

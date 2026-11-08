@@ -127,6 +127,22 @@ pub(crate) fn load_payload(
     Ok(row)
 }
 
+// reprepare-workaround (Q31). SQLite 3.54.0 and 3.54.1 mark a statement for
+// re-preparation when the planner reads the value of a bare bound parameter
+// (here `namespace = ?N`, the leading column of `idx_files_use`, in a statement
+// that also orders, groups or takes MAX over the next column), and
+// `sqlite3_clear_bindings`, which rusqlite's statement cache calls whenever a
+// statement returns, then expires it: every use compiles the statement again
+// (set and get-with-use-recording cost about 1.9x and 1.6x; rusqlite #1931,
+// SQLite check-in 535a77cf5a). `CAST(?N AS TEXT)` is the identity on the text
+// we always bind, keeps the parameter bound, leaves the query plan unchanged,
+// and is not a bare parameter, so the planner does not look at it.
+// This ends with the first SQLite release that contains the fix, bundled by a
+// `libsqlite3-sys` we depend on (`gate-requirements` fails the release on the
+// day SQLite publishes one); then remove every `CAST(?N AS TEXT)` of the
+// statements marked `reprepare-workaround` (`git grep reprepare-workaround`).
+// `tests::the_namespace_statements_are_not_recompiled_on_every_use` guards it.
+
 // The use order (RFC 026 R1). A use of an entry of a namespace assigns it
 //
 //     max(now_us, (SELECT COALESCE(MAX(last_used_us), 0) + 1 FROM files WHERE namespace = ?))
@@ -139,15 +155,16 @@ pub(crate) fn load_payload(
 // stay equal.
 
 /// A read hit or a `touch`: `?1` the clock, `?2` the namespace, `?3` the id.
-const RECORD_USE_SQL: &str = "UPDATE files SET last_used_us = max(?1, (SELECT COALESCE(MAX(last_used_us), 0) + 1 FROM files WHERE namespace = ?2)) WHERE id = ?3";
+/// reprepare-workaround: see the note above.
+const RECORD_USE_SQL: &str = "UPDATE files SET last_used_us = max(?1, (SELECT COALESCE(MAX(last_used_us), 0) + 1 FROM files WHERE namespace = CAST(?2 AS TEXT))) WHERE id = ?3";
 
 /// A write: a new row and an overwrite alike take the next use value
 /// (`?8` is the clock; `excluded.last_used_us` carries the computed value into
-/// the overwrite branch).
+/// the overwrite branch). reprepare-workaround: see the note above.
 const UPSERT_SQL: &str = "INSERT INTO files
          (namespace, path, mtime, file_size, hash, updated_at, payload_version, last_used_us)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7,
-             max(?8, (SELECT COALESCE(MAX(last_used_us), 0) + 1 FROM files WHERE namespace = ?1)))
+             max(?8, (SELECT COALESCE(MAX(last_used_us), 0) + 1 FROM files WHERE namespace = CAST(?1 AS TEXT))))
      ON CONFLICT(namespace, path) DO UPDATE SET
          mtime            = excluded.mtime,
          file_size        = excluded.file_size,
@@ -477,19 +494,19 @@ pub(crate) fn count_in_namespace(
     Ok(n as usize)
 }
 
+/// The entries of a namespace per payload version. reprepare-workaround: see
+/// the note above `RECORD_USE_SQL`.
+const COUNT_BY_VERSION_SQL: &str = "SELECT payload_version, COUNT(*)
+     FROM files
+     WHERE namespace = CAST(?1 AS TEXT)
+     GROUP BY payload_version
+     ORDER BY payload_version ASC";
+
 pub(crate) fn count_by_version(
     conn: &Connection,
     namespace: &str,
 ) -> Result<Vec<(u32, usize)>, StorageError> {
-    let mut stmt = conn
-        .prepare_cached(
-            "SELECT payload_version, COUNT(*)
-         FROM files
-         WHERE namespace = ?1
-         GROUP BY payload_version
-         ORDER BY payload_version ASC",
-        )
-        .db()?;
+    let mut stmt = conn.prepare_cached(COUNT_BY_VERSION_SQL).db()?;
     let rows: Result<Vec<_>, _> = stmt
         .query_map(params![namespace], |r| {
             Ok((r.get::<_, i64>(0)? as u32, r.get::<_, i64>(1)? as usize))
@@ -499,23 +516,22 @@ pub(crate) fn count_by_version(
     rows.db()
 }
 
+/// reprepare-workaround: see the note above `RECORD_USE_SQL`.
+const LIST_ENTRIES_SQL: &str = "SELECT f.path, f.mtime, f.file_size, f.hash,
+        f.updated_at, f.payload_version, f.last_used_us / 1000000,
+        p.encoding
+     FROM files f
+     JOIN payloads p ON p.file_id = f.id
+     WHERE f.namespace = CAST(?1 AS TEXT)
+     ORDER BY f.updated_at DESC";
+
 /// Return lightweight metadata for all entries in `namespace`, joined with
 /// their encoding from `payloads`.  Does **not** load payload content.
 pub(crate) fn list_entries(
     conn: &Connection,
     namespace: &str,
 ) -> Result<Vec<EntryInfo>, StorageError> {
-    let mut stmt = conn
-        .prepare_cached(
-            "SELECT f.path, f.mtime, f.file_size, f.hash,
-                f.updated_at, f.payload_version, f.last_used_us / 1000000,
-                p.encoding
-         FROM files f
-         JOIN payloads p ON p.file_id = f.id
-         WHERE f.namespace = ?1
-         ORDER BY f.updated_at DESC",
-        )
-        .db()?;
+    let mut stmt = conn.prepare_cached(LIST_ENTRIES_SQL).db()?;
     let rows: Result<Vec<EntryInfo>, _> = stmt
         .query_map(params![namespace], |r| {
             Ok(EntryInfo {
@@ -600,20 +616,19 @@ pub(crate) fn aggregate_stats(
     Ok(row)
 }
 
+/// reprepare-workaround: see the note above `RECORD_USE_SQL`.
+const ENCODING_BREAKDOWN_SQL: &str = "SELECT p.encoding, COUNT(*)
+     FROM files f
+     JOIN payloads p ON p.file_id = f.id
+     WHERE f.namespace = CAST(?1 AS TEXT)
+     GROUP BY p.encoding
+     ORDER BY p.encoding ASC";
+
 pub(crate) fn encoding_breakdown(
     conn: &Connection,
     namespace: &str,
 ) -> Result<Vec<(String, usize)>, StorageError> {
-    let mut stmt = conn
-        .prepare_cached(
-            "SELECT p.encoding, COUNT(*)
-         FROM files f
-         JOIN payloads p ON p.file_id = f.id
-         WHERE f.namespace = ?1
-         GROUP BY p.encoding
-         ORDER BY p.encoding ASC",
-        )
-        .db()?;
+    let mut stmt = conn.prepare_cached(ENCODING_BREAKDOWN_SQL).db()?;
     let rows: Result<Vec<_>, _> = stmt
         .query_map(params![namespace], |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as usize))
@@ -716,22 +731,21 @@ pub(crate) struct FullRow {
     pub last_accessed_at: i64,
 }
 
+/// reprepare-workaround: see the note above `RECORD_USE_SQL`.
+const LOAD_ALL_FULL_SQL: &str = "SELECT f.path, p.content, p.encoding,
+        f.mtime, f.file_size, f.hash,
+        f.payload_version, f.updated_at, f.last_used_us / 1000000
+     FROM files f
+     JOIN payloads p ON p.file_id = f.id
+     WHERE f.namespace = CAST(?1 AS TEXT)
+     ORDER BY f.last_used_us ASC, f.id ASC";
+
 /// Load every entry in `namespace` including its payload bytes.
 pub(crate) fn load_all_full(
     conn: &Connection,
     namespace: &str,
 ) -> Result<Vec<FullRow>, StorageError> {
-    let mut stmt = conn
-        .prepare_cached(
-            "SELECT f.path, p.content, p.encoding,
-                f.mtime, f.file_size, f.hash,
-                f.payload_version, f.updated_at, f.last_used_us / 1000000
-         FROM files f
-         JOIN payloads p ON p.file_id = f.id
-         WHERE f.namespace = ?1
-         ORDER BY f.last_used_us ASC, f.id ASC",
-        )
-        .db()?;
+    let mut stmt = conn.prepare_cached(LOAD_ALL_FULL_SQL).db()?;
     let rows: Result<Vec<_>, _> = stmt
         .query_map(params![namespace], |r| {
             Ok(FullRow {
