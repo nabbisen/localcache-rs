@@ -1724,6 +1724,21 @@ A fix release under the SemVer policy by the owner's decision on RFC 028: a stor
 v0.22.0 Known issue and a stack overflow found while fixing it), `bincode` and its advisory exception left the tree, and two inputs
 that v0.22.0 accepted are refused (a count above the remaining bytes, nesting beyond 128 levels). No known issue is open.
 
+### v0.26.2 — released 2026-11-08
+
+| | |
+|---|---|
+| Release candidate | `c13bcd8` (review 112: Go) |
+| Release commit | `ac1280e` (`docs: set the v0.26.2 release date`); changes `CHANGELOG.md` only |
+| Tag | `0.26.2`, GPG-signed and annotated (tag object `da4803d…`), on the release commit, pushed |
+| CI on the release commit | CI run 42461696741 and Docs run 42461696678 green |
+| `Release` workflow | dry run from the tag, run 42462544107: all jobs green; real run, run 42462841734: all six jobs green |
+| Published | `localcache-format 0.26.2` (checksum `bb04fdf941d652ac0de779c9e7fa8e8475e93e0fed3f1e9a548e84f873f2811d`), `localcache 0.26.2` (`fd6df9f477f076c38eb281eef5e3e7d20b6baba95e572e8095562d64fa990604`) and `localcache-cli 0.26.2` (`ca21b94977e63b5dbe81cb49cf44f00ef7b47ecadd6e3059714b7c207fed851d`) on crates.io, 2026-11-08 08:28 UTC, none yanked, `rust-version` 1.89; the downloaded `.crate` files hash to the registry checksums, which equal the dry run's digests |
+| GitHub release | `0.26.2`, asset `localcache-v0.26.2.tar.gz` (1,078,863 bytes, SHA-256 `3126f2dea49da4f2dc830dfebb6b4266fd41e40834d761cf4b62e4b5ac93176a`); `gh attestation verify` exits 0 (output empty here) |
+| Fresh consumer | `rust-version = "1.89"`, `localcache = "0.26.2"` with `encryption`, `compression`, `json`: `cargo +1.89.0 run --release` exits 0; `aes-gcm 0.11.1`, `libsqlite3-sys 0.39.1`, `rusqlite 0.41.1`, `localcache-format 0.26.2` in the graph |
+
+A patch. **Fixed:** on the SQLite 3.54.1 that v0.26.0 and v0.26.1 bundle, six cached statements were recompiled on every use (a `set` or a read hit cost about 9 µs and 4 µs more per call; 1.6× to 1.9× and 1.4× to 1.6× on the measured hosts); `namespace = CAST(?N AS TEXT)` keeps them compiled, with identical plans and results, and a regression test guards it; the known issue is documented in `docs/src/performance.md`. **Hardening:** the cipher's round keys and GHASH key are overwritten when it is dropped (`aes-gcm`'s `zeroize` feature; best effort, with a test that fails without the feature). The upstream report of CVE-2026-119375 was posted by the owner's account on `rusqlite/rusqlite` as issue #1945 on 2026-11-08; the RustSec advisory for `libsqlite3-sys` (draft: `.git-exclude/tmp/q29/RUSTSEC-draft-libsqlite3-sys.md`) waits for the maintainers' response or two weeks (**2026-11-22**).
+
 ### v0.26.1 — released 2026-11-08
 
 | | |
@@ -1921,6 +1936,7 @@ Production ELOC, measured as below. Q2b verified both splits as pure moves at to
 | `aggregate_stats` loses its covering index when `idx_files_lru` goes (it read `updated_at` from it) and, with `ANALYZE`, three listing statements scan the table | RFC 026 step 0, § 4 | The crate never runs `ANALYZE`; `aggregate_stats` is dominated by the join on `payloads`. Accepted, noted in the book's plan section at Q13 |
 | The bundled SQLite stops at 3.53.2 while 3.53.3 (2026-06-26) and 3.53.4 (2026-07-24) exist (bug fixes for problems in 3.53.0–3.53.2) | Q1c review, 2026-10-30 | `rusqlite 0.40.2` bundles 3.53.2 and `libsqlite3-sys 0.38.2` is the latest 0.38.x; the next line (`libsqlite3-sys 0.39`, `rusqlite 0.41`) declares Rust 1.88/1.89, so the fixes are not reachable at MSRV 1.85 unless a 0.38.x bundles them. Nothing reported against 3.53.2 affects localcache. **Re-checked 2026-11-03 (review 081): still unreachable** (`rusqlite 0.41.x` needs Rust 1.89, `libsqlite3-sys 0.39.x` 1.88; MSRV 1.85); no necessity named (RFC 023 R3). Re-check at each release. |
 | `.git-exclude/tasks/architect/001-prepare.md` and `.git-exclude/tasks/dev-team/001-prepare.md` still name `.git-exclude/specs/handoff/`, which has been `.git-exclude/specs/old/handoff-v0.20.0/` since 2026-09-23 | review 001 (2026-09-23), dev-team startup review (2026-10-29) | Owner-owned files; not edited. Suggested replacement for the first list item: `.git-exclude/specs/old/README.md` (historical, not current guidance), then the live sources of truth `ROADMAP.md`, `rfcs/README.md`, `docs/src/` and `CHANGELOG.md`. |
+| **`reprepare-workaround`: remove `CAST(?N AS TEXT)` from six statements when SQLite releases the fix** | 2026-11-08, v0.26.2 (Q29, Q31; `rusqlite` #1931) | SQLite 3.54.0 and 3.54.1 expire a cached statement on `sqlite3_clear_bindings` when the planner marked a bare parameter; the six statements are marked by `git grep reprepare-workaround -- crates`, and a regression test (`the_namespace_statements_are_not_recompiled_on_every_use`) fails the day a SQLite release sees through the cast. **Ending condition:** the first SQLite release that contains the upstream fix (check-in `535a77cf5a`, trunk 2026-10-17), bundled by a `libsqlite3-sys` we depend on; `gate-requirements` fails the release the day SQLite publishes a release (the `SQLite (bundled)` comparison), which is the prompt to check and remove. The four `LIMIT ?` statements are re-prepared on 3.53.2 as well (older behavior, a different SQLite mark); not changed. |
 
 ## Future / Unscheduled
 
