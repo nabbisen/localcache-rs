@@ -267,7 +267,7 @@ host runs the rest of the operation; a `set` that evicts took **1.6× to 1.8×**
 unchanged. These are bounds from one host, one payload size and two entry counts (200 and 5,000), not promises; a
 larger payload makes the same fixed cost a smaller fraction of the operation.
 
-**Fixed** by the release that contains the rewrite: each of the six statements now writes the namespace as
+**Fixed in v0.26.2**: each of the six statements now writes the namespace as
 `CAST(?N AS TEXT)`, which is the same value (the namespace is always text), leaves every query plan and result
 unchanged, still binds the namespace as a parameter, and is not a bare parameter, so the planner does not
 read it. With it, the six statements are compiled once and the times return to those of SQLite 3.53.2

@@ -171,7 +171,7 @@ What it does **not** do:
   disk encryption for that.
 - The key lives in your process. From v0.23.1 the crate does not keep its own copies of the key
   after they are dropped: it holds the key in a type that erases itself on drop, and it erases
-  the `Vec<u8>` it takes from the options and from the builder. From the release after 0.26.1 the
+  the `Vec<u8>` it takes from the options and from the builder. From v0.26.2 the
   cipher object that seals or opens one entry is overwritten when it is dropped too: the round keys
   and the GHASH key that the cipher library derives from the key live in that object, and the
   library's `zeroize` feature, which the crate now enables, writes zeros over all of it. A test
