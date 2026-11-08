@@ -249,6 +249,35 @@ filesystem), not promises. The split of *your* crate into code-generation units 
 only in unrelated code of the benchmark program.
 Measure with your own payloads and your own profile before relying on a figure here.
 
+## Known issue: v0.26.0 and v0.26.1 recompile six statements on every use
+
+*Written 2026-11-08.* v0.26.0 and v0.26.1 bundle SQLite 3.54.1 (through `libsqlite3-sys`), and that
+release has a defect: when its planner reads the value of a bound parameter, it later marks the
+statement as out of date every time `rusqlite`'s statement cache clears the bindings, so the statement is
+compiled again on each use instead of once. Six of the fourteen statements `localcache` keeps cached
+are the ones that compare `namespace` in a query that also orders, groups or takes a maximum: the
+use-order update of every read hit and `touch`, the upsert of every `set`, `list_entries`, the
+full load behind an export, and the two statistics queries. Nothing is wrong with the results; the cost is time.
+
+On one host, in two sets of paired runs that alternated between builds (64-byte payloads, 200 entries), against the
+same code on SQLite 3.53.2 (a ratio above 1 is slower): the extra time was **about 9 µs per `set`** and **about 4 µs
+per `get` hit** that records its use, which is **1.6× to 1.9×** and **1.4× to 1.6×** the time, depending on how fast the
+host runs the rest of the operation; a `set` that evicts took **1.6× to 1.8×**, `cache_stats` **about 1.1×** and
+`list_entries` **1.05× to 1.1×**. `get` on the read-only path, `remove`, `path_glob` and the directory query were
+unchanged. These are bounds from one host, one payload size and two entry counts (200 and 5,000), not promises; a
+larger payload makes the same fixed cost a smaller fraction of the operation.
+
+**Fixed** by the release that contains the rewrite: each of the six statements now writes the namespace as
+`CAST(?N AS TEXT)`, which is the same value (the namespace is always text), leaves every query plan and result
+unchanged, still binds the namespace as a parameter, and is not a bare parameter, so the planner does not
+read it. With it, the six statements are compiled once and the times return to those of SQLite 3.53.2
+(0.93× to 1.01× in the same measurements). The cause is in SQLite, not in `localcache`; it is reported
+upstream as [`rusqlite` #1931](https://github.com/rusqlite/rusqlite/issues/1931), and the rewrite is a workaround that is
+removed when a SQLite release contains the fix (every site carries the word `reprepare-workaround`).
+
+Four other statements, the ones with a `LIMIT ?`, are compiled again on every use in these releases and in
+earlier ones too; that is older behaviour, a different cause, and it is unchanged.
+
 ## Namespaces are the main scaling lever
 
 Every operation whose plan narrows only by `namespace=?` scans the whole namespace (a
