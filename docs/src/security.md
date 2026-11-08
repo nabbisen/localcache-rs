@@ -171,11 +171,18 @@ What it does **not** do:
   disk encryption for that.
 - The key lives in your process. From v0.23.1 the crate does not keep its own copies of the key
   after they are dropped: it holds the key in a type that erases itself on drop, and it erases
-  the `Vec<u8>` it takes from the options and from the builder. That is all it claims. It cannot
-  erase your own copy of the key (the `Vec` you passed in, a clone of the options you keep),
-  other code's stack frames, the cipher library's per-call key schedule, or the swap file, so do
-  not assume the key is gone from the process. Before v0.23.1 the crate erased nothing. Losing
-  the key makes every encrypted entry permanently unreadable. There is no recovery.
+  the `Vec<u8>` it takes from the options and from the builder. From the release after 0.26.1 the
+  cipher object that seals or opens one entry is overwritten when it is dropped too: the round keys
+  and the GHASH key that the cipher library derives from the key live in that object, and the
+  library's `zeroize` feature, which the crate now enables, writes zeros over all of it. A test
+  checks that wiring and fails if the feature is removed. That is all it claims. Erasure on drop is
+  best effort: Rust does not promise that the compiler or the CPU left no other copy (a register, a
+  stack temporary, the 32-byte array the key was copied from), and nothing here proves a copy is
+  gone, so a copy can remain. The crate cannot erase your own copy of the key (the `Vec` you passed
+  in, a clone of the options you keep), other code's stack frames, those temporaries, or the swap
+  file, so do not assume the key is gone from the process. Before v0.23.1 the crate erased nothing,
+  and up to 0.26.1 the cipher's own round keys were not overwritten. Losing the key makes every
+  encrypted entry permanently unreadable. There is no recovery.
 - A missing key is an error (`MissingEncryptionKey`), never a silent read of ciphertext.
 - Fixed in v0.23.1: `CacheOptions` printed the encryption key with `{:?}`; it now prints
   `Some("[redacted]")`. In v0.23.0 and earlier it still does, so do not log the options of an

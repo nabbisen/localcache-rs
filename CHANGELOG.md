@@ -7,6 +7,16 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [Unreleased]
+
+**A patch. There is nothing to do when you upgrade.**
+
+### Security
+
+- **The cipher erases its key schedule when it is dropped.** The `zeroize` feature of `aes-gcm` is enabled, so the round keys and the GHASH key the cipher library derives from the key are overwritten when the cipher object is dropped; a test fails if the feature is removed. Erasure on drop is best effort and the key can still exist elsewhere in the process (the caller's own copy, a register, a stack temporary): `docs/src/security.md` says what is and is not covered. No API, stored byte, error text or MSRV changes, and no package enters the lockfile.
+
+---
+
 ## [0.26.1] — 2026-11-08
 
 Authorized by the project owner on 2026-11-08. The source is that of release candidate `d404c71`; the release commit changes only this date.

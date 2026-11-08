@@ -173,10 +173,12 @@ pub struct CacheOptions {
     /// `Some("[redacted]")`. When the options are consumed by an engine, a pool
     /// or the builder, the crate erases its copy of this `Vec` and keeps the
     /// key in a type that erases itself on drop; the crate does not keep its
-    /// own copies of the key after they are dropped. It cannot erase your own
+    /// own copies of the key after they are dropped, and the cipher object
+    /// that uses it is overwritten when it is dropped (best effort: Rust does
+    /// not promise that no other copy was made). It cannot erase your own
     /// copy of the key (including this field in an options value you clone or
-    /// keep), the cipher library's per-call key schedule, other code's stack
-    /// frames, or the swap file.
+    /// keep), copies the compiler or the CPU may have made (registers, stack
+    /// temporaries), other code's stack frames, or the swap file.
     #[cfg(feature = "encryption")]
     pub encryption_key: Option<Vec<u8>>,
 
