@@ -98,7 +98,8 @@ anything in it. The rest of this page is mostly about what that can and cannot d
 `rusqlite 0.40`). [CVE-2026-119375](https://nvd.nist.gov/vuln/detail/CVE-2026-119375) (published 2026-10-30, fixed in
 SQLite 3.54.0) lets a crafted database file, together with a sibling `-wal` file, make ordinary queries return
 uninitialized page-cache memory; its CVSS score is 6.8 (v4) and 5.5 (v3.1), with a local attack vector. Those
-versions are affected as described. **v0.26.0 bundles SQLite 3.54.1, which fixes it**, and raised the minimum supported
+versions are affected as described. RustSec lists the CVE for `libsqlite3-sys` as
+[RUSTSEC-2026-0459](https://rustsec.org/advisories/RUSTSEC-2026-0459.html) (since 2026-11-09). **v0.26.0 bundles SQLite 3.54.1, which fixes it**, and raised the minimum supported
 Rust version to 1.89 to do so ([RFC 023](https://github.com/nabbisen/localcache-rs/blob/main/rfcs/accepted/023-msrv-policy.md)
 R3.1: the fix exists only in a SQLite that needs the newer toolchain). The v0.25 line gets no backport, because the fix
 itself needs the raise.
@@ -205,8 +206,11 @@ What it does **not** do:
 - **Dependencies** are checked by `cargo deny` on every push and again at every release: advisories
   (vulnerabilities, unsound and unmaintained crates, yanked versions) and sources (crates.io
   only, no Git dependencies). That check reads the RustSec database: a vulnerability in the C source of the SQLite
-  that `libsqlite3-sys` bundles is reported only if RustSec lists it, and the known issue above is not
-  something it reports. A standing exception must carry its reason and the condition
+  that `libsqlite3-sys` bundles is reported only if RustSec maps it to the crate. The known issue above was
+  not mapped when v0.26.0 fixed it; RustSec listed it on 2026-11-09 as
+  [RUSTSEC-2026-0459](https://rustsec.org/advisories/RUSTSEC-2026-0459.html), and since then `cargo deny` reports it
+  for a lockfile that holds `libsqlite3-sys` below 0.39.0. That the mapping came after the fix is why the release gate
+  also compares the bundled SQLite with the latest release. A standing exception must carry its reason and the condition
   that ends it; there is none at present (see [MSRV & Dependency Security](./dependency_security.md)). The two that
   existed ended in v0.26.0 with the removal of the `async-std` feature (`RUSTSEC-2025-0052` for `async-std` and
   `RUSTSEC-2026-0441` for `pin-utils`, which only `async-std` depended on), and the `bincode` exception ended in

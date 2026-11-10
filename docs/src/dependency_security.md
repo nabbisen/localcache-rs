@@ -129,8 +129,8 @@ crate: `rusqlite::version()` printed `3.53.2`); v0.26.0 bundles 3.54.1. While `l
 `^0.39`, no RustSec advisory affected the older one. The advisory check below reads
 the RustSec database: a vulnerability in the C source of the bundled SQLite appears
 there only if RustSec lists it, and a CVE that it does not list is not reported by the
-gate. One such CVE is described under "Fixed in v0.26.0: the bundled SQLite" in
-[Security Model](./security.md).
+gate. One such CVE was described under "Fixed in v0.26.0: the bundled SQLite" in
+[Security Model](./security.md); RustSec listed it on 2026-11-09 (see "Limits, stated" below).
 
 ### Why this cannot be worked around downstream
 
@@ -283,6 +283,14 @@ and neither lists it against `libsqlite3-sys` or `rusqlite`. So neither the advi
 have said anything about it; it is described under "Fixed in v0.26.0: the bundled SQLite" in
 [Security Model](./security.md). This says nothing about how often that happens in general, or about what the alerts
 will do later.
+
+What happened next, with dates. On 2026-11-09 RustSec published
+[RUSTSEC-2026-0459](https://rustsec.org/advisories/RUSTSEC-2026-0459.html) for `libsqlite3-sys` (`patched >= 0.39.0`,
+`unaffected < 0.6.0`), after a pull request by this project that the `rusqlite` maintainer had agreed to. On
+2026-11-10 OSV lists it against `libsqlite3-sys` 0.38.2; GitHub's own advisory for the CVE (`GHSA-72w2-rjgg-q729`) was
+still unreviewed and still named no package, and a query for Rust advisories affecting `libsqlite3-sys` 0.38.2 returned
+none. The advisory covers `libsqlite3-sys` only: `sqlcipher-src` 419.0.3 to 419.0.6, which `libsqlite3-sys` 0.39.0 and
+0.39.1 use for the `bundled-sqlcipher` feature, bundle an affected SQLite and are not covered by any advisory.
 
 The SQLite comparison is the answer to that gap that exists today: because SQLite fixes land only in new releases, a bundled
 SQLite that is not the latest release makes a release stop until the decision is written down, even if no advisory feed maps
