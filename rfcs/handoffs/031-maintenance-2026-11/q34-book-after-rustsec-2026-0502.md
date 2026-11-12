@@ -1,0 +1,10 @@
+# Q34 — The book after RUSTSEC-2026-0502 (documentation only, no release)
+
+RustSec merged the `sqlcipher-src` advisory on 2026-11-12 as **RUSTSEC-2026-0502** (https://github.com/rustsec/advisory-db/pull/3537; `patched >= 420.0.0`, `unaffected < 419.0.3`); its crate's maintainer confirmed the ranges and closed the heads-up issue. `libsqlite3-sys` **0.40.0** (2026-11-11, declares Rust 1.88, bundles SQLite 3.54.1) depends on `sqlcipher-src =420.0.0` for `bundled-sqlcipher` (`rusqlite` PR #1932), so the pin that kept 0.39.x users on 419.x is gone. Format of the review request: `rfcs/handoffs/025-error-taxonomy-and-input-validation/implementation-handoff.md` § 6.
+
+1. `docs/src/dependency_security.md`, "How freshness is controlled", the **Limits** paragraph added by Q33: it says `sqlcipher-src` 419.0.3 to 419.0.6 "are not covered by any advisory". That is untrue since 2026-11-12. Keep the dated sentences; add what happened, with dates and no more: RUSTSEC-2026-0502 for `sqlcipher-src` (2026-11-12); `libsqlite3-sys` 0.40.0 pins `sqlcipher-src =420.0.0` (read it in the published `Cargo.toml`, do not take it from this file).
+2. Read the rest of the book and `crates/` doc comments for `sqlcipher` (`git grep -n -i sqlcipher`) and fix anything else that the two facts make untrue. `localcache` does not use `bundled-sqlcipher`; say nothing new about it beyond the above.
+3. Read-only, report in the request: the `libsqlite3-sys` 0.40.0 and `rusqlite` state on crates.io and in `rusqlite/rusqlite` (is `rusqlite 0.42.0` published? what does it require: `libsqlite3-sys ^0.40`? Rust 1.88 or 1.89?), and what `cargo make gate-requirements` prints on today's `main` (it should now fail the `rusqlite ^0.41.1` requirement if 0.42.0 is out: that is the gate working; report the exact line, change nothing).
+4. Verification as for Q33: `mdbook build`, `gate-versions`, `gate-docs`, the sentences grep. A plain `git push`; Docs green.
+
+Not yours: any dependency change, posting anywhere, `ROADMAP.md`, library code.
