@@ -290,7 +290,12 @@ What happened next, with dates. On 2026-11-09 RustSec published
 2026-11-10 OSV lists it against `libsqlite3-sys` 0.38.2; GitHub's own advisory for the CVE (`GHSA-72w2-rjgg-q729`) was
 still unreviewed and still named no package, and a query for Rust advisories affecting `libsqlite3-sys` 0.38.2 returned
 none. The advisory covers `libsqlite3-sys` only: `sqlcipher-src` 419.0.3 to 419.0.6, which `libsqlite3-sys` 0.39.0 and
-0.39.1 use for the `bundled-sqlcipher` feature, bundle an affected SQLite and are not covered by any advisory.
+0.39.1 use for the `bundled-sqlcipher` feature, bundle an affected SQLite and were, on 2026-11-10, not covered by any
+advisory. On 2026-11-12 RustSec published
+[RUSTSEC-2026-0502](https://rustsec.org/advisories/RUSTSEC-2026-0502.html) for `sqlcipher-src` (`patched >= 420.0.0`,
+`unaffected < 419.0.3`), after a pull request by this project; the crate's maintainer confirmed the ranges. And
+`libsqlite3-sys` 0.40.0 (2026-11-11) depends on `sqlcipher-src =420.0.0` for `bundled-sqlcipher`, so a lockfile that
+takes 0.40.0 no longer holds 419.x through that feature.
 
 The SQLite comparison is the answer to that gap that exists today: because SQLite fixes land only in new releases, a bundled
 SQLite that is not the latest release makes a release stop until the decision is written down, even if no advisory feed maps
