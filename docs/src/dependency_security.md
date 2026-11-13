@@ -61,11 +61,11 @@ R3.1 provides for a security necessity:
 - **What else it allows:** `sha2 0.11` and `criterion 0.8` (development only), which were held back by the MSRV
   alone. `aes-gcm 0.11` became possible and was adopted separately, in its own patch release (v0.26.1).
 
-## Why the `rusqlite` requirement is `0.41.1` (and was `0.40.2`)
+## Why the `rusqlite` requirement is `0.42.0` (and was `0.41.1`, and `0.40.2`)
 
-`localcache` 0.26 requires `rusqlite 0.41.1` (bundled SQLite 3.54.1), which declares Rust 1.89 and is the reason the MSRV
-is 1.89. The rest of this section is the record of the 0.40 line, which `localcache` 0.22 to 0.25 used and which needed care
-with the toolchain. `localcache` 0.22 required `rusqlite 0.40.2`, not `0.40` and not the newer
+`localcache` 0.27 requires `rusqlite 0.42.0` (bundled SQLite 3.54.1), which declares Rust 1.89, the MSRV that `localcache` 0.26 raised
+to 1.89 for `rusqlite 0.41.1`. The rest of this section is the record of the earlier lines; the 0.40 line, which `localcache` 0.22 to 0.25 used,
+needed care with the toolchain. `localcache` 0.22 required `rusqlite 0.40.2`, not `0.40` and not the newer
 `0.41`; `localcache` 0.21.x required `rusqlite ^0.39`. In Cargo's notation
 `0.40.2` means at least that patch release and below 0.41, so it is a floor
 inside the 0.40 line. Both choices were deliberate, they are the constraint most
@@ -78,6 +78,7 @@ change them.
 rusqlite 0.39  ->  libsqlite3-sys 0.37.x   (bundles SQLite 3.51.3)
 rusqlite 0.40  ->  libsqlite3-sys 0.38.x   (bundles SQLite 3.53.1 to 3.53.2)
 rusqlite 0.41  ->  libsqlite3-sys 0.39.x   (bundles SQLite 3.54.0 to 3.54.1)
+rusqlite 0.42  ->  libsqlite3-sys 0.40.x   (bundles SQLite 3.54.1)
 ```
 
 Whether `rusqlite 0.40` builds on Rust 1.85 depends on the exact patch release,
@@ -121,8 +122,15 @@ With `libsqlite3-sys 0.38.2` locked, `rusqlite =0.40.0` and `=0.40.1` still fail
   `rusqlite 0.41.1` and raised the MSRV to 1.89** ("The raise to 1.89" above). A crate that depends
   directly on `rusqlite 0.41` could not be combined with `localcache 0.22` to `0.25`, and a crate that
   depends directly on `rusqlite 0.40` cannot be combined with `localcache 0.26` (`links`, below).
-- **Consumers who pin `rusqlite 0.40` directly** can use `localcache` from 0.22.0 to 0.25.x; from 0.26.0 their
-  own `rusqlite` must be `0.41.1` or later in the 0.41 line.
+- **`localcache 0.27.0` moved to `rusqlite 0.42.0`** (`libsqlite3-sys 0.40.0`), a minor release because of `links`. The move changes
+  nothing a user of `localcache` alone can see: the bundled SQLite is the same 3.54.1 and the bundled source is byte-identical to
+  the one of `libsqlite3-sys 0.39.1` (compared as files on 2026-11-13), no source line of `localcache` needed an edit, and the
+  MSRV stays 1.89. The reason is a policy, not a gain: v0.26.0 had to be a rushed, breaking security release because the
+  project was one `rusqlite` line behind when the fix for CVE-2026-119375 appeared, and staying on the newest line makes the
+  next such fix an ordinary release. A crate that depends directly on `rusqlite 0.41` cannot be combined with `localcache 0.27`
+  (`links`, below).
+- **Consumers who pin `rusqlite 0.40` directly** can use `localcache` from 0.22.0 to 0.25.x; with 0.26 their own `rusqlite`
+  must be `0.41.1` or later in the 0.41 line, and with 0.27 `0.42` or later in the 0.42 line.
 
 The gain of v0.22.0 was a newer bundled SQLite (3.51.3 → 3.53.2, checked on the built
 crate: `rusqlite::version()` printed `3.53.2`); v0.26.0 bundles 3.54.1. While `localcache` stayed on
@@ -141,8 +149,8 @@ therefore not a tolerable duplicate — they are a hard resolution failure.
 The practical consequence: a crate depending directly on a different `rusqlite`
 line than `localcache` cannot be combined with it, and **no lockfile entry,
 `--precise` pin, or feature flag at the consumer's end can resolve it**. With
-`localcache 0.26` your own `rusqlite`, if you depend on it directly, must be
-`0.41.1` or later in the 0.41 line (with `localcache 0.22` to `0.25`, `0.40.2` or later in the 0.40 line). On `localcache 0.21.x` or earlier, which
+`localcache 0.27` your own `rusqlite`, if you depend on it directly, must be
+`0.42` or later in the 0.42 line (with `localcache 0.26`, `0.41.1` or later in the 0.41 line; with `localcache 0.22` to `0.25`, `0.40.2` or later in the 0.40 line). On `localcache 0.21.x` or earlier, which
 required `^0.39`, a crate on `rusqlite 0.40` had to move its own `rusqlite` to
 0.39 or wait for 0.22.0. You can also tell us — see below.
 
@@ -150,9 +158,9 @@ required `^0.39`, a crate on `rusqlite 0.40` had to move its own `rusqlite` to
 
 Neither `rusqlite 0.40.x` nor `libsqlite3-sys 0.38.x` declares a `rust-version` in its
 manifest. Because of that, Cargo's MSRV-aware resolution cannot see a toolchain
-requirement and cannot route around it. (The 0.41 line does declare one:
+requirement and cannot route around it. (The 0.41 and 0.42 lines do declare one:
 `rusqlite 0.41.1` says 1.89.0 and `libsqlite3-sys 0.39.1` says 1.88.0, checked in their
-manifests on 2026-11-07.)
+manifests on 2026-11-07; `rusqlite 0.42.0` says 1.89.0 and `libsqlite3-sys 0.40.0` says 1.88.0, checked in theirs on 2026-11-13.)
 
 The `rusqlite 0.40.x` and `libsqlite3-sys 0.38.x` series show why that matters:
 the floor moved **within a patch series**, up (`rusqlite 0.40.0`/`0.40.1` and
@@ -338,7 +346,9 @@ Measured on 2026-11-07 with `rusqlite 0.41.1` (SQLite 3.54.1; the build script o
 same options as 0.38.2's, except that `SQLITE_ENABLE_MEMORY_MANAGEMENT` is no longer defined): with these words set,
 `fts3`, `fts5`, `rtree`, `dbstat` and `soundex` are gone from a test program (`no such module`, `no such table`,
 `no such function`) and `json_extract` still works; that test program's binary is 22% smaller (2,750,768 to
-2,136,136 bytes); and this workspace's own test suite (741 tests, all features) passes with the options removed.
+2,136,136 bytes); and this workspace's own test suite (741 tests, all features) passes with the options removed. The build script of
+`libsqlite3-sys 0.40.0` (`localcache` 0.27) is identical, file for file, to the one of 0.39.1 (compared on 2026-11-13), so the same
+options apply; the measurement itself was not repeated.
 
 What this does and does not do:
 

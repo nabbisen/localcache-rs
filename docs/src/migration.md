@@ -1,5 +1,17 @@
 # Migration Guide
 
+## 0.26.x → 0.27.0
+
+A minor release under the 0.x policy. **Nothing is stored or changed otherwise**: no API, feature, error text, schema or
+stored byte differs, the minimum supported Rust version stays 1.89, and a database written by 0.26.x is read by 0.27.0
+and the reverse. There is **one thing to do, and only if your own crate depends on `rusqlite` directly**:
+
+1. **A direct `rusqlite` dependency of your own must be `0.42` or later in the 0.42 line** (`libsqlite3-sys 0.40`). Cargo
+   allows one `libsqlite3-sys` per build (it declares `links = "sqlite3"`), and `localcache 0.27` uses `rusqlite 0.42`, so a
+   crate that still asks for `rusqlite 0.41` cannot be built together with it. If you only depend on `localcache`, there
+   is nothing to do. The reason for the move, and what it does and does not change, is in
+   [MSRV & Dependency Security](./dependency_security.md).
+
 ## 0.25.x → 0.26.0
 
 A minor release under the 0.x policy, so it may break. **Databases need no migration**: the stored format, the schema
