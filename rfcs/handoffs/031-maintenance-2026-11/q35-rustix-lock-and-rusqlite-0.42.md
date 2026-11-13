@@ -13,8 +13,8 @@ Review 115 (request 097). CI on `main` has been red since RUSTSEC-2026-0486 was 
 `rusqlite 0.42.0` (2026-11-11, Rust 1.89, requires `libsqlite3-sys 0.40.0`) is out and `gate-requirements` correctly reports `rusqlite ^0.41.1` (request 097 § 3). Add this row to `requirements-held.toml`, `latest = "0.42.0"`, and regenerate the book table (`python3 scripts/check_requirements.py --write-book`):
 
 * `crate = "rusqlite"`, `requirement = "^0.41.1"`.
-* `why`: "rusqlite 0.42 requires libsqlite3-sys 0.40. Because libsqlite3-sys declares `links = "sqlite3"`, a change of rusqlite line forces every crate that depends on rusqlite directly to move with localcache (orbok does, in six crates), so it is announced one release ahead and made in a minor release. Nothing in 0.41.1 is a security problem: it bundles SQLite 3.54.1, as 0.42 does."
-* `ends`: "The release that adopts rusqlite 0.42, announced in the release before it."
+* `why`: "rusqlite 0.42 requires libsqlite3-sys 0.40. Because libsqlite3-sys declares `links = "sqlite3"`, a change of rusqlite line forces every crate that depends on rusqlite directly to move with localcache, so it is made in a minor release with an upgrade list. Nothing in 0.41.1 is a security problem: it bundles SQLite 3.54.1, as 0.42 does."
+* `ends`: "The release that adopts rusqlite 0.42 (a minor release), once the study of request Q35 part 3 is accepted."
 
 `cargo make gate-requirements` live must print `OK (… 1 held …)`. A plain `git push`; CI and Docs green.
 
@@ -25,3 +25,7 @@ Report in the review request: the upstream changelog / release notes for 0.42.0 
 ## 4. Not yours
 
 A release, a version, a tag, posting anywhere, `ROADMAP.md`, the adoption of `rusqlite 0.42` in the committed tree.
+
+## 5. Update after the owner's answer (2026-11-13)
+
+The owner said the move is acceptable: the one known direct user of `rusqlite` (orbok, six crates) can be asked to update together with us, so the "announce one release ahead" step is replaced by telling orbok directly before the release. Consequences for this task: the row above is worded without the announcement (done); part 3 now decides **whether the study is clean**, not whether to wait: if it is, the architect plans a minor release (v0.27.0) that adopts `rusqlite 0.42`, includes the `rustix` lock, deletes the row, and carries the upgrade list ("a crate that depends on `rusqlite` directly must use 0.42 or later; `libsqlite3-sys` 0.40"). The reason to follow upstream, recorded: v0.26.0 had to be a rushed breaking security release because we were one `rusqlite` line behind when the CVE fix appeared; staying current makes the next such fix an ordinary release. Part 3 therefore adds: the tests for the `links` text in `dependency_security.md` that would need updating, and the list of book pages that name `rusqlite 0.41` or `libsqlite3-sys 0.39` (`git grep`), as a to-do for the release preparation. Still nothing is adopted in the committed tree by this task.
