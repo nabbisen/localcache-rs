@@ -7,6 +7,32 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.27.0] — Unreleased
+
+*Date set at owner authorization.*
+
+**Breaking only for a crate that depends on `rusqlite` directly (a minor release under the 0.x policy); there is one thing to do.** The SQLite wrapper behind `localcache` moved from `rusqlite` 0.41 to 0.42, and Cargo allows one `libsqlite3-sys` per build. If your crate only depends on `localcache`, there is nothing to do. No public API, feature name, error text, schema, stored byte or MSRV (1.89) differs from 0.26.2; databases written by 0.26.x are read by 0.27.0 and the reverse.
+
+### Upgrading from 0.26.x
+
+- **A direct `rusqlite` dependency of your own must be `0.42` or later in the 0.42 line** (`libsqlite3-sys 0.40`). A crate that asks for `rusqlite 0.41` cannot be built together with `localcache 0.27`: `libsqlite3-sys` declares `links = "sqlite3"`, so Cargo refuses two lines in one graph, and no lockfile entry or feature flag at your end resolves it. See "0.26.x → 0.27.0" in the migration guide.
+
+### Changed
+
+- **`rusqlite` 0.41.1 → 0.42.0 and `libsqlite3-sys` 0.39.1 → 0.40.0.** SQLite stays 3.54.1, and the bundled `sqlite3.c`, `sqlite3.h` and build script of `libsqlite3-sys` 0.40.0 are byte-identical to those of 0.39.1 (compared as files), so the compile options the book lists are unchanged. No line of `localcache` needed an edit for the move. Measured on the change: the whole test suite passes (5,636 tests), the query plans of the cached statements are text-for-text identical, the six statements kept compiled once by the Q31 workaround (`CAST(?N AS TEXT)`) still are (a test fails if not), and an 18-namespace transcript of results is byte-identical. The reason to follow upstream is a policy, not a gain for `localcache`: staying one `rusqlite` line behind forced v0.26.0 into a rushed, breaking security release.
+- **The `bundled-sqlcipher` feature of `libsqlite3-sys` 0.40.0 builds `sqlcipher-src =420.0.0`** (SQLite 3.54.1, RUSTSEC-2026-0502 covers 419.x). `localcache` does not use that feature.
+
+### Dependencies
+
+- **`rustix` 1.1.4 → 1.1.6** in `Cargo.lock` (RUSTSEC-2026-0486, `unsound`: six extended-attribute functions of `rustix::fs` mark unwritten bytes as initialized for a zero-length buffer). Neither `localcache` nor the five crates that depend on `rustix` in the lock (`async-io`, `async-process`, `async-signal`, `polling`, `tempfile`) call those functions, so no behaviour changed; it matters to anyone who installs with `cargo install localcache-cli --locked`, who gets the lock. It was already on `main` and is part of this release.
+- Moves forced by `rusqlite 0.42` and visible only in the lock: `sqlite-wasm-rs` 0.5.5 → 0.6.3 and `rsqlite-vfs` 0.1.1 → 0.2.0 (the `wasm32-unknown-unknown` target only), and, because `rsqlite-vfs 0.2.0` needs `thiserror` 2.0.20 or newer, `thiserror` and `thiserror-impl` 2.0.18 → 2.0.21 (which brings `syn` 3 for that one proc-macro; `hashbrown` 0.16.1 leaves the graph).
+
+### Internal
+
+- `requirements-held.toml` is empty again: the `rusqlite` row, written on 2026-11-13 because `rusqlite 0.42.0` needed this release, ends with it.
+
+---
+
 ## [0.26.2] — 2026-11-08
 
 Authorized by the project owner on 2026-11-08. The source is that of release candidate `c13bcd8`; the release commit changes only this date.
@@ -1967,7 +1993,8 @@ Namespaces, batch ops, TTL, PRAGMAs, schema migration.
 ## [0.1.0] — 2026-05-03
 Initial release.
 
-[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/0.26.2...HEAD
+[Unreleased]: https://github.com/nabbisen/localcache-rs/compare/0.27.0...HEAD
+[0.27.0]: https://github.com/nabbisen/localcache-rs/compare/0.26.2...0.27.0
 [0.26.2]: https://github.com/nabbisen/localcache-rs/compare/0.26.1...0.26.2
 [0.26.1]: https://github.com/nabbisen/localcache-rs/compare/0.26.0...0.26.1
 [0.26.0]: https://github.com/nabbisen/localcache-rs/compare/0.25.1...0.26.0
