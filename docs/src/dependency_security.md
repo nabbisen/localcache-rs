@@ -315,7 +315,7 @@ development tool never justifies a raise.
 
 | Requirement | Newest seen | Why it is held | What ends the hold |
 |---|---|---|---|
-| *(none)* | | | |
+| `rusqlite ^0.41.1` | `0.42.0` | rusqlite 0.42 requires libsqlite3-sys 0.40. Because libsqlite3-sys declares `links = "sqlite3"`, a change of rusqlite line forces every crate that depends on rusqlite directly to move with localcache, so it is made in a minor release with an upgrade list. Nothing in 0.41.1 is a security problem: it bundles SQLite 3.54.1, as 0.42 does. | The release that adopts rusqlite 0.42 (a minor release), once the study of request Q35 part 3 is accepted. |
 
 <!-- requirements-held:end -->
 
