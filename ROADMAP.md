@@ -1724,6 +1724,21 @@ A fix release under the SemVer policy by the owner's decision on RFC 028: a stor
 v0.22.0 Known issue and a stack overflow found while fixing it), `bincode` and its advisory exception left the tree, and two inputs
 that v0.22.0 accepted are refused (a count above the remaining bytes, nesting beyond 128 levels). No known issue is open.
 
+### v0.27.0 — released 2026-11-14
+
+| | |
+|---|---|
+| Release candidate | `045bd6c` (review 117: Go) |
+| Release commit | `5a66197` (`docs: set the v0.27.0 release date`); changes `CHANGELOG.md` only |
+| Tag | `0.27.0`, GPG-signed and annotated (tag object `f3bd8db…`), on the release commit, pushed |
+| CI on the release commit | CI run 43531724710 and Docs run 43531724643 green |
+| `Release` workflow | dry run from the tag, run 43533008343: all jobs green; real run, run 43533321721: all six jobs green |
+| Published | `localcache-format 0.27.0` (checksum `92c38514d60b91bf8b576664d2b836e836a0043bb909d6b901cbc4528d3fc3be`), `localcache 0.27.0` (`6697c59a341a5ca8f3d53ec56a95b272c7ad954eeb07ecef530ed4c1db57e950`) and `localcache-cli 0.27.0` (`f1bad4433a505da4f1537b7562bd977aecbf6a6eb84b1810b74755aa8f6c3a26`) on crates.io, 2026-11-14 00:21 UTC, none yanked, `rust-version` 1.89; the downloaded `.crate` files hash to the registry checksums, which equal the dry run's digests |
+| GitHub release | `0.27.0`, asset `localcache-v0.27.0.tar.gz` (1,092,253 bytes, SHA-256 `c284bf7f34c8d1c83579e998497828569399ba624fec03b04d28281351edf09d`); `gh attestation verify` exits 0 (output empty here) |
+| Fresh consumer | `rust-version = "1.89"`, `localcache = "0.27.0"` with `encryption`, `compression`, `json` and `rusqlite = "0.42"` of its own: `cargo +1.89.0 run --release` prints `rusqlite::version() = 3.54.1`; `libsqlite3-sys 0.40.0`, `aes-gcm 0.11.1`; the same consumer with `rusqlite = "0.41"` fails with cargo's `links = "sqlite3"` conflict (`.git-exclude/tmp/post-0.27.0/consumer`) |
+
+A minor release under the 0.x policy because of `links = "sqlite3"`: it adopts `rusqlite 0.42.0` (`libsqlite3-sys 0.40.0`); a crate that depends on `rusqlite` directly must use 0.42 or later. `crates/` is byte-identical to 0.26.2: no API, stored byte, schema or MSRV (1.89) change; the bundled SQLite is the same 3.54.1 source file. It also carries the `rustix` 1.1.6 lock (RUSTSEC-2026-0486) and ends the last held requirement (`requirements-held.toml` is empty). Recorded reason for following upstream: staying one `rusqlite` line behind forced v0.26.0 into a rushed breaking release. **The letter to `orbok` is the owner's, to be sent after the release** (`.git-exclude/upstream/orbok/send/draft/localcache-to-orbok-0.27.0-2026-11-14.md`; adjust its tense: the release is out).
+
 ### v0.26.2 — released 2026-11-08
 
 | | |
