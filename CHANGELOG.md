@@ -7,9 +7,9 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [0.27.0] — Unreleased
+## [0.27.0] — 2026-11-14
 
-*Date set at owner authorization.*
+Authorized by the project owner on 2026-11-14. The source is that of release candidate `045bd6c`; the release commit changes only this date.
 
 **Breaking only for a crate that depends on `rusqlite` directly (a minor release under the 0.x policy); there is one thing to do.** The SQLite wrapper behind `localcache` moved from `rusqlite` 0.41 to 0.42, and Cargo allows one `libsqlite3-sys` per build. If your crate only depends on `localcache`, there is nothing to do. No public API, feature name, error text, schema, stored byte or MSRV (1.89) differs from 0.26.2; databases written by 0.26.x are read by 0.27.0 and the reverse.
 
